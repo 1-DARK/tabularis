@@ -91,8 +91,8 @@ export interface UsePluginToastReturn {
 
 export interface UsePluginSettingReturn {
   getSetting: <T = unknown>(key: string, defaultValue?: T) => T;
-  setSetting: (key: string, value: unknown) => void;
-  setSettings: (updates: Record<string, unknown>) => void;
+  setSetting: (key: string, value: unknown) => Promise<void>;
+  setSettings: (updates: Record<string, unknown>) => Promise<void>;
 }
 
 export interface UsePluginModalReturn {

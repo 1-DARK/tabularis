@@ -30,6 +30,7 @@ Object.defineProperty(document, "execCommand", {
 // Mock Tauri APIs
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string, protocol?: string) => `${protocol ?? "asset"}://localhost/${path}`),
 }));
 
 vi.mock("@tauri-apps/api/window", () => ({

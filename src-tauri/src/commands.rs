@@ -6533,8 +6533,54 @@ pub async fn export_connections_payload<R: Runtime>(
     app: AppHandle<R>,
     include_secrets: Option<bool>,
     connection_ids: Option<Vec<String>>,
+    confirmation_title: Option<String>,
+    confirmation_message: Option<String>,
+    confirmation_export_label: Option<String>,
+    confirmation_cancel_label: Option<String>,
 ) -> Result<ExportPayload, String> {
-    let include_secrets = include_secrets.unwrap_or(true);
+    // Design note Phase 1: default false so no-arg / plugin callers get no secrets.
+    let include_secrets = include_secrets.unwrap_or(false);
+
+    if include_secrets {
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+        let app2 = app.clone();
+        let title = confirmation_title.unwrap_or_else(|| "Export secrets".into());
+        let message = confirmation_message.unwrap_or_else(|| {
+            "Export saved passwords, SSH keys and connection URIs in plain form?".into()
+        });
+        let export_label = confirmation_export_label.unwrap_or_else(|| "Export".into());
+        let cancel_label = confirmation_cancel_label.unwrap_or_else(|| "Cancel".into());
+        let ok = tauri::async_runtime::spawn_blocking(move || {
+            app2.dialog()
+                .message(message)
+                .title(title)
+                .kind(MessageDialogKind::Warning)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    export_label,
+                    cancel_label,
+                ))
+                .blocking_show()
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if !ok {
+            return Err("SECRET_EXPORT_CANCELLED".into());
+        }
+    }
+
+    export_connections_payload_unconfirmed(app, include_secrets, connection_ids).await
+}
+
+/// Build the payload for trusted internal callers such as encrypted backups.
+/// The Tauri command above is the only UI-facing path for secret exports and
+/// always shows the native confirmation before calling this helper.
+pub(crate) async fn export_connections_payload_unconfirmed<R: Runtime>(
+    app: AppHandle<R>,
+    include_secrets: bool,
+    connection_ids: Option<Vec<String>>,
+) -> Result<ExportPayload, String> {
     let conn_path = get_config_path(&app)?;
     let ssh_path = get_ssh_config_path(&app)?;
 

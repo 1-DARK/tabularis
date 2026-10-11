@@ -255,6 +255,9 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        .register_uri_scheme_protocol("tabularis-plugin", |ctx, request| {
+            crate::plugins::sandbox_protocol::handle(ctx.app_handle(), request)
+        })
         .manage(crate::plugins::deep_link::PendingInstall::default())
         .manage(commands::QueryCancellationState::default())
         .manage(export::ExportCancellationState::default())
