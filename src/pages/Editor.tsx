@@ -2821,6 +2821,39 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     [updateTab, runQuery],
   );
 
+  // Read-only helper for the filter value picker (issue #869): runs on the
+  // tab's own session so it sees the same rows as the grid.
+  const runToolbarQuery = useCallback(
+    async (sql: string): Promise<QueryResult> => {
+      const tabId = activeTabIdRef.current;
+      const currentTab = tabsRef.current.find((tb) => tb.id === tabId);
+      if (!currentTab || currentTab.connectionId !== activeConnectionIdRef.current) {
+        throw new Error("No active connection");
+      }
+      const connectionId = currentTab.connectionId;
+      const schema = currentTab.schema ?? activeSchema;
+      const table = currentTab.activeTable;
+      const result = await getAutoRefreshSchedule(currentTab.id).run(async () => {
+        const targetTab = tabsRef.current.find((tab) => tab.id === currentTab.id);
+        if (!targetTab || activeTabIdRef.current !== currentTab.id ||
+          activeConnectionIdRef.current !== connectionId ||
+          targetTab.connectionId !== connectionId || targetTab.activeTable !== table ||
+          (targetTab.schema ?? activeSchema) !== schema) {
+          throw new Error("The table changed before the values query could run");
+        }
+        return invoke<QueryResult>("execute_query", {
+          connectionId,
+          query: sql,
+          sessionId: currentTab.id,
+          ...(schema ? { schema } : {}),
+        });
+      });
+      if (!result) throw new Error("The values query did not run");
+      return result;
+    },
+    [activeSchema, getAutoRefreshSchedule],
+  );
+
   const handleForeignKeyShowPanel = useCallback(
     (fk: ForeignKey, value: unknown) => {
       const currentTab = tabsRef.current.find(
@@ -5001,6 +5034,8 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               }}
               autoRefreshPaused={!!activeTab.autoRefreshIntervalMs && (refreshBlockedByEdits || refreshSnapshot.editing || refreshBlockedBySelection)}
               autoRefreshPausedReason={refreshBlockedByEdits || refreshSnapshot.editing ? "editing" : "selection"}
+              tableSchema={activeTab.schema}
+              onRunQuery={runToolbarQuery}
             />
           ) : (
             <div

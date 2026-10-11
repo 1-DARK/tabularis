@@ -19,8 +19,11 @@ import {
   buildSingleFilterClause,
   isFilterComplete,
   createEmptyFilter,
+  buildDistinctValuesQuery,
+  buildValuePickerWhere,
+  parseDistinctValues,
 } from "../../utils/filterBar";
-import type { StructuredFilter, FilterCombinator } from "../../utils/filterBar";
+import type { StructuredFilter, FilterCombinator, DistinctValue } from "../../utils/filterBar";
 import { formatSqlIdentifier } from "../../utils/identifiers";
 import { formatSortClause } from "../../utils/tableToolbar";
 import { FilterRow } from "./FilterRow";
@@ -45,6 +48,13 @@ interface TableToolbarProps {
   autoRefreshPaused?: boolean;
   /** Why auto-refresh is paused; only read while `autoRefreshPaused` is true. */
   autoRefreshPausedReason?: "editing" | "selection";
+  /** Schema of the table shown in the grid. */
+  tableSchema?: string | null;
+  /**
+   * Runs a read-only query against the tab's connection. Enables the filter
+   * value picker (issue #869) together with `tableName`.
+   */
+  onRunQuery?: (sql: string) => Promise<{ rows: unknown[][] }>;
 }
 
 interface TableToolbarInternalProps extends TableToolbarProps {
@@ -88,6 +98,8 @@ const TableToolbarInternal = ({
   onAutoRefreshChange,
   autoRefreshPaused,
   autoRefreshPausedReason = "editing",
+  tableSchema,
+  onRunQuery,
 }: TableToolbarInternalProps) => {
   const { t } = useTranslation();
   const { activeDriver, activeCapabilities, activeConnectionId, activeSchema } = useDatabase();
@@ -187,6 +199,28 @@ const TableToolbarInternal = ({
       }
     });
   }, [structuredFilters, combinator, sortInput, limitInput, getLimitVal, onUpdate, onTriggerApplied, onResetApplied, quotingDriver]);
+
+  const queryForValues = useCallback(
+    (filter: StructuredFilter) => buildDistinctValuesQuery({
+      table: tableName ?? "",
+      schema: tableSchema,
+      column: filter.column,
+      driver: quotingDriver,
+      where: buildValuePickerWhere(structuredFilters, filter.id, quotingDriver, combinator),
+    }),
+    [tableName, tableSchema, quotingDriver, structuredFilters, combinator],
+  );
+
+  // Count values using the other complete filters, excluding the edited row.
+  const loadValuesFor = useCallback(
+    async (filter: StructuredFilter): Promise<DistinctValue[]> => {
+      if (!onRunQuery || !tableName) return [];
+      const result = await onRunQuery(queryForValues(filter));
+      return parseDistinctValues(result.rows);
+    },
+    [onRunQuery, tableName, queryForValues],
+  );
+  const canPickValues = !!onRunQuery && !!tableName;
 
   // Applies only that single row's filter — resets Applied on all others
   const handleApplySingle = useCallback(
@@ -707,6 +741,10 @@ const TableToolbarInternal = ({
                   onEscape={closePanel}
                   isApplied={appliedFilters[filter.id] === true}
                   onTriggerApplied={() => onTriggerApplied(filter.id)}
+                  onLoadValues={canPickValues ? loadValuesFor : undefined}
+                  valuePickerContextKey={canPickValues
+                    ? JSON.stringify([activeConnectionId, queryForValues(filter)])
+                    : undefined}
                 />
               ))
             )}
