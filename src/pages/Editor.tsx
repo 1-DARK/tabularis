@@ -4,6 +4,8 @@ import { hasPendingTableEdits, tableRefreshIdentity } from "../utils/autoRefresh
 import { useLocation, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import {
+  buildDuplicatedTab,
+  canDuplicateTab,
   getTabDisplayTitle,
   reconstructTableQuery,
   resolveTabPageSize,
@@ -992,6 +994,17 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   const clearEntryScrollTops = useCallback((tabId: string) => {
     clearScrollTopsForTab(scrollTopByEntryKeyRef.current, tabId);
   }, []);
+
+  const handleDuplicateTab = useCallback(
+    (tabId: string) => {
+      const source = tabsRef.current.find((tab) => tab.id === tabId);
+      if (!source) return;
+      const duplicate = buildDuplicatedTab(source);
+      if (!duplicate) return;
+      addTab(duplicate, { insertAfterId: source.id, forceNew: true });
+    },
+    [addTab],
+  );
 
   const handleCloseTab = useCallback(
     (tabId: string) => {
@@ -2819,6 +2832,39 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       runQuery(undefined, 1, undefined, undefined, filter, sort, limit);
     },
     [updateTab, runQuery],
+  );
+
+  // Read-only helper for the filter value picker (issue #869): runs on the
+  // tab's own session so it sees the same rows as the grid.
+  const runToolbarQuery = useCallback(
+    async (sql: string): Promise<QueryResult> => {
+      const tabId = activeTabIdRef.current;
+      const currentTab = tabsRef.current.find((tb) => tb.id === tabId);
+      if (!currentTab || currentTab.connectionId !== activeConnectionIdRef.current) {
+        throw new Error("No active connection");
+      }
+      const connectionId = currentTab.connectionId;
+      const schema = currentTab.schema ?? activeSchema;
+      const table = currentTab.activeTable;
+      const result = await getAutoRefreshSchedule(currentTab.id).run(async () => {
+        const targetTab = tabsRef.current.find((tab) => tab.id === currentTab.id);
+        if (!targetTab || activeTabIdRef.current !== currentTab.id ||
+          activeConnectionIdRef.current !== connectionId ||
+          targetTab.connectionId !== connectionId || targetTab.activeTable !== table ||
+          (targetTab.schema ?? activeSchema) !== schema) {
+          throw new Error("The table changed before the values query could run");
+        }
+        return invoke<QueryResult>("execute_query", {
+          connectionId,
+          query: sql,
+          sessionId: currentTab.id,
+          ...(schema ? { schema } : {}),
+        });
+      });
+      if (!result) throw new Error("The values query did not run");
+      return result;
+    },
+    [activeSchema, getAutoRefreshSchedule],
   );
 
   const handleForeignKeyShowPanel = useCallback(
@@ -5001,6 +5047,8 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               }}
               autoRefreshPaused={!!activeTab.autoRefreshIntervalMs && (refreshBlockedByEdits || refreshSnapshot.editing || refreshBlockedBySelection)}
               autoRefreshPausedReason={refreshBlockedByEdits || refreshSnapshot.editing ? "editing" : "selection"}
+              tableSchema={activeTab.schema}
+              onRunQuery={runToolbarQuery}
             />
           ) : (
             <div
@@ -5809,6 +5857,15 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                     label: t("editor.convertToConsole"),
                     icon: FileCode,
                     action: () => handleConvertToConsole(tabContextMenu.tabId),
+                  },
+                ]
+              : []),
+            ...(contextTab && canDuplicateTab(contextTab.type)
+              ? [
+                  {
+                    label: t("editor.duplicateTab"),
+                    icon: Copy,
+                    action: () => handleDuplicateTab(tabContextMenu.tabId),
                   },
                 ]
               : []),

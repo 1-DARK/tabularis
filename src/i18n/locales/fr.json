@@ -1,5 +1,18 @@
 {
   "toolbar": {
+    "valuePicker": {
+      "open": "Choisir parmi les valeurs",
+      "title": "Choisir des valeurs",
+      "search": "Rechercher des valeurs",
+      "loading": "Chargement des valeurs…",
+      "error": "Impossible de charger les valeurs",
+      "retry": "Réessayer",
+      "empty": "Aucune valeur dans cette colonne",
+      "noMatch": "Aucune valeur correspondante",
+      "limited": "Les {{count}} plus fréquentes",
+      "use": "Utiliser {{count}} sélectionnées",
+      "useNone": "Utiliser la sélection"
+    },
     "autoRefresh": {
       "label": "Actualisation automatique",
       "off": "Désactivée",
@@ -104,6 +117,7 @@
     "materializedViews": "Vues matérialisées",
     "refreshMaterializedView": "Actualiser",
     "showDefinition": "Afficher la définition",
+    "copyDdl": "Copier le DDL",
     "editView": "Modifier la vue",
     "viewDefinition": "Définition de la vue",
     "dropView": "Supprimer la vue",
@@ -1147,6 +1161,7 @@
     "sshKeyPassphrasePlaceholder": "Saisissez la phrase secrète si la clé est chiffrée",
     "allowSshPrompt": "Autoriser l'invite de mot de passe/PIN SSH",
     "saveKeychain": "Enregistrer les mots de passe dans le trousseau",
+    "secretsStoredInPlainText": "Les mots de passe seront enregistrés en clair dans le fichier de connexions.",
     "testConnection": "Tester la connexion",
     "save": "Enregistrer",
     "failSave": "Échec de l’enregistrement de la connexion",
@@ -1384,6 +1399,7 @@
       "detached": "Résultats détachés dans une fenêtre séparée",
       "reattach": "Rattacher"
     },
+    "duplicateTab": "Dupliquer l’onglet",
     "closeTab": "Fermer l’onglet",
     "reopenClosedTab": "Réouvrir l’onglet fermé",
     "closeOthers": "Fermer les autres onglets",

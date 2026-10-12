@@ -1,5 +1,18 @@
 {
   "toolbar": {
+    "valuePicker": {
+      "open": "Elegir entre valores",
+      "title": "Elegir valores",
+      "search": "Buscar valores",
+      "loading": "Cargando valores…",
+      "error": "No se pudieron cargar los valores",
+      "retry": "Reintentar",
+      "empty": "No hay valores en esta columna",
+      "noMatch": "No hay valores coincidentes",
+      "limited": "Los {{count}} más frecuentes",
+      "use": "Usar {{count}} seleccionados",
+      "useNone": "Usar seleccionados"
+    },
     "autoRefresh": {
       "label": "Actualización automática",
       "off": "Desactivada",
@@ -104,6 +117,7 @@
     "materializedViews": "Vistas Materializadas",
     "refreshMaterializedView": "Actualizar",
     "showDefinition": "Mostrar Definición",
+    "copyDdl": "Copiar DDL",
     "editView": "Editar Vista",
     "viewDefinition": "Definición de Vista",
     "dropView": "Eliminar Vista",
@@ -1138,6 +1152,7 @@
     "sshKeyPassphrasePlaceholder": "Ingresa la frase de paso si la clave está cifrada",
     "allowSshPrompt": "Permitir solicitud de contraseña/PIN de SSH",
     "saveKeychain": "Guardar contraseñas en el Llavero",
+    "secretsStoredInPlainText": "Las contraseñas se guardarán en texto sin formato en el archivo de conexiones.",
     "testConnection": "Probar Conexión",
     "save": "Guardar",
     "failSave": "Error al guardar la conexión",
@@ -1390,6 +1405,7 @@
       "detached": "Resultados separados en una ventana aparte",
       "reattach": "Volver a acoplar"
     },
+    "duplicateTab": "Duplicar Pestaña",
     "closeTab": "Cerrar Pestaña",
     "reopenClosedTab": "Reabrir Pestaña Cerrada",
     "closeOthers": "Cerrar Otras Pestañas",

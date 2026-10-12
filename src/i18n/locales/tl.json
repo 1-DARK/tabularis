@@ -1,5 +1,18 @@
 {
   "toolbar": {
+    "valuePicker": {
+      "open": "Pumili mula sa mga value",
+      "title": "Pumili ng mga value",
+      "search": "Maghanap ng value",
+      "loading": "Nilo-load ang mga value…",
+      "error": "Hindi ma-load ang mga value",
+      "retry": "Subukang muli",
+      "empty": "Walang value sa column na ito",
+      "noMatch": "Walang tugmang value",
+      "limited": "Nangungunang {{count}} ayon sa bilang",
+      "use": "Gamitin ang {{count}} napili",
+      "useNone": "Gamitin ang napili"
+    },
     "autoRefresh": {
       "label": "Awtomatikong pag-refresh",
       "off": "Naka-off",
@@ -104,6 +117,7 @@
     "materializedViews": "Mga Materialized View",
     "refreshMaterializedView": "I-refresh",
     "showDefinition": "Ipakita ang Definition",
+    "copyDdl": "Kopyahin ang DDL",
     "editView": "I-edit ang View",
     "viewDefinition": "Definition ng View",
     "dropView": "I-drop ang View",
@@ -1140,6 +1154,7 @@
     "sshKeyPassphrasePlaceholder": "Ilagay ang key passphrase kung naka-encrypt",
     "allowSshPrompt": "Payagan ang SSH password/PIN prompt",
     "saveKeychain": "I-save ang mga password sa Keychain",
+    "secretsStoredInPlainText": "Ang mga password ay ise-save bilang plain text sa file ng koneksyon.",
     "testConnection": "Subukan ang Connection",
     "save": "I-save",
     "failSave": "Nabigong i-save ang connection",
@@ -1375,6 +1390,7 @@
       "detached": "Na-detach ang mga resulta sa hiwalay na window",
       "reattach": "I-attach muli"
     },
+    "duplicateTab": "I-duplicate ang Tab",
     "closeTab": "Isara ang Tab",
     "reopenClosedTab": "Muling Buksan ang Saradong Tab",
     "closeOthers": "Isara ang Ibang Tab",
