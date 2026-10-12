@@ -2,6 +2,11 @@ name: Sync Contribute Discussion
 
 # Keeps the "Good first issues" discussion (#872) in line with the issues it
 # lists and with the translation files on main.
+#
+# GITHUB_TOKEN cannot edit discussions ("Resource not accessible by
+# integration"), so the update uses DISCUSSION_SYNC_TOKEN: a fine-grained
+# token for TabularisDB/tabularis with Discussions read and write (issues,
+# pull requests and metadata are public reads).
 on:
   schedule:
     - cron: '17 */6 * * *'
@@ -18,7 +23,6 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-      discussions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -30,5 +34,5 @@ jobs:
       - name: Update discussion
         run: node scripts/sync-contribute-discussion.mjs
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.DISCUSSION_SYNC_TOKEN }}
           DISCUSSION_NUMBER: '872'
