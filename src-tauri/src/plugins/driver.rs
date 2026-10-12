@@ -27,6 +27,8 @@ use std::os::windows::process::CommandExt;
 
 /// The first operation waits for initialization of its own plugin only.
 const PLUGIN_INIT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Allow already accepted RPC calls to finish before killing a plugin.
+const PLUGIN_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Flag to create the process without a console window on Windows.
 #[cfg(windows)]
@@ -111,6 +113,48 @@ fn is_method_not_found(err: &str) -> bool {
     err.to_lowercase().contains("method not found") || err.contains("-32601")
 }
 
+/// A manager task may be aborted after its outer shutdown bound. If that
+/// drops a pending response sender, tell the caller shutdown caused it rather
+/// than reporting a generic unresponsive plugin.
+fn dropped_plugin_response_error(shutting_down: bool) -> PluginCallError {
+    if shutting_down {
+        "Plugin shutdown grace period elapsed before RPC completed"
+            .to_string()
+            .into()
+    } else {
+        "Plugin process did not respond".to_string().into()
+    }
+}
+
+/// Preserve the sidebar selection at the plugin RPC boundary. A multi-DB
+/// connection serializes `database` as an array; plugins such as redis-rust
+/// select the actual connection from `params.database` instead of `schema`.
+/// Only substitute an explicitly selected member of that array. Unselected,
+/// single-DB and schema-only (e.g. PostgreSQL) requests stay unchanged.
+fn route_selected_plugin_database(request: &mut Value) {
+    let Some(selected) = request
+        .get("schema")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return;
+    };
+    let Some(connection) = request.get_mut("params").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(databases) = connection.get("database").and_then(Value::as_array) else {
+        return;
+    };
+    if databases.len() < 2
+        || !databases
+            .iter()
+            .any(|db| db.as_str() == Some(selected.as_str()))
+    {
+        return;
+    }
+    connection.insert("database".to_string(), Value::String(selected));
+}
+
 /// Message sent to the management task that owns the plugin child process.
 enum PluginCommand {
     /// Dispatch a JSON-RPC request and route the response back via the sender.
@@ -127,9 +171,13 @@ enum PluginCommand {
 pub struct PluginProcess {
     /// Plugin id used to resolve the configured call timeout.
     plugin_id: String,
+    /// Only schema-less plugins map sidebar database selections to params.database.
+    route_selected_database: bool,
     sender: mpsc::Sender<PluginCommand>,
     next_id: AtomicU64,
+    accepting_calls: std::sync::atomic::AtomicBool,
     shutdown_tx: tokio::sync::Mutex<Option<oneshot::Sender<()>>>,
+    manager_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub pid: Option<u32>,
     initialization_settings: Option<HashMap<String, Value>>,
     initialized: OnceCell<()>,
@@ -178,7 +226,7 @@ impl PluginProcess {
         let pid = child.id();
 
         // Hand the running child off to the management task.
-        tokio::spawn(async move {
+        let manager_task = tokio::spawn(async move {
             let mut child = child;
             let mut rx = rx;
             let mut shutdown_rx = shutdown_rx;
@@ -192,15 +240,33 @@ impl PluginProcess {
                 oneshot::Sender<Result<Value, PluginCallError>>,
             > = HashMap::new();
             let mut line_buf = String::new();
+            let mut shutdown_deadline: Option<tokio::time::Instant> = None;
+            let mut channel_drained = false;
 
             loop {
+                if shutdown_deadline.is_some()
+                    && channel_drained
+                    && pending_requests.is_empty()
+                {
+                    break;
+                }
                 tokio::select! {
-                    _ = &mut shutdown_rx => {
-                        log::info!("Plugin process shutdown requested, terminating child");
-                        let _ = child.kill().await;
+                    _ = &mut shutdown_rx, if shutdown_deadline.is_none() => {
+                        // Existing callers with a reserved queue slot may still
+                        // enqueue; receive those requests before deciding we are
+                        // fully drained. No fresh reservations are allowed.
+                        rx.close();
+                        shutdown_deadline =
+                            Some(tokio::time::Instant::now() + PLUGIN_SHUTDOWN_GRACE);
+                        log::info!("Plugin shutdown requested; draining in-flight RPCs");
+                    }
+                    _ = tokio::time::sleep_until(
+                        shutdown_deadline.unwrap_or_else(tokio::time::Instant::now)
+                    ), if shutdown_deadline.is_some() => {
+                        log::warn!("Plugin shutdown grace period elapsed; terminating child");
                         break;
                     }
-                    msg = rx.recv() => {
+                    msg = rx.recv(), if !channel_drained => {
                         match msg {
                             Some(PluginCommand::Call(req, resp_tx)) => {
                                 let id = req.id;
@@ -234,10 +300,12 @@ impl PluginProcess {
                                 }
                             }
                             None => {
-                                // Channel closed without explicit shutdown — kill the process anyway.
-                                log::warn!("Plugin process channel closed without shutdown signal, terminating child");
-                                let _ = child.kill().await;
-                                break;
+                                if shutdown_deadline.is_some() {
+                                    channel_drained = true;
+                                } else {
+                                    log::warn!("Plugin process channel closed without shutdown signal");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -280,13 +348,26 @@ impl PluginProcess {
                     }
                 }
             }
+            // Give remaining callers a specific shutdown failure instead of
+            // an ambiguous dropped-channel/no-response error.
+            for (_, sender) in pending_requests.drain() {
+                let _ = sender.send(Err(
+                    "Plugin shutdown grace period elapsed before RPC completed"
+                        .to_string()
+                        .into(),
+                ));
+            }
+            let _ = child.kill().await;
         });
 
         Ok(Self {
             plugin_id,
+            route_selected_database: false,
             sender: tx,
             next_id: AtomicU64::new(1),
+            accepting_calls: std::sync::atomic::AtomicBool::new(true),
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+            manager_task: tokio::sync::Mutex::new(Some(manager_task)),
             pid,
             initialization_settings: None,
             initialized: OnceCell::new(),
@@ -294,9 +375,27 @@ impl PluginProcess {
     }
 
     async fn shutdown(&self) {
-        let mut guard = self.shutdown_tx.lock().await;
-        if let Some(tx) = guard.take() {
-            let _ = tx.send(());
+        // Unregistered drivers may still be held by existing Arc references;
+        // reject their new calls immediately rather than silently enqueueing.
+        self.accepting_calls.store(false, Ordering::Release);
+        {
+            let mut guard = self.shutdown_tx.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
+        }
+        // Disable/uninstall/restart must not wait without bound. The management
+        // task itself also enforces the grace period and reaps its child.
+        if let Some(mut task) = self.manager_task.lock().await.take() {
+            if tokio::time::timeout(
+                PLUGIN_SHUTDOWN_GRACE + Duration::from_secs(1),
+                &mut task,
+            ).await.is_err() {
+                // kill_on_drop on the child guarantees no orphan if stdin
+                // becomes stuck and the normal grace timer cannot run.
+                task.abort();
+                let _ = task.await;
+            }
         }
     }
 
@@ -342,6 +441,10 @@ impl PluginProcess {
         timeout: Option<Duration>,
     ) -> Result<Value, PluginCallError> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let mut params = params;
+        if self.route_selected_database {
+            route_selected_plugin_database(&mut params);
+        }
         let req = JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
@@ -350,20 +453,36 @@ impl PluginProcess {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.sender
-            .send(PluginCommand::Call(req, tx))
-            .await
-            .map_err(|_| "Plugin process channel closed".to_string())?;
+        if !self.accepting_calls.load(Ordering::Acquire) {
+            return Err("Plugin is shutting down; new RPC calls are rejected".to_string().into());
+        }
+        let permit = self.sender.reserve().await.map_err(|_| {
+            if self.accepting_calls.load(Ordering::Acquire) {
+                "Plugin process channel closed".to_string()
+            } else {
+                "Plugin is shutting down; new RPC calls are rejected".to_string()
+            }
+        })?;
+        if !self.accepting_calls.load(Ordering::Acquire) {
+            return Err("Plugin is shutting down; new RPC calls are rejected".to_string().into());
+        }
+        permit.send(PluginCommand::Call(req, tx));
 
         let Some(timeout) = timeout else {
             return rx
                 .await
-                .unwrap_or_else(|_| Err("Plugin process did not respond".to_string().into()));
+                .unwrap_or_else(|_| {
+                    Err(dropped_plugin_response_error(
+                        !self.accepting_calls.load(Ordering::Acquire),
+                    ))
+                });
         };
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("Plugin process did not respond".to_string().into()),
+            Ok(Err(_)) => Err(dropped_plugin_response_error(
+                !self.accepting_calls.load(Ordering::Acquire),
+            )),
             Err(_) => {
                 // Tell the management task to drop the now-orphaned pending
                 // entry so it does not leak one slot per timeout.
@@ -398,6 +517,8 @@ impl RpcDriver {
     ) -> Result<Self, String> {
         let mut process =
             PluginProcess::new(manifest.id.clone(), executable_path, interpreter).await?;
+        // Real SQL schemas must never be mistaken for a selected logical database.
+        process.route_selected_database = !manifest.capabilities.schemas;
         // Register manifests immediately. Initialize only when this plugin is
         // actually used, so idle plugins cannot delay the GUI or MCP startup.
         process.initialization_settings = Some(settings);
@@ -1727,9 +1848,12 @@ where
         manifest: test_manifest(),
         process: Arc::new(PluginProcess {
             plugin_id: "test-plugin".to_string(),
+            route_selected_database: true,
             sender: tx,
             next_id: AtomicU64::new(1),
+            accepting_calls: std::sync::atomic::AtomicBool::new(true),
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+            manager_task: tokio::sync::Mutex::new(None),
             pid: None,
             initialization_settings: None,
             initialized: OnceCell::new(),
@@ -1755,6 +1879,215 @@ pub(crate) fn with_test_driver_id(mut driver: RpcDriver, id: &str) -> RpcDriver 
 mod tests {
     use super::*;
     use crate::models::DatabaseSelection;
+    #[test]
+    fn dropped_response_reports_shutdown_on_abort_path() {
+        let shutdown_error = dropped_plugin_response_error(true).to_string();
+        assert!(shutdown_error.contains("Plugin shutdown grace period elapsed"));
+        assert_eq!(
+            dropped_plugin_response_error(false).to_string(),
+            "Plugin process did not respond"
+        );
+    }
+
+
+    #[test]
+    fn selected_plugin_database_routing_only_changes_multi_database_requests() {
+        let mut multi = json!({
+            "params": { "driver": "redis-rust", "database": ["0", "3"] },
+            "schema": "3",
+            "query": "GET example"
+        });
+        route_selected_plugin_database(&mut multi);
+        assert_eq!(multi["params"]["database"], "3");
+        assert_eq!(multi["schema"], "3");
+
+        for input in [
+            json!({ "params": { "database": ["0", "3"] }, "schema": null }),
+            json!({ "params": { "database": ["0", "3"] }, "schema": "other" }),
+            json!({ "params": { "database": "0" }, "schema": "3" }),
+            json!({ "params": { "database": ["3"] }, "schema": "3" }),
+            json!({ "params": { "database": ["0", "3"] }, "schema": "public" }),
+        ] {
+            let mut routed = input.clone();
+            route_selected_plugin_database(&mut routed);
+            assert_eq!(routed, input);
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_schema_aware_plugin_preserves_multi_database_parameters() {
+        let mut driver = test_driver(|req| {
+            assert_eq!(req.params["schema"], "sales");
+            assert_eq!(req.params["params"]["database"], json!(["sales", "analytics"]));
+            json!([])
+        });
+        // SQL Server-style drivers declare schemas; a schema can share a
+        // database name without changing the connection's database selection.
+        Arc::get_mut(&mut driver.process)
+            .unwrap()
+            .route_selected_database = false;
+        let mut params = test_connection_params();
+        params.database =
+            DatabaseSelection::Multiple(vec!["sales".to_string(), "analytics".to_string()]);
+        assert!(driver
+            .get_tables(&params, Some("sales"))
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn rpc_schema_aware_query_keeps_database_list_on_name_collision() {
+        let mut driver = test_driver(|req| {
+            assert_eq!(req.method, "execute_query");
+            assert_eq!(req.params["schema"], "sales");
+            assert_eq!(
+                req.params["params"]["database"],
+                json!(["sales", "analytics"]),
+                "a SQL schema with the same name as a database must not select it"
+            );
+            json!({
+                "columns": ["id"],
+                "rows": [[1]],
+                "affected_rows": 0,
+                "pagination": null
+            })
+        });
+        Arc::get_mut(&mut driver.process)
+            .unwrap()
+            .route_selected_database = false;
+        let mut params = test_connection_params();
+        params.database =
+            DatabaseSelection::Multiple(vec!["sales".into(), "analytics".into()]);
+        let (result, _) = driver
+            .execute_query_in_session(
+                &params,
+                "SELECT id FROM sales.orders",
+                None,
+                1,
+                Some("sales"),
+                None,
+            )
+            .await
+            .expect("schema-aware SQL query");
+        assert_eq!(result.rows, vec![vec![json!(1)]]);
+    }
+
+    #[tokio::test]
+    async fn rpc_selected_database_reaches_metadata_query_and_batch_sessions() {
+        let driver = test_driver(|req| {
+            assert_eq!(
+                req.params["schema"], "3",
+                "selection must still be available"
+            );
+            assert_eq!(
+                req.params["params"]["database"], "3",
+                "selected DB must be scalar"
+            );
+            match req.method.as_str() {
+                "get_tables" => json!([]),
+                "execute_query" => json!({
+                    "columns": ["key"], "rows": [["db3-key"]],
+                    "affected_rows": 0, "pagination": null
+                }),
+                "execute_query_batch" => json!([]),
+                unexpected => panic!("unexpected RPC: {unexpected}"),
+            }
+        });
+        let mut params = test_connection_params();
+        params.database = DatabaseSelection::Multiple(vec!["0".to_string(), "3".to_string()]);
+
+        assert!(driver.get_tables(&params, Some("3")).await.unwrap().is_empty());
+        let (query_result, _in_tx) = driver
+            .execute_query_in_session(&params, "GET db3-key", None, 1, Some("3"), Some("db3-session"))
+            .await
+            .unwrap();
+        assert_eq!(query_result.rows.len(), 1);
+        let (results, _in_tx) = driver
+            .execute_batch_in_session(
+                &params,
+                &["GET db3-key".to_string()],
+                None,
+                1,
+                Some("3"),
+                Some("db3-session"),
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    // Simulate the redis-rust selection behavior: DB 0 has no keys, DB 3
+    // contains a key. Querying through a multi-DB connection must select the
+    // requested database, not the first database in the connection list.
+    #[tokio::test]
+    async fn rpc_selected_database_query_uses_db3_instead_of_db0() {
+        let driver = test_driver(|request| {
+            assert_eq!(request.method, "execute_query");
+            let selected = request.params["params"]["database"]
+                .as_str()
+                .expect("plugin must receive a scalar database");
+            let rows = if selected == "3" {
+                json!([["db3-only-key"]])
+            } else {
+                json!([])
+            };
+            json!({
+                "columns": ["key"],
+                "rows": rows,
+                "affected_rows": 0,
+                "pagination": null
+            })
+        });
+        let mut params = test_connection_params();
+        params.database = DatabaseSelection::Multiple(vec!["0".into(), "3".into()]);
+
+        let (db0, _) = driver
+            .execute_query_in_session(&params, "KEYS *", None, 1, Some("0"), None)
+            .await
+            .expect("DB 0 query");
+        let (db3, _) = driver
+            .execute_query_in_session(&params, "KEYS *", None, 1, Some("3"), None)
+            .await
+            .expect("DB 3 query");
+        assert!(db0.rows.is_empty(), "DB 0 must be empty");
+        assert_eq!(db3.rows, vec![vec![json!("db3-only-key")]]);
+    }
+
+    #[tokio::test]
+    async fn rpc_non_session_batch_uses_selected_database() {
+        let driver = test_driver(|request| {
+            assert_eq!(request.method, "execute_query_batch");
+            assert_eq!(request.params["params"]["database"], "3");
+            assert_eq!(request.params["schema"], "3");
+            json!([])
+        });
+        let mut params = test_connection_params();
+        params.database = DatabaseSelection::Multiple(vec!["0".into(), "3".into()]);
+
+        let results = driver
+            .execute_batch(
+                &params, &["GET db3-only-key".to_string()],
+                None, 1, Some("3"), None,
+            )
+            .await
+            .expect("batch request");
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rpc_single_database_plugin_request_is_not_rewritten() {
+        let driver = test_driver(|req| {
+            assert_eq!(req.method, "get_tables");
+            assert_eq!(req.params["params"]["database"], "0");
+            assert_eq!(req.params["schema"], "3");
+            json!([])
+        });
+        let mut params = test_connection_params();
+        params.database = DatabaseSelection::Single("0".to_string());
+        assert!(driver.get_tables(&params, Some("3")).await.unwrap().is_empty());
+    }
 
     fn test_connection_params() -> ConnectionParams {
         ConnectionParams {
@@ -2676,9 +3009,12 @@ mod tests {
             manifest,
             process: Arc::new(PluginProcess {
                 plugin_id: "test-plugin".to_string(),
+                route_selected_database: false,
                 sender: tx,
                 next_id: AtomicU64::new(1),
+                accepting_calls: std::sync::atomic::AtomicBool::new(true),
                 shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+                manager_task: tokio::sync::Mutex::new(None),
                 pid: None,
                 initialization_settings: None,
                 initialized: OnceCell::new(),
@@ -2708,9 +3044,12 @@ mod tests {
             manifest: test_manifest(), // empty type_mappings
             process: Arc::new(PluginProcess {
                 plugin_id: "test-plugin".to_string(),
+                route_selected_database: false,
                 sender: tx,
                 next_id: AtomicU64::new(1),
+                accepting_calls: std::sync::atomic::AtomicBool::new(true),
                 shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+                manager_task: tokio::sync::Mutex::new(None),
                 pid: None,
                 initialization_settings: None,
                 initialized: OnceCell::new(),
