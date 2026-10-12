@@ -27,6 +27,8 @@ use std::os::windows::process::CommandExt;
 
 /// The first operation waits for initialization of its own plugin only.
 const PLUGIN_INIT_TIMEOUT: Duration = Duration::from_secs(15);
+/// Allow already accepted RPC calls to finish before killing a plugin.
+const PLUGIN_SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
 /// Flag to create the process without a console window on Windows.
 #[cfg(windows)]
@@ -111,6 +113,19 @@ fn is_method_not_found(err: &str) -> bool {
     err.to_lowercase().contains("method not found") || err.contains("-32601")
 }
 
+/// A manager task may be aborted after its outer shutdown bound. If that
+/// drops a pending response sender, tell the caller shutdown caused it rather
+/// than reporting a generic unresponsive plugin.
+fn dropped_plugin_response_error(shutting_down: bool) -> PluginCallError {
+    if shutting_down {
+        "Plugin shutdown grace period elapsed before RPC completed"
+            .to_string()
+            .into()
+    } else {
+        "Plugin process did not respond".to_string().into()
+    }
+}
+
 /// Preserve the sidebar selection at the plugin RPC boundary. A multi-DB
 /// connection serializes `database` as an array; plugins such as redis-rust
 /// select the actual connection from `params.database` instead of `schema`.
@@ -160,7 +175,9 @@ pub struct PluginProcess {
     route_selected_database: bool,
     sender: mpsc::Sender<PluginCommand>,
     next_id: AtomicU64,
+    accepting_calls: std::sync::atomic::AtomicBool,
     shutdown_tx: tokio::sync::Mutex<Option<oneshot::Sender<()>>>,
+    manager_task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub pid: Option<u32>,
     initialization_settings: Option<HashMap<String, Value>>,
     initialized: OnceCell<()>,
@@ -209,7 +226,7 @@ impl PluginProcess {
         let pid = child.id();
 
         // Hand the running child off to the management task.
-        tokio::spawn(async move {
+        let manager_task = tokio::spawn(async move {
             let mut child = child;
             let mut rx = rx;
             let mut shutdown_rx = shutdown_rx;
@@ -223,15 +240,33 @@ impl PluginProcess {
                 oneshot::Sender<Result<Value, PluginCallError>>,
             > = HashMap::new();
             let mut line_buf = String::new();
+            let mut shutdown_deadline: Option<tokio::time::Instant> = None;
+            let mut channel_drained = false;
 
             loop {
+                if shutdown_deadline.is_some()
+                    && channel_drained
+                    && pending_requests.is_empty()
+                {
+                    break;
+                }
                 tokio::select! {
-                    _ = &mut shutdown_rx => {
-                        log::info!("Plugin process shutdown requested, terminating child");
-                        let _ = child.kill().await;
+                    _ = &mut shutdown_rx, if shutdown_deadline.is_none() => {
+                        // Existing callers with a reserved queue slot may still
+                        // enqueue; receive those requests before deciding we are
+                        // fully drained. No fresh reservations are allowed.
+                        rx.close();
+                        shutdown_deadline =
+                            Some(tokio::time::Instant::now() + PLUGIN_SHUTDOWN_GRACE);
+                        log::info!("Plugin shutdown requested; draining in-flight RPCs");
+                    }
+                    _ = tokio::time::sleep_until(
+                        shutdown_deadline.unwrap_or_else(tokio::time::Instant::now)
+                    ), if shutdown_deadline.is_some() => {
+                        log::warn!("Plugin shutdown grace period elapsed; terminating child");
                         break;
                     }
-                    msg = rx.recv() => {
+                    msg = rx.recv(), if !channel_drained => {
                         match msg {
                             Some(PluginCommand::Call(req, resp_tx)) => {
                                 let id = req.id;
@@ -265,10 +300,12 @@ impl PluginProcess {
                                 }
                             }
                             None => {
-                                // Channel closed without explicit shutdown — kill the process anyway.
-                                log::warn!("Plugin process channel closed without shutdown signal, terminating child");
-                                let _ = child.kill().await;
-                                break;
+                                if shutdown_deadline.is_some() {
+                                    channel_drained = true;
+                                } else {
+                                    log::warn!("Plugin process channel closed without shutdown signal");
+                                    break;
+                                }
                             }
                         }
                     }
@@ -311,6 +348,16 @@ impl PluginProcess {
                     }
                 }
             }
+            // Give remaining callers a specific shutdown failure instead of
+            // an ambiguous dropped-channel/no-response error.
+            for (_, sender) in pending_requests.drain() {
+                let _ = sender.send(Err(
+                    "Plugin shutdown grace period elapsed before RPC completed"
+                        .to_string()
+                        .into(),
+                ));
+            }
+            let _ = child.kill().await;
         });
 
         Ok(Self {
@@ -318,7 +365,9 @@ impl PluginProcess {
             route_selected_database: false,
             sender: tx,
             next_id: AtomicU64::new(1),
+            accepting_calls: std::sync::atomic::AtomicBool::new(true),
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+            manager_task: tokio::sync::Mutex::new(Some(manager_task)),
             pid,
             initialization_settings: None,
             initialized: OnceCell::new(),
@@ -326,9 +375,27 @@ impl PluginProcess {
     }
 
     async fn shutdown(&self) {
-        let mut guard = self.shutdown_tx.lock().await;
-        if let Some(tx) = guard.take() {
-            let _ = tx.send(());
+        // Unregistered drivers may still be held by existing Arc references;
+        // reject their new calls immediately rather than silently enqueueing.
+        self.accepting_calls.store(false, Ordering::Release);
+        {
+            let mut guard = self.shutdown_tx.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(());
+            }
+        }
+        // Disable/uninstall/restart must not wait without bound. The management
+        // task itself also enforces the grace period and reaps its child.
+        if let Some(mut task) = self.manager_task.lock().await.take() {
+            if tokio::time::timeout(
+                PLUGIN_SHUTDOWN_GRACE + Duration::from_secs(1),
+                &mut task,
+            ).await.is_err() {
+                // kill_on_drop on the child guarantees no orphan if stdin
+                // becomes stuck and the normal grace timer cannot run.
+                task.abort();
+                let _ = task.await;
+            }
         }
     }
 
@@ -386,20 +453,36 @@ impl PluginProcess {
         };
 
         let (tx, rx) = oneshot::channel();
-        self.sender
-            .send(PluginCommand::Call(req, tx))
-            .await
-            .map_err(|_| "Plugin process channel closed".to_string())?;
+        if !self.accepting_calls.load(Ordering::Acquire) {
+            return Err("Plugin is shutting down; new RPC calls are rejected".to_string().into());
+        }
+        let permit = self.sender.reserve().await.map_err(|_| {
+            if self.accepting_calls.load(Ordering::Acquire) {
+                "Plugin process channel closed".to_string()
+            } else {
+                "Plugin is shutting down; new RPC calls are rejected".to_string()
+            }
+        })?;
+        if !self.accepting_calls.load(Ordering::Acquire) {
+            return Err("Plugin is shutting down; new RPC calls are rejected".to_string().into());
+        }
+        permit.send(PluginCommand::Call(req, tx));
 
         let Some(timeout) = timeout else {
             return rx
                 .await
-                .unwrap_or_else(|_| Err("Plugin process did not respond".to_string().into()));
+                .unwrap_or_else(|_| {
+                    Err(dropped_plugin_response_error(
+                        !self.accepting_calls.load(Ordering::Acquire),
+                    ))
+                });
         };
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("Plugin process did not respond".to_string().into()),
+            Ok(Err(_)) => Err(dropped_plugin_response_error(
+                !self.accepting_calls.load(Ordering::Acquire),
+            )),
             Err(_) => {
                 // Tell the management task to drop the now-orphaned pending
                 // entry so it does not leak one slot per timeout.
@@ -1768,7 +1851,9 @@ where
             route_selected_database: true,
             sender: tx,
             next_id: AtomicU64::new(1),
+            accepting_calls: std::sync::atomic::AtomicBool::new(true),
             shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+            manager_task: tokio::sync::Mutex::new(None),
             pid: None,
             initialization_settings: None,
             initialized: OnceCell::new(),
@@ -1794,6 +1879,16 @@ pub(crate) fn with_test_driver_id(mut driver: RpcDriver, id: &str) -> RpcDriver 
 mod tests {
     use super::*;
     use crate::models::DatabaseSelection;
+    #[test]
+    fn dropped_response_reports_shutdown_on_abort_path() {
+        let shutdown_error = dropped_plugin_response_error(true).to_string();
+        assert!(shutdown_error.contains("Plugin shutdown grace period elapsed"));
+        assert_eq!(
+            dropped_plugin_response_error(false).to_string(),
+            "Plugin process did not respond"
+        );
+    }
+
 
     #[test]
     fn selected_plugin_database_routing_only_changes_multi_database_requests() {
@@ -2917,7 +3012,9 @@ mod tests {
                 route_selected_database: false,
                 sender: tx,
                 next_id: AtomicU64::new(1),
+                accepting_calls: std::sync::atomic::AtomicBool::new(true),
                 shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+                manager_task: tokio::sync::Mutex::new(None),
                 pid: None,
                 initialization_settings: None,
                 initialized: OnceCell::new(),
@@ -2950,7 +3047,9 @@ mod tests {
                 route_selected_database: false,
                 sender: tx,
                 next_id: AtomicU64::new(1),
+                accepting_calls: std::sync::atomic::AtomicBool::new(true),
                 shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),
+                manager_task: tokio::sync::Mutex::new(None),
                 pid: None,
                 initialization_settings: None,
                 initialized: OnceCell::new(),
