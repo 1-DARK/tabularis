@@ -12,7 +12,7 @@ const projectFile = (path: string): string =>
 describe("plugin isolation acceptance contract", () => {
   it("sets a restrictive app CSP and a network-denying guest CSP", () => {
     const tauri = JSON.parse(projectFile("src-tauri/tauri.conf.json")) as {
-      app: { security: { csp: Record<string, string> | null } };
+      app: { security: { csp: Record<string, string> | null; dangerousDisableAssetCspModification?: string[] } };
     };
     const csp = tauri.app.security.csp;
 
@@ -21,10 +21,12 @@ describe("plugin isolation acceptance contract", () => {
       "default-src": "'self'",
       "script-src": "'self'",
       "worker-src": "'self' blob:",
-      "connect-src": "ipc: http://ipc.localhost https://raw.githubusercontent.com",
+      "connect-src": "ipc: http://ipc.localhost https://raw.githubusercontent.com https://oauth2.googleapis.com",
+      "img-src": expect.stringContaining("https:"),
       "frame-src": "tabularis-plugin: http://tabularis-plugin.localhost",
       "object-src": "'none'",
     });
+    expect(tauri.app.security.dangerousDisableAssetCspModification).toContain("style-src");
 
     const protocol = projectFile("src-tauri/src/plugins/sandbox_protocol.rs");
     expect(protocol).toMatch(/sandbox allow-scripts/);
@@ -71,10 +73,17 @@ describe("plugin isolation acceptance contract", () => {
       '"api.toast"',
       '"api.setting.set"',
       '"api.openUrl"',
+      '"api.oauth.googleToken"',
+      '"slot.onDatabaseChange"',
+      '"slot.setExtraField"',
+      '"slot.setCredentialFieldsHidden"',
     ]) {
       expect(host).toContain(method);
     }
     expect(host).toContain("isReadOnlyQuery(query)");
+    expect(host).toContain("https://oauth2.googleapis.com/token");
+    expect(host).toContain("Unsupported Google OAuth token field");
+    expect(host).toContain("serializePluginSlotContext");
     expect(host).toContain("plugins[pluginId]");
     expect(host).toContain("65_536");
     expect(host).toContain("Only HTTP and HTTPS URLs can be opened");
@@ -96,6 +105,11 @@ describe("plugin isolation acceptance contract", () => {
     }
     expect(guest).toContain("__TABULARIS_API__");
     expect(guest).toContain("GuestModalContext");
+    expect(guest).toContain("exchangeGoogleOAuthToken");
+    expect(projectFile("src-tauri/resources/guest/__guest__.html")).toContain("__runtime__.js");
+    expect(projectFile("src-tauri/resources/guest/__guest__.html")).toContain("__host.css__");
+    expect(projectFile("src-tauri/src/plugins/sandbox_protocol.rs")).toContain('"__runtime__.js"');
+    expect(projectFile("src-tauri/src/plugins/sandbox_protocol.rs")).not.toContain('"runtime.js" |');
     expect(guest).not.toMatch(/@tauri-apps\/api\/core/);
     expect(guest).not.toMatch(/\binvoke\s*\(/);
     expect(guest).not.toContain("__TAURI__");
@@ -128,7 +142,10 @@ describe("plugin isolation acceptance contract", () => {
     expect(explainDesign).toContain("migration");
     expect(guide).toContain("UI_SANDBOX_DESIGN.md");
     expect(apiReadme).toContain("has no direct Tauri `invoke` access");
-    expect(apiVersion).toContain('API_VERSION = "0.2.0"');
-    expect(apiVersion).toContain('MIN_HOST_VERSION = "0.2.0"');
+    expect(apiVersion).toContain('API_VERSION = "0.3.0"');
+    expect(apiVersion).toContain('MIN_HOST_VERSION = "0.3.0"');
+    expect(uiDesign).toContain("not a security boundary");
+    expect(uiDesign).toContain("Related connection-export hardening");
+    expect(uiDesign).toContain("exchangeGoogleOAuthToken");
   });
 });

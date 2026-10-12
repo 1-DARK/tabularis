@@ -3,6 +3,7 @@ import * as ReactJSXRuntime from "react/jsx-runtime";
 import { createRoot } from "react-dom/client";
 import * as explainApi from "@tabularis/explain";
 import { RpcPort } from "../../../src/plugins/sandbox/rpc";
+import { hydratePluginSlotContext } from "../../../src/plugins/sandbox/slotContext";
 
 type PluginComponent = React.ComponentType<{ context: Record<string, unknown>; pluginId: string }>;
 type GuestGlobal = Window & Record<string, unknown>;
@@ -115,6 +116,7 @@ const guestApi = Object.freeze({
     };
   },
   openUrl: (url: string) => callHost("api.openUrl", url),
+  exchangeGoogleOAuthToken: (request: unknown) => callHostResult("api.oauth.googleToken", request),
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -126,6 +128,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 function callHost(method: string, ...args: unknown[]): Promise<void> {
   if (!rpcPort) return Promise.reject(new Error("Plugin host connection is unavailable"));
   return rpcPort.call(method, args).then(() => undefined);
+}
+
+function callHostResult<T>(method: string, ...args: unknown[]): Promise<T> {
+  if (!rpcPort) return Promise.reject(new Error("Plugin host connection is unavailable"));
+  return rpcPort.call(method, args) as Promise<T>;
 }
 
 function GuestRoot({ component: Component }: { component: PluginComponent }) {
@@ -170,7 +177,7 @@ Object.assign(guestWindow, {
   ReactJSXRuntime,
   __TABULARIS_EXPLAIN__: explainApi,
   __TABULARIS_API__: guestApi,
-  __TABULARIS_API_VERSION__: "0.2.0",
+  __TABULARIS_API_VERSION__: "0.3.0",
 });
 
 function loadExplainModule(): Promise<Record<string, unknown>[]> {
@@ -233,7 +240,9 @@ function start(port: MessagePort): void {
     if (method === "slot.context") {
       const next = Array.isArray(args) ? args[0] : args;
       if (next && typeof next === "object" && !Array.isArray(next)) {
-        currentContext = next as Record<string, unknown>;
+        currentContext = hydratePluginSlotContext(next as Record<string, unknown>, (callback, ...values) => {
+          void rpc.call(callback, values).catch(() => undefined);
+        });
         renderPlugin?.();
       }
       return null;

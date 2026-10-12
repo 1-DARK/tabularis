@@ -1,8 +1,11 @@
 export type RpcHandler = (method: string, params: unknown) => unknown | Promise<unknown>;
 
+const RPC_TIMEOUT_MS = 30_000;
+
 interface PendingCall {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timeoutId: number;
 }
 
 /** Request/response RPC for the single MessagePort shared with one plugin frame. */
@@ -23,6 +26,7 @@ export class RpcPort {
         const pending = this.pending.get(message.id);
         if (!pending) return;
         this.pending.delete(message.id);
+        window.clearTimeout(pending.timeoutId);
         if (typeof message.error === "string") pending.reject(new Error(message.error));
         else pending.resolve(message.result);
         return;
@@ -38,14 +42,27 @@ export class RpcPort {
   call(method: string, params: unknown[] = []): Promise<unknown> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.port.postMessage({ kind: "request", id, method, params });
+      const timeoutId = window.setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Plugin RPC timed out: ${method}`));
+      }, RPC_TIMEOUT_MS);
+      this.pending.set(id, { resolve, reject, timeoutId });
+      try {
+        this.port.postMessage({ kind: "request", id, method, params });
+      } catch (error) {
+        window.clearTimeout(timeoutId);
+        this.pending.delete(id);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
     });
   }
 
   close(): void {
     this.port.close();
-    for (const call of this.pending.values()) call.reject(new Error("Plugin frame closed"));
+    for (const call of this.pending.values()) {
+      window.clearTimeout(call.timeoutId);
+      call.reject(new Error("Plugin frame closed"));
+    }
     this.pending.clear();
   }
 

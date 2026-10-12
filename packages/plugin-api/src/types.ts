@@ -71,6 +71,24 @@ export interface PluginQueryResult {
   rows: unknown[][];
 }
 
+export interface GoogleOAuthTokenRequest {
+  grant_type: "authorization_code" | "refresh_token";
+  code?: string;
+  client_id: string;
+  client_secret?: string;
+  redirect_uri?: string;
+  code_verifier?: string;
+  refresh_token?: string;
+}
+
+export interface GoogleOAuthTokenResponse {
+  access_token: string;
+  expires_in: number;
+  refresh_token?: string;
+  scope?: string;
+  token_type?: string;
+}
+
 export interface UsePluginQueryReturn {
   executeQuery: (query: string) => Promise<PluginQueryResult>;
   loading: boolean;
@@ -127,4 +145,5 @@ export interface TabularisHostApi {
   usePluginModal: () => UsePluginModalReturn;
   usePluginTheme: () => UsePluginThemeReturn;
   openUrl: (url: string) => Promise<void>;
+  exchangeGoogleOAuthToken: (request: GoogleOAuthTokenRequest) => Promise<GoogleOAuthTokenResponse>;
 }

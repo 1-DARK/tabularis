@@ -8,6 +8,7 @@ import { ThemeContext } from "../../contexts/ThemeContext";
 import { isReadOnlyQuery } from "../../utils/sqlAnalysis";
 import type { SlotContext } from "../../types/pluginSlots";
 import { connectFrame, pluginFrameUrl } from "./connectFrame";
+import { serializePluginSlotContext } from "./slotContext";
 import type { RpcPort } from "./rpc";
 
 interface Props {
@@ -55,13 +56,33 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         const requested = typeof value === "number" ? value : 0;
         setHeight(Math.min(MAX_HEIGHT, Math.max(0, requested)));
       },
-      "slot.context": () => structuredClone(contextRef.current),
+      "slot.context": () => serializePluginSlotContext(contextRef.current),
+      "slot.onDatabaseChange": (value: unknown) => {
+        if (typeof value !== "string") throw new Error("Database must be a string");
+        const callback = contextRef.current.onDatabaseChange;
+        if (typeof callback !== "function") throw new Error("Database change is unavailable in this slot");
+        callback(value);
+      },
+      "slot.setExtraField": (key: unknown, value: unknown) => {
+        if (typeof key !== "string" || !key || key.length > 256 || typeof value !== "string" || value.length > 16_384) {
+          throw new Error("Invalid connection field value");
+        }
+        const callback = contextRef.current.setExtraField;
+        if (typeof callback !== "function") throw new Error("Extra fields are unavailable in this slot");
+        callback(key, value);
+      },
+      "slot.setCredentialFieldsHidden": (hidden: unknown) => {
+        if (typeof hidden !== "boolean") throw new Error("Credential visibility must be a boolean");
+        const callback = contextRef.current.setCredentialFieldsHidden;
+        if (typeof callback !== "function") throw new Error("Credential fields are unavailable in this slot");
+        callback(hidden);
+      },
       "api.query": async (query: unknown) => {
         if (typeof query !== "string" || query.trim().length === 0 || query.length > 100_000) {
           throw new Error("SQL query must contain between 1 and 100,000 characters");
         }
         if (!isReadOnlyQuery(query)) {
-          throw new Error("Plugin queries must be read-only");
+          throw new Error("Plugin SQL statement type is not allowed by the host filter");
         }
         const active = contextRef.current;
         if (typeof active.connectionId !== "string" || !active.connectionId) {
@@ -110,6 +131,51 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         await openExternal(url.toString());
         return null;
       },
+      "api.oauth.googleToken": async (value: unknown) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error("Invalid Google OAuth token request");
+        }
+        const input = value as Record<string, unknown>;
+        const allowed = new Set([
+          "grant_type", "code", "client_id", "client_secret", "redirect_uri", "code_verifier", "refresh_token",
+        ]);
+        if (Object.keys(input).some((key) => !allowed.has(key))) {
+          throw new Error("Unsupported Google OAuth token field");
+        }
+        const grantType = input.grant_type;
+        if (grantType !== "authorization_code" && grantType !== "refresh_token") {
+          throw new Error("Unsupported Google OAuth grant type");
+        }
+        const fields = new URLSearchParams();
+        for (const [key, field] of Object.entries(input)) {
+          if (typeof field !== "string" || !field || field.length > 16_384) {
+            throw new Error(`Invalid Google OAuth field: ${key}`);
+          }
+          fields.set(key, field);
+        }
+        if (typeof input.client_id !== "string" ||
+          (grantType === "authorization_code" && (typeof input.code !== "string" || typeof input.redirect_uri !== "string")) ||
+          (grantType === "refresh_token" && typeof input.refresh_token !== "string")) {
+          throw new Error("Missing required Google OAuth fields");
+        }
+        const response = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: fields,
+        });
+        if (!response.ok) throw new Error(`Google OAuth token request failed (${response.status})`);
+        const token = await response.json() as Record<string, unknown>;
+        if (typeof token.access_token !== "string" || typeof token.expires_in !== "number") {
+          throw new Error("Google returned an invalid token response");
+        }
+        return {
+          access_token: token.access_token,
+          expires_in: token.expires_in,
+          ...(typeof token.refresh_token === "string" ? { refresh_token: token.refresh_token } : {}),
+          ...(typeof token.scope === "string" ? { scope: token.scope } : {}),
+          ...(typeof token.token_type === "string" ? { token_type: token.token_type } : {}),
+        };
+      },
       "host.loadFailed": (message: unknown) => {
         console.error(`[PluginSlot] ${pluginId}/${module}: ${String(message)}`);
       },
@@ -122,7 +188,7 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
       }
       rpcRef.current = rpc;
       try {
-        await rpc.call("slot.context", [contextRef.current]);
+        await rpc.call("slot.context", [serializePluginSlotContext(contextRef.current)]);
       } catch (error) {
         console.error(`[PluginSlot] Failed to initialize ${pluginId}/${module}`, error);
       }
@@ -142,7 +208,7 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
 
   useEffect(() => {
     contextRef.current = guestContext;
-    void rpcRef.current?.call("slot.context", [guestContext]).catch(() => undefined);
+    void rpcRef.current?.call("slot.context", [serializePluginSlotContext(guestContext)]).catch(() => undefined);
   }, [guestContext]);
 
   return (

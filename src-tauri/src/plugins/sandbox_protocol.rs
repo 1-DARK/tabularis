@@ -56,9 +56,7 @@ pub fn read_plugin_file_confined(plugin_id: &str, rel: &str) -> Result<Vec<u8>, 
             Component::ParentDir | Component::RootDir | Component::Prefix(_)
         )
     }) {
-        return Err(
-            "Invalid file path: must be relative and contain no '..' components".into(),
-        );
+        return Err("Invalid file path: must be relative and contain no '..' components".into());
     }
 
     let plugin_dir = crate::plugins::installer::resolve_plugin_dir(plugin_id)?;
@@ -75,9 +73,8 @@ pub fn read_plugin_file_confined(plugin_id: &str, rel: &str) -> Result<Vec<u8>, 
         return Err("Path escapes plugin directory".into());
     }
 
-    fs::read(&canonical).map_err(|e| {
-        format!("Failed to read '{rel}' from plugin '{plugin_id}': {e}")
-    })
+    fs::read(&canonical)
+        .map_err(|e| format!("Failed to read '{rel}' from plugin '{plugin_id}': {e}"))
 }
 
 pub fn handle<R: Runtime>(_app: &AppHandle<R>, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
@@ -96,10 +93,11 @@ pub fn handle<R: Runtime>(_app: &AppHandle<R>, req: Request<Vec<u8>>) -> Respons
 
     let (body, content_type) = match rel {
         "__guest__.html" => (GUEST_HTML.to_vec(), "text/html; charset=utf-8"),
-        "runtime.js" | "__runtime__.js" => {
-            (GUEST_RUNTIME_JS.to_vec(), "application/javascript; charset=utf-8")
-        }
-        "host.css" | "__host.css__" => (HOST_CSS.to_vec(), "text/css; charset=utf-8"),
+        "__runtime__.js" => (
+            GUEST_RUNTIME_JS.to_vec(),
+            "application/javascript; charset=utf-8",
+        ),
+        "__host.css__" => (HOST_CSS.to_vec(), "text/css; charset=utf-8"),
         other => match read_plugin_file_confined(plugin_id, other) {
             Ok(bytes) => (bytes, mime_for(other)),
             Err(_) => return plain(StatusCode::NOT_FOUND, "not found"),

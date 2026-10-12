@@ -203,9 +203,10 @@ function effectiveStatementKeyword(cleaned: string): string | null {
   return keyword;
 }
 
-// True when every statement in `sql` is clearly read-only (SELECT/SHOW/
-// EXPLAIN-of-a-SELECT/...). Used by the production write warning: a `false`
-// here means "may write", so unknown statement types err on prompting.
+// True when every statement's leading keyword is classified as read-only
+// (SELECT/SHOW/EXPLAIN-of-a-SELECT/...). This does not inspect side effects
+// inside SELECT functions or database-specific syntax, so it is a query
+// classification aid, not a security boundary. Use database grants for that.
 export const isReadOnlyQuery = (sql: string): boolean =>
   stripCommentsAndLiterals(sql)
     .split(';')

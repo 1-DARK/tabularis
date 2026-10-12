@@ -6791,8 +6791,7 @@ pub(crate) async fn export_connections_payload_unconfirmed<R: Runtime>(
     // before password resolution so unselected credentials never leave the
     // keychain.
     if let Some(ids) = &connection_ids {
-        let selected: std::collections::HashSet<&str> =
-            ids.iter().map(String::as_str).collect();
+    let selected: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
         conn_file
             .connections
             .retain(|c| selected.contains(c.id.as_str()));

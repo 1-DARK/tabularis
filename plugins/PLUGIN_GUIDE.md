@@ -371,7 +371,7 @@ Add an optional `ui_extensions` array to your manifest:
 | `sidebar.footer.actions` | Explorer sidebar footer | `connectionId`, `driver` | Status indicators, quick actions |
 | `settings.plugin.actions` | Per-plugin actions in Settings modal | `targetPluginId` | Diagnostics, re-auth buttons |
 | `settings.plugin.before_settings` | Content above plugin settings form | `targetPluginId` | OAuth panels, status banners |
-| `connection-modal.connection_content` | Inside the connection form | `driver` | Custom connection fields |
+| `connection-modal.connection_content` | Inside the connection form | `driver`, `database`, `connectionName`, `onDatabaseChange` | Custom connection fields; the callback is bridged over host RPC |
 | `connection-modal.extra_fields` | Below host/port in the connection form | `driver`, `extra`, `setExtraField`, `credentialFieldsHidden`, `setCredentialFieldsHidden` | Plugin-specific connection fields (e.g. AWS region). `setCredentialFieldsHidden(true)` hides and clears the host username/password inputs for drivers that authenticate without a login; while hidden the host also ignores the login of an imported connection string and drops the stored password on save |
 
 ### SlotContext
@@ -490,7 +490,7 @@ in [`UI_SANDBOX_DESIGN.md`](./UI_SANDBOX_DESIGN.md).
 
 | Hook | Returns | Purpose |
 |------|---------|---------|
-| `usePluginQuery()` | `(query: string) => Promise<{ columns, rows }>` | Execute read-only SQL on the active connection; writes and unrecognized statements are rejected |
+| `usePluginQuery()` | `(query: string) => Promise<{ columns, rows }>` | Execute SQL after a best-effort statement-type filter; not a security boundary |
 | `usePluginConnection()` | `{ connectionId, driver, schema }` | Access active connection metadata |
 | `usePluginToast()` | `{ showInfo(), showError(), showWarning() }` | Show toast notifications |
 | `usePluginModal()` | `{ openModal(options), closeModal() }` | Show custom React content in a modal contained in the plugin iframe |
@@ -498,6 +498,7 @@ in [`UI_SANDBOX_DESIGN.md`](./UI_SANDBOX_DESIGN.md).
 | `usePluginTheme()` | `{ themeId, themeName, isDark, colors }` | Access current theme info |
 | `usePluginTranslation(pluginId)` | `t(key)` | Access plugin-specific i18n translations |
 | `openUrl(url)` | `Promise<void>` | Open a URL in the system browser |
+| `exchangeGoogleOAuthToken(request)` | `Promise<GoogleOAuthTokenResponse>` | Exchange or refresh Google OAuth tokens at the host-fixed Google endpoint |
 
 #### Plugin Modal
 

@@ -459,7 +459,8 @@ pub async fn fetch_plugin_readme(
 /// The `file_path` must be a relative path with no `..` components.
 #[tauri::command]
 pub fn read_plugin_file(plugin_id: String, file_path: String) -> Result<String, String> {
-    let bytes = crate::plugins::sandbox_protocol::read_plugin_file_confined(&plugin_id, &file_path)?;
+    let bytes =
+        crate::plugins::sandbox_protocol::read_plugin_file_confined(&plugin_id, &file_path)?;
     String::from_utf8(bytes).map_err(|e| {
         format!(
             "Failed to read '{}' from plugin '{}': {}",
