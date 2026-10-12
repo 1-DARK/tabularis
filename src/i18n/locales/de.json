@@ -1369,6 +1369,7 @@
       "reattach": "Wieder andocken"
     },
     "tableRunPrompt": "Drücke Ausführen (Ctrl/Command+F5), um Tabellendaten zu laden",
+    "duplicateTab": "Tab duplizieren",
     "closeTab": "Tab schließen",
     "reopenClosedTab": "Geschlossenen Tab wieder öffnen",
     "closeOthers": "Andere Tabs schließen",
