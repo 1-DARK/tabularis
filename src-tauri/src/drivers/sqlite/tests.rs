@@ -436,3 +436,58 @@ mod sqlite_push_pk_where_tests {
         assert_eq!(qb.sql(), "\"a\"\"b\" = ?");
     }
 }
+
+#[tokio::test]
+async fn read_only_query_returns_rows() {
+    let (params, _file) = setup_test_db().await;
+    let result =
+        super::execute_read_only_query(&params, "SELECT name FROM users ORDER BY id", None, 1)
+            .await
+            .expect("a read runs in read-only mode");
+    assert_eq!(result.rows.len(), 2);
+}
+
+#[tokio::test]
+async fn read_only_query_rejects_writes() {
+    let (params, _file) = setup_test_db().await;
+    for write in [
+        "INSERT INTO users (name) VALUES ('Mallory')",
+        "UPDATE users SET name = 'x'",
+        "CREATE TABLE stolen (id INTEGER)",
+        "PRAGMA user_version = 42",
+    ] {
+        assert!(
+            super::execute_read_only_query(&params, write, None, 1)
+                .await
+                .is_err(),
+            "{write} must be rejected"
+        );
+    }
+    let users = super::execute_query(&params, "SELECT COUNT(*) FROM users", None, 1)
+        .await
+        .expect("count users");
+    assert_eq!(users.rows[0][0], serde_json::json!(2));
+    let version = super::execute_query(&params, "PRAGMA user_version", None, 1)
+        .await
+        .expect("read user_version");
+    assert_eq!(version.rows[0][0], serde_json::json!(0));
+}
+
+#[tokio::test]
+async fn read_only_query_does_not_leak_into_the_pool() {
+    let (params, _file) = setup_test_db().await;
+    // Fail once and succeed once, then make sure ordinary writes still work
+    // on whatever pooled connection comes next.
+    let _ = super::execute_read_only_query(&params, "DELETE FROM users", None, 1).await;
+    let _ = super::execute_read_only_query(&params, "SELECT 1", None, 1).await;
+    for _ in 0..3 {
+        super::execute_query(
+            &params,
+            "INSERT INTO users (name) VALUES ('Carol')",
+            None,
+            1,
+        )
+        .await
+        .expect("writes still work after a read-only query");
+    }
+}

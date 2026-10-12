@@ -755,6 +755,38 @@ pub async fn execute_query(
     exec_on_sqlite_conn(&mut *conn, query, limit, page).await
 }
 
+/// Runs one statement with `PRAGMA query_only` on, inside a transaction that
+/// is always rolled back, so SQLite rejects any write the statement attempts.
+///
+/// The connection goes back to the pool only once the transaction is closed
+/// and `query_only` is off again; otherwise it is closed.
+pub async fn execute_read_only_query(
+    params: &ConnectionParams,
+    query: &str,
+    limit: Option<u32>,
+    page: u32,
+) -> Result<QueryResult, String> {
+    use sqlx::Executor as _;
+    let pool = get_sqlite_pool(params).await?;
+    let mut guard =
+        crate::drivers::common::DetachOnDrop::new(pool.acquire().await.map_err(|e| e.to_string())?);
+    guard
+        .conn()
+        .execute(sqlx::raw_sql("PRAGMA query_only = ON; BEGIN"))
+        .await
+        .map_err(|e| e.to_string())?;
+    let outcome = exec_on_sqlite_conn(guard.conn(), query, limit, page).await;
+    match guard
+        .conn()
+        .execute(sqlx::raw_sql("ROLLBACK; PRAGMA query_only = OFF"))
+        .await
+    {
+        Ok(_) => guard.release(),
+        Err(e) => log::warn!("SQLite: resetting after a read-only query failed: {e}"),
+    }
+    outcome
+}
+
 /// Runs a sequence of statements on a single pooled connection so
 /// `BEGIN`/`COMMIT` and temporary-table visibility survive across
 /// statements. SQLite has no user variables, but transactions and temp
@@ -1276,6 +1308,17 @@ impl DatabaseDriver for SqliteDriver {
         _schema: Option<&str>,
     ) -> Result<crate::models::QueryResult, String> {
         execute_query(params, query, limit, page).await
+    }
+
+    async fn execute_read_only_query(
+        &self,
+        params: &crate::models::ConnectionParams,
+        query: &str,
+        limit: Option<u32>,
+        page: u32,
+        _schema: Option<&str>,
+    ) -> Result<crate::models::QueryResult, String> {
+        execute_read_only_query(params, query, limit, page).await
     }
 
     async fn execute_batch(

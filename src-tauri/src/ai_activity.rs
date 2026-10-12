@@ -404,7 +404,13 @@ pub fn classify_query_kind(sql: &str) -> &'static str {
         // `EXPLAIN ANALYZE DELETE …` run past read-only mode and the approval
         // gate. See `classify_explain`.
         "EXPLAIN" => classify_explain(&peeled_upper),
-        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "PRAGMA" | "VALUES" => "select",
+        // A leading SELECT is not proof of a read: `SELECT … INTO` creates a
+        // table (PostgreSQL) or writes a file (MySQL `INTO OUTFILE`), locking
+        // clauses take row locks, and some functions act on the server.
+        "SELECT" | "VALUES" => classify_select_side_effects(&peeled_upper),
+        // `PRAGMA x = …` and `PRAGMA x(…)` change database settings (SQLite).
+        "PRAGMA" => classify_pragma(&peeled_upper),
+        "SHOW" | "DESCRIBE" | "DESC" => "select",
         "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" => "write",
         "CREATE" | "DROP" | "ALTER" | "TRUNCATE" | "RENAME" | "GRANT" | "REVOKE" | "COMMENT" => {
             "ddl"
@@ -515,6 +521,137 @@ fn classify_cte(stripped_upper: &str) -> &'static str {
             return "write";
         }
     }
+    classify_select_side_effects(stripped_upper)
+}
+
+/// PostgreSQL functions that act outside the current transaction (signal
+/// other sessions, reload config, touch server files, open a second
+/// connection). A read-only transaction does not stop them, so a query that
+/// calls one is never a clean read.
+const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
+    "PG_TERMINATE_BACKEND",
+    "PG_CANCEL_BACKEND",
+    "PG_RELOAD_CONF",
+    "PG_ROTATE_LOGFILE",
+    "PG_SWITCH_WAL",
+    "PG_PROMOTE",
+    "PG_CREATE_RESTORE_POINT",
+    "PG_LOG_BACKEND_MEMORY_CONTEXTS",
+    "LO_IMPORT",
+    "LO_EXPORT",
+    "LO_UNLINK",
+    "LO_CREATE",
+    "LO_CREAT",
+    "LO_PUT",
+    "LO_FROM_BYTEA",
+    "LO_TRUNCATE",
+    "LOWRITE",
+    "DBLINK",
+    "DBLINK_EXEC",
+    "DBLINK_CONNECT",
+    "DBLINK_CONNECT_U",
+    "DBLINK_SEND_QUERY",
+    "SETVAL",
+    "NEXTVAL",
+];
+
+/// Classify a statement that reads like a query (`SELECT …`, `VALUES …`, or
+/// the final statement of a CTE) by looking for clauses that make it write.
+///
+/// `stripped_upper` must have string literals, quoted identifiers and
+/// comments removed, so a column alias or literal cannot trigger a match.
+fn classify_select_side_effects(stripped_upper: &str) -> &'static str {
+    // `SELECT … INTO new_table` (PostgreSQL), `INTO OUTFILE` / `INTO DUMPFILE`
+    // (MySQL). `INSERT … SELECT` never gets here: it starts with INSERT.
+    if contains_keyword(stripped_upper, "INTO") {
+        return "write";
+    }
+    let words: Vec<&str> = stripped_upper
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .collect();
+    let has_locking_clause = words
+        .windows(2)
+        .any(|pair| pair[0] == "FOR" && matches!(pair[1], "UPDATE" | "SHARE" | "NO" | "KEY"))
+        || words
+            .windows(4)
+            .any(|w| w == ["LOCK", "IN", "SHARE", "MODE"]);
+    if has_locking_clause {
+        return "write";
+    }
+    if SIDE_EFFECT_FUNCTIONS
+        .iter()
+        .any(|name| calls_function(stripped_upper, name))
+    {
+        return "write";
+    }
+    "select"
+}
+
+/// Whether `haystack` contains a call to `name`: the whole word followed,
+/// after optional whitespace, by `(`.
+fn calls_function(haystack: &str, name: &str) -> bool {
+    let mut offset = 0;
+    while let Some(index) = keyword_index(&haystack[offset..], name) {
+        let after = &haystack[offset + index + name.len()..];
+        if after.trim_start().starts_with('(') {
+            return true;
+        }
+        offset += index + name.len();
+    }
+    false
+}
+
+/// SQLite pragmas that only report information, even when given an argument
+/// (`PRAGMA table_info(t)`). Any other pragma called with an argument sets a
+/// value.
+const INTROSPECTION_PRAGMAS: &[&str] = &[
+    "TABLE_INFO",
+    "TABLE_XINFO",
+    "TABLE_LIST",
+    "INDEX_LIST",
+    "INDEX_INFO",
+    "INDEX_XINFO",
+    "FOREIGN_KEY_LIST",
+    "FOREIGN_KEY_CHECK",
+    "INTEGRITY_CHECK",
+    "QUICK_CHECK",
+];
+
+/// SQLite pragmas that do work even without an argument.
+const ACTION_PRAGMAS: &[&str] = &[
+    "OPTIMIZE",
+    "WAL_CHECKPOINT",
+    "INCREMENTAL_VACUUM",
+    "SHRINK_MEMORY",
+];
+
+/// Classify a `PRAGMA` statement. Reading a pragma (`PRAGMA user_version`) or
+/// calling an introspection pragma (`PRAGMA table_info(t)`) is a read;
+/// assigning one (`PRAGMA user_version = 42`), passing a value to any other
+/// pragma (`PRAGMA journal_mode(DELETE)`) or running an action pragma
+/// (`PRAGMA optimize`) is a write.
+///
+/// `pragma_upper` must be the stripped, upper-cased SQL whose first keyword
+/// is `PRAGMA`.
+fn classify_pragma(pragma_upper: &str) -> &'static str {
+    let body = pragma_upper["PRAGMA".len()..].trim();
+    let body = body.trim_end_matches(';').trim_end();
+    if body.contains('=') {
+        return "write";
+    }
+    // Drop an optional `schema.` prefix.
+    let name_part = body.split('(').next().unwrap_or("").trim();
+    let name = name_part.rsplit('.').next().unwrap_or("").trim();
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return "unknown";
+    }
+    if ACTION_PRAGMAS.contains(&name) {
+        return "write";
+    }
+    if body.contains('(') && !INTROSPECTION_PRAGMAS.contains(&name) {
+        return "write";
+    }
     "select"
 }
 
@@ -617,7 +754,9 @@ fn first_wrapped_statement_index(upper: &str) -> Option<usize> {
 fn classify_wrapped_statement(wrapped_upper: &str) -> &'static str {
     let peeled = wrapped_upper.trim_start_matches(|c: char| c == '(' || c.is_whitespace());
     match first_keyword(peeled).as_str() {
-        "SELECT" | "SHOW" | "DESCRIBE" | "DESC" | "PRAGMA" | "VALUES" | "TABLE" => "select",
+        "SELECT" | "VALUES" => classify_select_side_effects(peeled),
+        "PRAGMA" => classify_pragma(peeled),
+        "SHOW" | "DESCRIBE" | "DESC" | "TABLE" => "select",
         "INSERT" | "UPDATE" | "DELETE" | "MERGE" | "REPLACE" => "write",
         "CREATE" | "DROP" | "ALTER" | "TRUNCATE" | "RENAME" | "GRANT" | "REVOKE" | "COMMENT" => {
             "ddl"

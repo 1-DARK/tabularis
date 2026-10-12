@@ -1182,6 +1182,35 @@ pub async fn execute_query(
     Ok(result)
 }
 
+/// Runs one statement inside `BEGIN READ ONLY` and always rolls it back, so
+/// PostgreSQL rejects any write the statement attempts (`SELECT … INTO`,
+/// `setval`, a volatile function that modifies data).
+///
+/// If the rollback fails, or the run is dropped mid-flight, the connection is
+/// closed instead of returned to the pool, so the read-only transaction never
+/// leaks into another caller.
+pub async fn execute_read_only_query(
+    params: &ConnectionParams,
+    query: &str,
+    limit: Option<u32>,
+    page: u32,
+    schema: Option<&str>,
+) -> Result<QueryResult, String> {
+    let mut in_flight = InFlight(Some(acquire_pg_client(params, schema).await?));
+    let client = in_flight.0.as_ref().expect("set above");
+    client
+        .batch_execute("BEGIN READ ONLY")
+        .await
+        .map_err(|e| format_pg_error(&e))?;
+    let outcome = exec_on_pg_client(client, query, limit, page).await;
+    match client.batch_execute("ROLLBACK").await {
+        // Back to the pool only once the transaction is closed.
+        Ok(()) => drop(in_flight.0.take()),
+        Err(e) => log::warn!("PostgreSQL: ROLLBACK after a read-only query failed: {e}"),
+    }
+    outcome
+}
+
 /// `execute_query` with the tab's connection carried across calls.
 ///
 /// One statement at a time is how a transaction is actually driven — run
@@ -2503,6 +2532,17 @@ impl DatabaseDriver for PostgresDriver {
         session_id: Option<&str>,
     ) -> Result<(crate::models::QueryResult, bool), String> {
         execute_query_in_session(params, query, limit, page, schema, session_id).await
+    }
+
+    async fn execute_read_only_query(
+        &self,
+        params: &crate::models::ConnectionParams,
+        query: &str,
+        limit: Option<u32>,
+        page: u32,
+        schema: Option<&str>,
+    ) -> Result<crate::models::QueryResult, String> {
+        execute_read_only_query(params, query, limit, page, schema).await
     }
 
     async fn execute_batch(
