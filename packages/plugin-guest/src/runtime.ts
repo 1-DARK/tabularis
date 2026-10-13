@@ -13,6 +13,7 @@ const params = new URLSearchParams(location.search);
 const modulePath = params.get("module") ?? "";
 const mode = params.get("mode") ?? "ui";
 const pluginId = decodeURIComponent(location.pathname.split("/")[1] ?? "");
+const QUERY_RPC_TIMEOUT_MS = 5 * 60_000;
 let currentContext: Record<string, unknown> = {};
 let renderPlugin: (() => void) | undefined;
 let explainModulePromise: Promise<Record<string, unknown>[]> | undefined;
@@ -51,7 +52,7 @@ const guestApi = Object.freeze({
       setLoading(true);
       setError(null);
       try {
-        return (await rpcPort.call("api.query", [query])) as {
+        return (await rpcPort.call("api.query", [query], QUERY_RPC_TIMEOUT_MS)) as {
           columns: string[];
           rows: unknown[][];
         };
@@ -154,7 +155,9 @@ function GuestRoot({ component: Component }: { component: PluginComponent }) {
           ? "min(100%, 1100px)"
           : "min(100%, 900px)",
     maxHeight: "90%", overflow: "auto",
-    background: "#111827", color: "#f9fafb", border: "1px solid #374151",
+    background: themeColor("bg", "elevated", "#111827"),
+    color: themeColor("text", "primary", "#f9fafb"),
+    border: `1px solid ${themeColor("border", "default", "#374151")}`,
     borderRadius: 12, padding: 16,
   };
   return React.createElement(
@@ -170,6 +173,12 @@ function GuestRoot({ component: Component }: { component: PluginComponent }) {
         React.createElement("button", { type: "button", onClick: () => setModal(null), "aria-label": "Close dialog" }, "×")),
       modal.content)),
   );
+}
+
+function themeColor(group: string, token: string, fallback: string): string {
+  const colors = asRecord(asRecord(currentContext.theme).colors);
+  const value = asRecord(colors[group])[token];
+  return typeof value === "string" ? value : fallback;
 }
 
 Object.assign(guestWindow, {

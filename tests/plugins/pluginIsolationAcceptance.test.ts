@@ -81,6 +81,8 @@ describe("plugin isolation acceptance contract", () => {
       expect(host).toContain(method);
     }
     expect(host).toContain("isReadOnlyQuery(query)");
+    expect(host).toContain("execute_plugin_read_only_query");
+    expect(host).toContain('pluginId !== "google-sheets"');
     expect(host).toContain("https://oauth2.googleapis.com/token");
     expect(host).toContain("Unsupported Google OAuth token field");
     expect(host).toContain("serializePluginSlotContext");
@@ -89,6 +91,13 @@ describe("plugin isolation acceptance contract", () => {
     expect(host).toContain("Only HTTP and HTTPS URLs can be opened");
     expect(transport).toContain("Object.hasOwn(handlers, method)");
     expect(transport).toContain('throw new Error("method_not_allowed")');
+
+    const backend = projectFile("src-tauri/src/commands.rs");
+    expect(backend).toContain("execute_plugin_read_only_query");
+    expect(backend).toContain("classify_query_kind(&query)");
+    expect(projectFile("src-tauri/src/drivers/sqlite/mod.rs")).toContain("PRAGMA query_only=ON");
+    expect(projectFile("src-tauri/src/drivers/postgres/mod.rs")).toContain("BEGIN READ ONLY");
+    expect(projectFile("src-tauri/src/drivers/mysql/mod.rs")).toContain("START TRANSACTION READ ONLY");
 
     for (const api of [
       "usePluginConnection",
@@ -144,7 +153,7 @@ describe("plugin isolation acceptance contract", () => {
     expect(apiReadme).toContain("has no direct Tauri `invoke` access");
     expect(apiVersion).toContain('API_VERSION = "0.3.0"');
     expect(apiVersion).toContain('MIN_HOST_VERSION = "0.3.0"');
-    expect(uiDesign).toContain("not a security boundary");
+    expect(uiDesign).toContain("database-enforced read-only context");
     expect(uiDesign).toContain("Related connection-export hardening");
     expect(uiDesign).toContain("exchangeGoogleOAuthToken");
   });

@@ -1182,6 +1182,28 @@ pub async fn execute_query(
     Ok(result)
 }
 
+/// Run one plugin query only after PostgreSQL accepts a read-only transaction.
+pub async fn execute_plugin_read_only_query(
+    params: &ConnectionParams,
+    query: &str,
+    limit: Option<u32>,
+    page: u32,
+    schema: Option<&str>,
+) -> Result<QueryResult, String> {
+    let session_id = uuid::Uuid::new_v4().to_string();
+    execute_query_in_session(params, "BEGIN READ ONLY", None, 1, schema, Some(&session_id)).await?;
+    let result = execute_query_in_session(params, query, limit, page, schema, Some(&session_id))
+        .await
+        .map(|(result, _)| result);
+    let rollback = execute_query_in_session(params, "ROLLBACK", None, 1, schema, Some(&session_id))
+        .await
+        .map(|_| ());
+    match (result, rollback) {
+        (Ok(result), Ok(())) => Ok(result),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    }
+}
+
 /// `execute_query` with the tab's connection carried across calls.
 ///
 /// One statement at a time is how a transaction is actually driven — run

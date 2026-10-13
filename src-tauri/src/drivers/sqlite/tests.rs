@@ -1,8 +1,8 @@
 use super::sqlite_push_pk_where;
 use super::{
-    alter_view, create_view, drop_view, get_all_columns_batch, get_columns, get_indexes,
-    get_view_columns, get_view_definition, get_views, insert_record, parse_sqlite_index_columns,
-    update_record,
+    alter_view, create_view, drop_view, execute_plugin_read_only_query, get_all_columns_batch,
+    get_columns, get_indexes, get_view_columns, get_view_definition, get_views, insert_record,
+    parse_sqlite_index_columns, update_record,
 };
 use crate::models::{ConnectionParams, DatabaseSelection};
 use std::collections::HashMap;
@@ -49,6 +49,27 @@ async fn setup_test_db() -> (ConnectionParams, NamedTempFile) {
 
     // We return the file handle too so it doesn't get deleted until the test ends
     (params, file)
+}
+
+#[tokio::test]
+async fn plugin_read_only_query_enforces_and_resets_sqlite_query_only_mode() {
+    let (params, _file) = setup_test_db().await;
+    let result = execute_plugin_read_only_query(&params, "SELECT name FROM users", Some(10), 1)
+        .await
+        .expect("read query should succeed");
+    assert_eq!(result.rows.len(), 2);
+    assert!(execute_plugin_read_only_query(
+        &params,
+        "UPDATE users SET name = 'Changed'",
+        Some(10),
+        1,
+    )
+    .await
+    .is_err());
+    let result = super::execute_query(&params, "SELECT name FROM users", Some(10), 1)
+        .await
+        .expect("pooled connection must have query_only reset");
+    assert_eq!(result.rows.len(), 2);
 }
 
 #[test]

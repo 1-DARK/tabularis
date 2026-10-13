@@ -1,9 +1,9 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
 import { openUrl as openExternal } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
 import { useSettings } from "../../hooks/useSettings";
+import { useToast } from "../../hooks/useToast";
 import { ThemeContext } from "../../contexts/ThemeContext";
 import { isReadOnlyQuery } from "../../utils/sqlAnalysis";
 import type { SlotContext } from "../../types/pluginSlots";
@@ -21,6 +21,7 @@ const MAX_HEIGHT = 4000;
 
 export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
   const { settings, updateSetting } = useSettings();
+  const { showToast } = useToast();
   const { i18n } = useTranslation();
   const language = i18n.language;
   const theme = useContext(ThemeContext);
@@ -88,7 +89,7 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         if (typeof active.connectionId !== "string" || !active.connectionId) {
           throw new Error("No active connection");
         }
-        return invoke<{ columns: string[]; rows: unknown[][] }>("execute_query", {
+        return invoke<{ columns: string[]; rows: unknown[][] }>("execute_plugin_read_only_query", {
           connectionId: active.connectionId,
           query,
           ...(typeof active.schema === "string" && active.schema
@@ -97,9 +98,11 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         });
       },
       "api.toast": async (kind: unknown, text: unknown) => {
-        if (typeof text !== "string") throw new Error("Notification text must be a string");
-        const dialogKind = kind === "error" || kind === "warning" ? kind : "info";
-        await message(text, { kind: dialogKind });
+        if (typeof text !== "string" || text.length === 0 || text.length > 4_000) {
+          throw new Error("Notification text must contain between 1 and 4,000 characters");
+        }
+        const toastKind = kind === "error" || kind === "warning" ? kind : "info";
+        showToast(text, { kind: toastKind });
       },
       "api.setting.set": async (key: unknown, value: unknown) => {
         if (typeof key !== "string" || !key) throw new Error("Setting key is required");
@@ -132,6 +135,9 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         return null;
       },
       "api.oauth.googleToken": async (value: unknown) => {
+        if (pluginId !== "google-sheets") {
+          throw new Error("Google OAuth token exchange is only available to the Google Sheets plugin");
+        }
         if (!value || typeof value !== "object" || Array.isArray(value)) {
           throw new Error("Invalid Google OAuth token request");
         }
@@ -204,7 +210,7 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
       rpcRef.current?.close();
       rpcRef.current = null;
     };
-  }, [module, pluginId, updateSetting]);
+  }, [module, pluginId, showToast, updateSetting]);
 
   useEffect(() => {
     contextRef.current = guestContext;

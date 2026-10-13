@@ -748,6 +748,40 @@ pub async fn execute_query(
     exec_on_sqlite_conn(&mut *conn, query, limit, page).await
 }
 
+/// Run one plugin query with SQLite's connection-level write guard enabled.
+pub async fn execute_plugin_read_only_query(
+    params: &ConnectionParams,
+    query: &str,
+    limit: Option<u32>,
+    page: u32,
+) -> Result<QueryResult, String> {
+    use sqlx::Executor;
+    let pool = get_sqlite_pool(params).await?;
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+    conn.execute("PRAGMA query_only=ON")
+        .await
+        .map_err(|e| e.to_string())?;
+    let run = async {
+        conn.execute("BEGIN").await.map_err(|e| e.to_string())?;
+        let result = exec_on_sqlite_conn(&mut *conn, query, limit, page).await;
+        let rollback = conn.execute("ROLLBACK").await.map_err(|e| e.to_string());
+        match (result, rollback) {
+            (Ok(result), Ok(_)) => Ok(result),
+            (Err(error), _) | (_, Err(error)) => Err(error),
+        }
+    }
+    .await;
+    let reset = conn
+        .execute("PRAGMA query_only=OFF")
+        .await
+        .map_err(|e| e.to_string());
+    match (run, reset) {
+        (Ok(result), Ok(_)) => Ok(result),
+        (Err(error), _) => Err(error),
+        (_, Err(error)) => Err(format!("Failed to reset SQLite read-only mode: {error}")),
+    }
+}
+
 /// Runs a sequence of statements on a single pooled connection so
 /// `BEGIN`/`COMMIT` and temporary-table visibility survive across
 /// statements. SQLite has no user variables, but transactions and temp

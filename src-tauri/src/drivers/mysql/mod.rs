@@ -1563,6 +1563,34 @@ pub async fn execute_query(
     exec_on_mysql_conn(&mut *conn, query, limit, page, text).await
 }
 
+/// Run one plugin query in MySQL's server-enforced read-only transaction.
+pub async fn execute_plugin_read_only_query(
+    params: &ConnectionParams,
+    query: &str,
+    limit: Option<u32>,
+    page: u32,
+    schema: Option<&str>,
+) -> Result<QueryResult, String> {
+    use sqlx::Executor;
+    let mut conn = acquire_mysql_conn(params, schema).await?;
+    conn.execute("START TRANSACTION READ ONLY")
+        .await
+        .map_err(|e| e.to_string())?;
+    let result = exec_on_mysql_conn(
+        &mut *conn,
+        query,
+        limit,
+        page,
+        TextProto::protocol_only(force_text_protocol(params)),
+    )
+    .await;
+    let finish = conn.execute("ROLLBACK").await.map_err(|e| e.to_string());
+    match (result, finish) {
+        (Ok(result), Ok(_)) => Ok(result),
+        (Err(error), _) | (_, Err(error)) => Err(error),
+    }
+}
+
 /// Runs a sequence of statements on a single pooled connection so that
 /// session-local state (user variables, `LAST_INSERT_ID()`, transactions,
 /// `TEMPORARY TABLE`, `PREPARE`/`EXECUTE`) is preserved across statements.

@@ -4724,6 +4724,53 @@ fn emit_database_dropped<R: Runtime>(app: &AppHandle<R>, connection_id: &str, da
 }
 
 #[tauri::command]
+pub async fn execute_plugin_read_only_query<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+    query: String,
+    schema: Option<String>,
+) -> Result<QueryResult, String> {
+    if query.trim().is_empty() || query.len() > 100_000 {
+        return Err("Plugin query must contain between 1 and 100,000 characters".to_string());
+    }
+    if crate::ai_activity::classify_query_kind(&query) != "select" {
+        return Err("Plugin queries must be classified as read-only".to_string());
+    }
+    let saved_conn = find_connection_by_id(&app, &connection_id)?;
+    let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
+    let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
+    let params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    let query = sanitize_user_query(&query);
+    match params.driver.as_str() {
+        "sqlite" => {
+            crate::drivers::sqlite::execute_plugin_read_only_query(&params, &query, Some(100), 1)
+                .await
+        }
+        "postgres" => {
+            crate::drivers::postgres::execute_plugin_read_only_query(
+                &params,
+                &query,
+                Some(100),
+                1,
+                schema.as_deref(),
+            )
+            .await
+        }
+        "mysql" | "mariadb" => {
+            crate::drivers::mysql::execute_plugin_read_only_query(
+                &params,
+                &query,
+                Some(100),
+                1,
+                schema.as_deref(),
+            )
+            .await
+        }
+        _ => Err("This driver does not support sandboxed read-only queries".to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn execute_query<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, QueryCancellationState>,
@@ -6791,7 +6838,7 @@ pub(crate) async fn export_connections_payload_unconfirmed<R: Runtime>(
     // before password resolution so unselected credentials never leave the
     // keychain.
     if let Some(ids) = &connection_ids {
-    let selected: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
+        let selected: std::collections::HashSet<&str> = ids.iter().map(String::as_str).collect();
         conn_file
             .connections
             .retain(|c| selected.contains(c.id.as_str()));

@@ -35,7 +35,7 @@ export default MySlot.component;
 
 | Hook | Returns | Purpose |
 |------|---------|---------|
-| `usePluginQuery()` | `{ executeQuery, loading, error }` | Execute SQL on the active connection after a best-effort statement-type filter |
+| `usePluginQuery()` | `{ executeQuery, loading, error }` | Execute classified read-only SQL on supported built-in drivers; unsupported drivers reject the call |
 | `usePluginConnection()` | `{ connectionId, driver, schema }` | Active connection metadata |
 | `usePluginToast()` | `{ showInfo, showError, showWarning }` | System notifications |
 | `usePluginModal()` | `{ openModal, closeModal }` | Modal with custom React content rendered inside the plugin iframe |
@@ -53,10 +53,11 @@ Setting writes are asynchronous; await `setSetting` or `setSettings` when
 subsequent work depends on persistence.
 
 `usePluginQuery` rejects statement types that the host classifier recognizes as
-writes. This is a best-effort guard, **not a security boundary**: a `SELECT` can
-still call side-effecting database functions, and database-specific constructs
-may not be recognized. Use a database account with read-only permissions when
-the connection itself must be read-only.
+writes. The host repeats this check with its Rust classifier and runs the query
+in a database-enforced read-only context for built-in SQLite, PostgreSQL, and
+MySQL drivers. Drivers that do not support this mode reject the call. Use
+read-only database credentials as an additional safeguard, especially when
+the database exposes custom side-effecting functions.
 
 For a Google OAuth token exchange, import `exchangeGoogleOAuthToken` and pass
 the form fields needed for an `authorization_code` or `refresh_token` grant.

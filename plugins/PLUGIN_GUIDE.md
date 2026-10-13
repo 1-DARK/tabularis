@@ -490,7 +490,7 @@ in [`UI_SANDBOX_DESIGN.md`](./UI_SANDBOX_DESIGN.md).
 
 | Hook | Returns | Purpose |
 |------|---------|---------|
-| `usePluginQuery()` | `(query: string) => Promise<{ columns, rows }>` | Execute SQL after a best-effort statement-type filter; not a security boundary |
+| `usePluginQuery()` | `(query: string) => Promise<{ columns, rows }>` | Execute classified read-only SQL through a database-enforced read-only mode on supported built-in drivers; unsupported drivers reject the call |
 | `usePluginConnection()` | `{ connectionId, driver, schema }` | Access active connection metadata |
 | `usePluginToast()` | `{ showInfo(), showError(), showWarning() }` | Show toast notifications |
 | `usePluginModal()` | `{ openModal(options), closeModal() }` | Show custom React content in a modal contained in the plugin iframe |

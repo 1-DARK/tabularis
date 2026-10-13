@@ -39,13 +39,13 @@ export class RpcPort {
     port.start();
   }
 
-  call(method: string, params: unknown[] = []): Promise<unknown> {
+  call(method: string, params: unknown[] = [], timeoutMs = RPC_TIMEOUT_MS): Promise<unknown> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Plugin RPC timed out: ${method}`));
-      }, RPC_TIMEOUT_MS);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timeoutId });
       try {
         this.port.postMessage({ kind: "request", id, method, params });

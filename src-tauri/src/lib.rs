@@ -569,6 +569,7 @@ pub fn run() {
             commands::get_file_stats,
             commands::read_file_as_data_url,
             commands::execute_query,
+            commands::execute_plugin_read_only_query,
             commands::execute_query_batch,
             commands::release_query_session,
             commands::get_server_now,

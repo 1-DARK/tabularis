@@ -203,10 +203,9 @@ function effectiveStatementKeyword(cleaned: string): string | null {
   return keyword;
 }
 
-// True when every statement's leading keyword is classified as read-only
-// (SELECT/SHOW/EXPLAIN-of-a-SELECT/...). This does not inspect side effects
-// inside SELECT functions or database-specific syntax, so it is a query
-// classification aid, not a security boundary. Use database grants for that.
+// A quick UI-side filter for statements with obvious write keywords. The host
+// repeats classification in Rust and executes accepted plugin queries through
+// a database-enforced read-only path.
 export const isReadOnlyQuery = (sql: string): boolean =>
   stripCommentsAndLiterals(sql)
     .split(';')

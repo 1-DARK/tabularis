@@ -14,12 +14,13 @@ there is no generic Tauri command or `invoke` method in the guest API.
 
 - Slot context, active connection metadata, theme data, and the plugin's own
   settings and translations.
-- SQL on the currently active connection, after a best-effort statement-type
-  filter rejects recognized writes. This filter is not a security boundary:
-  side-effecting `SELECT` functions and database-specific constructs may pass.
-  Use read-only database credentials for an actual read-only guarantee.
+- SQL on the currently active connection. The host rejects statements the
+  Rust classifier does not identify as read-only, and supported built-in
+  drivers also run each query inside a database-enforced read-only context.
+  Drivers without that capability fail closed. This does not replace
+  read-only database credentials against unusual side-effecting functions.
 - Writes to the calling plugin's own JSON settings, capped at 64 KiB per value.
-- Native info, warning, and error dialogs; opening HTTP(S) URLs without URL
+- Non-modal info, warning, and error toasts; opening HTTP(S) URLs without URL
   credentials.
 - Plugin-authored React modals rendered inside that plugin's iframe.
 
@@ -29,7 +30,9 @@ them. Host callbacks such as `onDatabaseChange`, `setExtraField`, and
 `setCredentialFieldsHidden` are represented by plain context data and
 slot-specific RPC methods; functions are never sent through `postMessage`.
 
-RPC requests time out after 30 seconds. Internal guest resources use reserved
+Most RPC requests time out after 30 seconds; plugin SQL queries may take up to
+five minutes before the guest stops waiting. The host query is not cancelled
+when the guest times out. Internal guest resources use reserved
 `__runtime__.js` and `__host.css__` paths so plugin files named `runtime.js` or
 `host.css` remain addressable.
 
@@ -44,8 +47,11 @@ interpolation; plugins that rely on advanced i18next features need to provide
 their own formatting or simplify those entries. `openUrl` accepts only HTTP(S)
 URLs and rejects embedded credentials. Replace direct Google token-endpoint
 `fetch` calls with `exchangeGoogleOAuthToken`; other guest network requests
-remain blocked. `usePluginQuery` applies only a best-effort statement filter,
-not a read-only security guarantee.
+remain blocked. `usePluginQuery` uses the Rust query classifier and a
+database-enforced read-only execution path for built-in SQLite, PostgreSQL,
+and MySQL drivers. Drivers that do not support that mode reject plugin queries.
+The Google OAuth exchange is currently restricted to the `google-sheets`
+plugin id.
 
 ## Related connection-export hardening
 
