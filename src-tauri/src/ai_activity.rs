@@ -382,59 +382,6 @@ pub fn classify_query_kind(sql: &str) -> &'static str {
     if has_trailing_statements(&stripped) || has_trailing_statements(&strip_impl(sql, true)) {
         return "unknown";
     }
-    // Reject SELECT forms that can mutate data or trigger known side effects.
-    let read_form_upper = trimmed_upper.trim_start_matches(|c: char| c == '(' || c.is_whitespace());
-    if matches!(first_keyword(read_form_upper).as_str(), "SELECT" | "WITH")
-        && contains_keyword(&trimmed_upper, "INTO")
-    {
-        return "write";
-    }
-    if first_keyword(&trimmed_upper) == "PRAGMA" {
-        let pragma = trimmed_upper
-            .trim_start_matches("PRAGMA")
-            .trim()
-            .split(|c: char| c == '(' || c == '=' || c.is_whitespace())
-            .next()
-            .unwrap_or("");
-        return match pragma {
-            "TABLE_INFO" | "TABLE_XINFO" | "INDEX_INFO" | "INDEX_XINFO" | "INDEX_LIST"
-            | "FOREIGN_KEY_LIST" | "DATABASE_LIST" | "COMPILE_OPTIONS" => "select",
-            _ => "unknown",
-        };
-    }
-    const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
-        "PG_TERMINATE_BACKEND",
-        "PG_CANCEL_BACKEND",
-        "LO_EXPORT",
-        "LO_IMPORT",
-        "DBLINK_EXEC",
-        "DBLINK_CONNECT",
-        "PG_ADVISORY_LOCK",
-        "PG_TRY_ADVISORY_LOCK",
-        "PG_ADVISORY_XACT_LOCK",
-        "PG_TRY_ADVISORY_XACT_LOCK",
-        "PG_ADVISORY_UNLOCK",
-        "PG_ADVISORY_UNLOCK_ALL",
-        "NEXTVAL",
-        "SETVAL",
-        "PG_NOTIFY",
-        "PG_READ_FILE",
-        "PG_READ_BINARY_FILE",
-        "PG_LS_DIR",
-        "PG_STAT_FILE",
-        "LOAD_EXTENSION",
-        "WRITEFILE",
-        "LOAD_FILE",
-        "SYS_EXEC",
-        "SYS_EVAL",
-    ];
-    let raw_upper = sql.to_uppercase();
-    if SIDE_EFFECT_FUNCTIONS
-        .iter()
-        .any(|function| contains_keyword(&raw_upper, function))
-    {
-        return "unknown";
-    }
     // Peel any leading `(` (and surrounding whitespace) before reading the
     // first keyword. A parenthesized query expression such as
     // `(SELECT ...) UNION ALL (SELECT ...)` — the shape you get when each
@@ -598,6 +545,11 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
     "PG_PROMOTE",
     "PG_CREATE_RESTORE_POINT",
     "PG_LOG_BACKEND_MEMORY_CONTEXTS",
+    "PG_READ_FILE",
+    "PG_READ_BINARY_FILE",
+    "PG_LS_DIR",
+    "PG_STAT_FILE",
+    "LOAD_EXTENSION",
     "LO_IMPORT",
     "LO_EXPORT",
     "LO_UNLINK",
@@ -614,6 +566,10 @@ const SIDE_EFFECT_FUNCTIONS: &[&str] = &[
     "DBLINK_SEND_QUERY",
     "SETVAL",
     "NEXTVAL",
+    "WRITEFILE",
+    "LOAD_FILE",
+    "SYS_EXEC",
+    "SYS_EVAL",
 ];
 
 /// Classify a statement that reads like a query (`SELECT …`, `VALUES …`, or
