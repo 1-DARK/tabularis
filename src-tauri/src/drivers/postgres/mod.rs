@@ -1635,10 +1635,19 @@ pub async fn get_materialized_view_definition(
 
     let client = pool.get().await.map_err(|e| e.to_string())?;
 
+    // Resolve via pg_class/pg_namespace with a `relkind = 'm'` filter so only
+    // materialized views match — a regular view or table name returns no row
+    // (a clean "not found") instead of wrong DDL. `pg_get_viewdef` alone
+    // resolves any relation by name. Binding schema/name as separate text
+    // params also avoids the PG 16 "error serializing parameter 0" failure
+    // that a direct `regclass` bind triggers.
     let row = client
         .query_one(
-            "SELECT pg_get_viewdef($1::regclass, true) as definition",
-            &[&qualified],
+            "SELECT pg_get_viewdef(c.oid, true) AS definition \
+             FROM pg_class c \
+             JOIN pg_namespace n ON c.relnamespace = n.oid \
+             WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind = 'm'",
+            &[&schema, &view_name],
         )
         .await
         .map_err(|e| format!("Failed to get materialized view definition: {}", e))?;
