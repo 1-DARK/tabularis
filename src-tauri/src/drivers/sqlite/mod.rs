@@ -104,9 +104,10 @@ pub async fn get_columns(
 ) -> Result<Vec<TableColumn>, String> {
     let pool = get_sqlite_pool(params).await?;
 
-    let query = format!("PRAGMA table_xinfo('{}')", table_name);
-
-    let rows = sqlx::query(&query)
+    // Table-valued PRAGMAs accept bound names, including quotes and semicolons,
+    // without allowing them to become additional SQL statements.
+    let rows = sqlx::query("SELECT * FROM pragma_table_xinfo(?1)")
+        .bind(table_name)
         .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -140,8 +141,8 @@ pub async fn get_foreign_keys(
 ) -> Result<Vec<ForeignKey>, String> {
     let pool = get_sqlite_pool(params).await?;
 
-    let query = format!("PRAGMA foreign_key_list('{}')", table_name);
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query("SELECT * FROM pragma_foreign_key_list(?1)")
+        .bind(table_name)
         .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -181,8 +182,8 @@ pub async fn get_all_columns_batch(
     let mut result: HashMap<String, Vec<TableColumn>> = HashMap::new();
 
     for table_name in table_names {
-        let query = format!("PRAGMA table_xinfo('{}')", table_name);
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query("SELECT * FROM pragma_table_xinfo(?1)")
+            .bind(table_name)
             .fetch_all(&pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -205,8 +206,8 @@ pub async fn get_all_foreign_keys_batch(
     let mut result: HashMap<String, Vec<ForeignKey>> = HashMap::new();
 
     for table_name in table_names {
-        let query = format!("PRAGMA foreign_key_list('{}')", table_name);
-        let rows = sqlx::query(&query)
+        let rows = sqlx::query("SELECT * FROM pragma_foreign_key_list(?1)")
+            .bind(table_name)
             .fetch_all(&pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -246,8 +247,8 @@ pub async fn get_indexes(
 
     use std::collections::HashMap;
 
-    let list_query = format!("PRAGMA index_list('{}')", table_name);
-    let indexes = sqlx::query(&list_query)
+    let indexes = sqlx::query("SELECT * FROM pragma_index_list(?1)")
+        .bind(table_name)
         .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -275,8 +276,8 @@ pub async fn get_indexes(
         let unique: i32 = idx_row.try_get("unique").unwrap_or(0);
         let origin: String = idx_row.try_get("origin").unwrap_or_default(); // pk for primary key
 
-        let info_query = format!("PRAGMA index_info('{}')", name);
-        let info_rows = sqlx::query(&info_query)
+        let info_rows = sqlx::query("SELECT * FROM pragma_index_info(?1)")
+            .bind(&name)
             .fetch_all(&pool)
             .await
             .map_err(|e| e.to_string())?;
@@ -902,9 +903,8 @@ pub async fn get_view_columns(
 ) -> Result<Vec<TableColumn>, String> {
     let pool = get_sqlite_pool(params).await?;
 
-    let query = format!("PRAGMA table_xinfo('{}')", view_name);
-
-    let rows = sqlx::query(&query)
+    let rows = sqlx::query("SELECT * FROM pragma_table_xinfo(?1)")
+        .bind(view_name)
         .fetch_all(&pool)
         .await
         .map_err(|e| e.to_string())?;
