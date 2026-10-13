@@ -397,7 +397,7 @@ pub fn classify_query_kind(sql: &str) -> &'static str {
         .to_uppercase();
     let first = first_keyword(&peeled_upper);
 
-    match first.as_str() {
+    let kind = match first.as_str() {
         // EXPLAIN needs option-aware handling: plain EXPLAIN only plans, but
         // EXPLAIN ANALYZE (and EXPLAIN (ANALYZE ...)) *executes* the wrapped
         // statement. Classifying it blindly as a read would let
@@ -417,7 +417,17 @@ pub fn classify_query_kind(sql: &str) -> &'static str {
         }
         "WITH" => classify_cte(&peeled_upper),
         _ => "unknown",
+    };
+
+    // A statement classified as a clean read must not reach a side-effecting
+    // function through a quoted name, which the denylist (matching bare names)
+    // would miss. Fail closed: the engine read-only backstop does not stop
+    // every such function (e.g. `lo_export` writes a file even inside a
+    // read-only transaction), so the classifier is the last line of defence.
+    if kind == "select" && has_quoted_function_call(sql) {
+        return "unknown";
     }
+    kind
 }
 
 fn is_create_compound_routine(upper_sql: &str) -> bool {
@@ -785,6 +795,17 @@ pub fn strip_strings_and_comments(sql: &str) -> String {
 /// Only single-quoted string scanning honours the flag — comments and quoted
 /// identifiers are dialect-independent here.
 fn strip_impl(sql: &str, backslash_escapes: bool) -> String {
+    strip_impl_opts(sql, backslash_escapes, false)
+}
+
+/// Backing implementation for [`strip_impl`] and [`strip_identifiers_marked`].
+///
+/// When `mark_identifiers` is true, each quoted identifier is replaced by the
+/// marker byte [`IDENT_MARK`] instead of spaces, so a later pass can tell a
+/// quoted identifier apart from a blanked string literal — needed to spot a
+/// function invoked through a quoted name (`"lo_export"(…)`).
+fn strip_impl_opts(sql: &str, backslash_escapes: bool, mark_identifiers: bool) -> String {
+    let ident_fill = if mark_identifiers { IDENT_MARK } else { b' ' };
     let bytes = sql.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -819,6 +840,66 @@ fn strip_impl(sql: &str, backslash_escapes: bool) -> String {
             }
             continue;
         }
+        // Escape string constant (`E'…'` / `e'…'`, PostgreSQL): a backslash
+        // always escapes the next byte here, regardless of the dialect flag.
+        // Without this, `E'\''` desynchronises the scanner under the standard
+        // reading — the `\` is treated as literal, the following `''` reads as
+        // an escaped quote, and the string never closes — masking whatever
+        // comes after (e.g. a side-effecting `lo_export(…)` call).
+        if (c == b'E' || c == b'e')
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'\''
+            && (i == 0 || !is_ident_byte(bytes[i - 1]))
+        {
+            out.push(b' ');
+            out.push(b' ');
+            i += 2;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                } else if bytes[i] == b'\'' && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                } else if bytes[i] == b'\'' {
+                    out.push(b' ');
+                    i += 1;
+                    break;
+                } else {
+                    out.push(b' ');
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        // Dollar-quoted string constant (`$tag$ … $tag$`, PostgreSQL). The body
+        // is wholly literal — no escapes — so it ends only at the matching
+        // delimiter. Scanning it as text (rather than skipping it) is what let
+        // `$$'$$, lo_export(…)` hide the call: the `'` inside was read as an
+        // ordinary string opener and swallowed the rest of the statement.
+        if c == b'$' {
+            if let Some(tag_len) = dollar_quote_tag_len(&bytes[i..]) {
+                let delim = &bytes[i..i + tag_len];
+                for _ in 0..tag_len {
+                    out.push(b' ');
+                }
+                i += tag_len;
+                while i < bytes.len() {
+                    if bytes[i] == b'$' && bytes[i..].starts_with(delim) {
+                        for _ in 0..tag_len {
+                            out.push(b' ');
+                        }
+                        i += tag_len;
+                        break;
+                    }
+                    out.push(b' ');
+                    i += 1;
+                }
+                continue;
+            }
+        }
         // Single-quoted string literal (SQL-style escaped quote: '')
         if c == b'\'' {
             out.push(b' ');
@@ -847,28 +928,28 @@ fn strip_impl(sql: &str, backslash_escapes: bool) -> String {
         }
         // Double-quoted identifier (PostgreSQL / ANSI)
         if c == b'"' {
-            out.push(b' ');
+            out.push(ident_fill);
             i += 1;
             while i < bytes.len() && bytes[i] != b'"' {
-                out.push(b' ');
+                out.push(ident_fill);
                 i += 1;
             }
             if i < bytes.len() {
-                out.push(b' ');
+                out.push(ident_fill);
                 i += 1;
             }
             continue;
         }
         // Backtick-quoted identifier (MySQL)
         if c == b'`' {
-            out.push(b' ');
+            out.push(ident_fill);
             i += 1;
             while i < bytes.len() && bytes[i] != b'`' {
-                out.push(b' ');
+                out.push(ident_fill);
                 i += 1;
             }
             if i < bytes.len() {
-                out.push(b' ');
+                out.push(ident_fill);
                 i += 1;
             }
             continue;
@@ -877,6 +958,73 @@ fn strip_impl(sql: &str, backslash_escapes: bool) -> String {
         i += 1;
     }
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// Marker byte that [`strip_identifiers_marked`] leaves in place of a quoted
+/// identifier. `0x01` cannot occur in the stripped output otherwise (every
+/// other byte is either copied source or a blanking space), so a run of it
+/// unambiguously marks where a quoted identifier stood.
+const IDENT_MARK: u8 = 0x01;
+
+/// Whether `b` can appear inside an unquoted identifier. Used to tell an
+/// `E'…'` escape string apart from an identifier that merely ends in `E`.
+fn is_ident_byte(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// If `bytes` starts with a PostgreSQL dollar-quote opening delimiter
+/// (`$$` or `$tag$`, where `tag` is an identifier), return its length in
+/// bytes; otherwise `None` (e.g. a `$1` positional parameter).
+fn dollar_quote_tag_len(bytes: &[u8]) -> Option<usize> {
+    debug_assert_eq!(bytes.first(), Some(&b'$'));
+    let mut j = 1;
+    if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+        j += 1;
+        while j < bytes.len() && is_ident_byte(bytes[j]) {
+            j += 1;
+        }
+    }
+    if j < bytes.len() && bytes[j] == b'$' {
+        Some(j + 1)
+    } else {
+        None
+    }
+}
+
+/// Like [`strip_strings_and_comments`], but quoted identifiers become runs of
+/// [`IDENT_MARK`] instead of spaces so [`has_quoted_function_call`] can find a
+/// function invoked through a quoted name.
+fn strip_identifiers_marked(sql: &str) -> String {
+    strip_impl_opts(sql, false, true)
+}
+
+/// Whether the statement calls a function through a *quoted* identifier, i.e. a
+/// quoted identifier immediately followed by `(` — `"lo_export"(…)`,
+/// `pg_catalog."lo_export"(…)`, `U&"lo_export"(…)`. The side-effect-function
+/// denylist matches on the bare name, so quoting the name slips a write-shaped
+/// call (file write via `lo_export`, backend signals, `dblink_exec`, …) past
+/// it. A read-only transaction does not stop several of those functions, so a
+/// query that calls one by a quoted name is never treated as a clean read.
+fn has_quoted_function_call(sql: &str) -> bool {
+    let marked = strip_identifiers_marked(sql);
+    let bytes = marked.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == IDENT_MARK {
+            while i < bytes.len() && bytes[i] == IDENT_MARK {
+                i += 1;
+            }
+            let next = bytes[i..]
+                .iter()
+                .find(|b| !b.is_ascii_whitespace());
+            if next == Some(&b'(') {
+                return true;
+            }
+        } else {
+            i += 1;
+        }
+    }
+    false
 }
 
 // ---------------------------------------------------------------------------

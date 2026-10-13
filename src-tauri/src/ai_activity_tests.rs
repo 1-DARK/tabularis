@@ -877,6 +877,54 @@ mod tests {
     }
 
     #[test]
+    fn classify_side_effect_function_via_quoted_name_is_not_a_read() {
+        // Quoting the function name hides it from the bare-name denylist. A
+        // read-only transaction does not stop `lo_export` (it writes a file on
+        // the host), so this must not be classified as a clean read.
+        for q in [
+            "SELECT \"lo_export\"(16409, '/tmp/x')",
+            "SELECT pg_catalog.\"lo_export\"(16409, '/tmp/x')",
+            "SELECT U&\"lo_export\"(16409, '/tmp/x')",
+            "SELECT \"pg_terminate_backend\"(pid) FROM pg_stat_activity",
+            "SELECT `lo_export`(16409, '/tmp/x')",
+        ] {
+            assert_ne!(classify_query_kind(q), "select", "query: {q}");
+        }
+    }
+
+    #[test]
+    fn classify_side_effect_function_hidden_by_string_desync_is_not_a_read() {
+        // Dollar-quoted and escape-string literals must be skipped whole, or a
+        // `'` inside them desynchronises the scanner and masks the call that
+        // follows.
+        for q in [
+            "SELECT $$'$$, lo_export(16409, '/tmp/x')",
+            "SELECT $tag$'$tag$, lo_export(16409, '/tmp/x')",
+            "SELECT E'\\'', lo_export(16409, '/tmp/x')",
+            // In U&'...' a backslash only starts a unicode escape and cannot
+            // escape a quote, so the standard reading already ends it right.
+            "SELECT U&'\\0041\\\\', lo_export(16409, '/tmp/x')",
+            "SELECT U&'d!0061t!+000061' UESCAPE '!', lo_export(16409, '/tmp/x')",
+        ] {
+            assert_ne!(classify_query_kind(q), "select", "query: {q}");
+        }
+    }
+
+    #[test]
+    fn classify_quoted_non_call_identifiers_stay_select() {
+        // A quoted identifier not used as a function call is still a read.
+        assert_eq!(classify_query_kind("SELECT \"lo_export\" FROM t"), "select");
+        assert_eq!(classify_query_kind("SELECT count(\"x\") FROM t"), "select");
+        assert_eq!(
+            classify_query_kind("SELECT \"a b\", \"c\" FROM t"),
+            "select"
+        );
+        // A dollar-quoted / escape-string body with no trailing call is a read.
+        assert_eq!(classify_query_kind("SELECT $$hello ; world$$"), "select");
+        assert_eq!(classify_query_kind("SELECT E'line\\n'"), "select");
+    }
+
+    #[test]
     fn classify_side_effect_names_without_a_call_stay_select() {
         // A column or table named like a function is not a call.
         assert_eq!(classify_query_kind("SELECT setval FROM t"), "select");
