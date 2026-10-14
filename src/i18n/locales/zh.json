@@ -1276,6 +1276,7 @@
     "setDefault": "设为 DEFAULT",
     "setEmpty": "设为空",
     "setServerNow": "插入当前时间戳",
+    "setRandomUuid": "设置随机 UUID",
     "previewReferenced": "预览相关记录",
     "openReferenced": "在 {{table}} 中打开引用的行",
     "revealCell": "显示单元格",

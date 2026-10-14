@@ -1320,6 +1320,7 @@
     "setDefault": "Definir DEFAULT",
     "setEmpty": "Definir VAZIO",
     "setServerNow": "Inserir Data/Hora Atual",
+    "setRandomUuid": "Definir UUID aleatório",
     "previewReferenced": "Pré-visualizar registro relacionado",
     "openReferenced": "Abrir linha referenciada em {{table}}",
     "revealCell": "Revelar célula",

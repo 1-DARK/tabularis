@@ -1341,6 +1341,7 @@
     "setDefault": "Définir DEFAULT",
     "setEmpty": "Définir EMPTY",
     "setServerNow": "Insérer l'horodatage actuel",
+    "setRandomUuid": "Définir un UUID aléatoire",
     "previewReferenced": "Aperçu de l'enregistrement lié",
     "openReferenced": "Ouvrir la ligne référencée dans {{table}}",
     "revealCell": "Afficher la cellule",

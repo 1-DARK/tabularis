@@ -1301,6 +1301,7 @@
     "setDefault": "DEFAULT setzen",
     "setEmpty": "EMPTY setzen",
     "setServerNow": "Aktuellen Zeitstempel einfügen",
+    "setRandomUuid": "Zufällige UUID setzen",
     "previewReferenced": "Verknüpften Datensatz anzeigen",
     "openReferenced": "Referenzierte Zeile in {{table}} öffnen",
     "revealCell": "Zelle anzeigen",

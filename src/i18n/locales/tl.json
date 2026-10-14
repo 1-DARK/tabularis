@@ -1332,6 +1332,7 @@
     "setDefault": "I-set ang DEFAULT",
     "setEmpty": "I-set ang EMPTY",
     "setServerNow": "Ipasok ang Kasalukuyang Timestamp",
+    "setRandomUuid": "I-set ang random na UUID",
     "previewReferenced": "I-preview ang kaugnay na record",
     "openReferenced": "Buksan ang naka-reference na row sa {{table}}",
     "revealCell": "Ipakita ang cell",

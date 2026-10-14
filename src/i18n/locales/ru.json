@@ -1302,6 +1302,7 @@
     "setDefault": "Установить DEFAULT",
     "setEmpty": "Установить EMPTY",
     "setServerNow": "Вставить текущую метку времени",
+    "setRandomUuid": "Установить случайный UUID",
     "openReferenced": "Открыть связанную строку в {{table}}",
     "revealCell": "Показать ячейку",
     "maskCell": "Скрыть ячейку",

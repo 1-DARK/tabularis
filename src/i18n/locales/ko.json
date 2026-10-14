@@ -1276,6 +1276,7 @@
     "setDefault": "DEFAULT로 설정",
     "setEmpty": "빈 값으로 설정",
     "setServerNow": "현재 타임스탬프 삽입",
+    "setRandomUuid": "무작위 UUID로 설정",
     "previewReferenced": "참조된 레코드 미리보기",
     "openReferenced": "{{table}}에서 참조된 행 열기",
     "revealCell": "셀 표시",
