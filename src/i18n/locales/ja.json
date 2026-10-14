@@ -2010,7 +2010,9 @@
     "expand": "展開する"
   },
   "contextMenu": {
-    "openSidebar": "サイドバーエディタで開く"
+    "openSidebar": "サイドバーエディタで開く",
+    "openLink": "リンクを開く",
+    "openLinkFailed": "リンクを開けませんでした: {{error}}"
   },
   "blobInput": {
     "noData": "BLOB データなし",
