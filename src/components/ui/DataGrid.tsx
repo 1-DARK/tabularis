@@ -39,6 +39,7 @@ import {
   PanelBottomOpen,
   Eye,
   EyeOff,
+  Hash,
   ListChecks,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
@@ -68,6 +69,7 @@ import {
   moveCellPosition,
   getColumnLayoutKey,
   resolveLockedColumnWidths,
+  isUuidColumnType,
   type LockedColumnWidths,
   createDataGridResultCommands,
   type RangeExtendKey,
@@ -1809,6 +1811,10 @@ export const DataGrid = React.memo(
       [setCellValue],
     );
     const setCellNull = useCallback(() => setCellValue(null), [setCellValue]);
+    const setCellRandomUuid = useCallback(
+      () => setCellValue(crypto.randomUUID()),
+      [setCellValue],
+    );
     const setCellDefault = useCallback(() => {
       if (!contextMenu) return;
       const isInsertion = contextMenu.mergedRow?.type === "insertion";
@@ -3004,6 +3010,13 @@ export const DataGrid = React.memo(
                     label: t("dataGrid.setServerNow"),
                     icon: Clock,
                     action: setCellServerNow,
+                  });
+                }
+                if (isUuidColumnType(colDataType)) {
+                  menuItems.push({
+                    label: t("dataGrid.setRandomUuid"),
+                    icon: Hash,
+                    action: setCellRandomUuid,
                   });
                 }
               }
