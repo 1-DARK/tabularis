@@ -2413,7 +2413,9 @@
     "commands": {
       "openSettings": "Открыть настройки",
       "openConnections": "Открыть менеджер подключений",
-      "openTableInConsole": "Открыть текущую таблицу в SQL-консоли"
+      "openTableInConsole": "Открыть текущую таблицу в SQL-консоли",
+      "toggleWordWrapEnable": "Включить перенос строк",
+      "toggleWordWrapDisable": "Отключить перенос строк"
     }
   },
   "pagination": {

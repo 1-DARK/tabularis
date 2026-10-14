@@ -2425,7 +2425,9 @@
     "commands": {
       "openSettings": "Open settings",
       "openConnections": "Open connection manager",
-      "openTableInConsole": "Open current table in SQL console"
+      "openTableInConsole": "Open current table in SQL console",
+      "toggleWordWrapEnable": "Enable word wrap",
+      "toggleWordWrapDisable": "Disable word wrap"
     }
   },
   "pagination": {

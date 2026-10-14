@@ -2406,7 +2406,9 @@
     "commands": {
       "openSettings": "Buksan ang settings",
       "openConnections": "Buksan ang connection manager",
-      "openTableInConsole": "Buksan ang kasalukuyang talahanayan sa SQL console"
+      "openTableInConsole": "Buksan ang kasalukuyang talahanayan sa SQL console",
+      "toggleWordWrapEnable": "Paganahin ang word wrap",
+      "toggleWordWrapDisable": "I-off ang word wrap"
     }
   },
   "pagination": {

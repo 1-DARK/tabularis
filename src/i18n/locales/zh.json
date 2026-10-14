@@ -2279,7 +2279,9 @@
     "commands": {
       "openSettings": "打开设置",
       "openConnections": "打开连接管理器",
-      "openTableInConsole": "在 SQL 控制台中打开当前表"
+      "openTableInConsole": "在 SQL 控制台中打开当前表",
+      "toggleWordWrapEnable": "启用自动换行",
+      "toggleWordWrapDisable": "禁用自动换行"
     }
   },
   "pagination": {

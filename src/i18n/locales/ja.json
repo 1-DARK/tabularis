@@ -2354,7 +2354,9 @@
     "commands": {
       "openSettings": "設定を開く",
       "openConnections": "接続マネージャーを開く",
-      "openTableInConsole": "現在のテーブルをSQLコンソールで開く"
+      "openTableInConsole": "現在のテーブルをSQLコンソールで開く",
+      "toggleWordWrapEnable": "折り返しを有効にする",
+      "toggleWordWrapDisable": "折り返しを無効にする"
     }
   },
   "pagination": {

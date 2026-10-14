@@ -2271,7 +2271,9 @@
     "commands": {
       "openSettings": "Abrir configuración",
       "openConnections": "Abrir gestor de conexiones",
-      "openTableInConsole": "Abrir la tabla actual en la consola SQL"
+      "openTableInConsole": "Abrir la tabla actual en la consola SQL",
+      "toggleWordWrapEnable": "Activar ajuste de línea",
+      "toggleWordWrapDisable": "Desactivar ajuste de línea"
     }
   },
   "pagination": {

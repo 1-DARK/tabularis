@@ -2390,7 +2390,9 @@
     "commands": {
       "openSettings": "Abrir configurações",
       "openConnections": "Abrir gerenciador de conexões",
-      "openTableInConsole": "Abrir a tabela atual no console SQL"
+      "openTableInConsole": "Abrir a tabela atual no console SQL",
+      "toggleWordWrapEnable": "Ativar quebra de linha",
+      "toggleWordWrapDisable": "Desativar quebra de linha"
     }
   },
   "pagination": {

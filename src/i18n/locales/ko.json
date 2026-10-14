@@ -2340,7 +2340,9 @@
     "commands": {
       "openSettings": "설정 열기",
       "openConnections": "연결 관리자 열기",
-      "openTableInConsole": "현재 테이블을 SQL 콘솔에서 열기"
+      "openTableInConsole": "현재 테이블을 SQL 콘솔에서 열기",
+      "toggleWordWrapEnable": "줄 바꿈 활성화",
+      "toggleWordWrapDisable": "줄 바꿈 비활성화"
     }
   },
   "pagination": {

@@ -2330,7 +2330,9 @@
     "commands": {
       "openSettings": "Einstellungen öffnen",
       "openConnections": "Verbindungsverwaltung öffnen",
-      "openTableInConsole": "Aktuelle Tabelle in SQL-Konsole öffnen"
+      "openTableInConsole": "Aktuelle Tabelle in SQL-Konsole öffnen",
+      "toggleWordWrapEnable": "Zeilenumbruch aktivieren",
+      "toggleWordWrapDisable": "Zeilenumbruch deaktivieren"
     }
   },
   "pagination": {
