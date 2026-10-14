@@ -110,6 +110,8 @@ import {
   getSelectedRows,
   projectColumns,
   copyTextToClipboard,
+  columnNamesAsLines,
+  columnNamesAsJson,
 } from "../../utils/clipboard";
 import {
   DEFAULT_MASKING_PATTERNS,
@@ -1929,6 +1931,22 @@ export const DataGrid = React.memo(
       setHeaderContextMenu(null);
     }, [headerContextMenu, tableName, copyToClipboard]);
 
+    const copyColumnNamesAsLines = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsLines(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
+
+    const copyColumnNamesAsJson = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsJson(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
+
     const copySelectedCells = useCallback(async () => {
       if (selectedRowIndices.size === 0) return;
       const rows = getSelectedRows(
@@ -3353,6 +3371,22 @@ export const DataGrid = React.memo(
                   label: t("dataGrid.copyColumnNameTable"),
                   icon: Copy,
                   action: copyHeaderNameTable,
+                },
+                {
+                  label: t("dataGrid.copyColumnNames"),
+                  icon: Copy,
+                  submenu: [
+                    {
+                      label: t("dataGrid.copyColumnNamesLines"),
+                      icon: Copy,
+                      action: copyColumnNamesAsLines,
+                    },
+                    {
+                      label: t("dataGrid.copyColumnNamesJson"),
+                      icon: Copy,
+                      action: copyColumnNamesAsJson,
+                    },
+                  ],
                 },
                 {
                   label: t("dataGrid.copyColumnValues"),
