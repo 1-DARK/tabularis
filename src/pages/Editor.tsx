@@ -207,6 +207,7 @@ import {
   isFocusedPane,
 } from "../utils/tabScroll";
 import { computeAutoScrollSpeed } from "../utils/notebookDnd";
+import { buildExportFileName } from "../utils/exportFileName";
 import clsx from "clsx";
 
 interface ExportProgress {
@@ -4167,7 +4168,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               extensions: [extension],
             },
           ],
-          defaultPath: `result_${Date.now()}.${extension}`,
+          defaultPath: buildExportFileName({
+            tableName: activeTab.type === "table" ? activeTab.activeTable : null,
+            extension,
+          }),
         });
 
         if (!filePath) return;
@@ -4219,7 +4223,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             extensions: [extension],
           },
         ],
-        defaultPath: `result_${Date.now()}.${extension}`,
+        defaultPath: buildExportFileName({
+          tableName: activeTab.type === "table" ? activeTab.activeTable : null,
+          extension,
+        }),
       });
 
       if (!filePath) return;
