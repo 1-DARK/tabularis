@@ -2869,6 +2869,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           connectionId,
           query: sql,
           sessionId: currentTab.id,
+          ...(currentTab.database ? { database: currentTab.database } : {}),
           ...(schema ? { schema } : {}),
         });
       });
