@@ -192,7 +192,7 @@ import {
   combineFilterClauses,
   type CellValueFilterOperator,
 } from "../utils/cellValueFilter";
-import { formatSqlIdentifier } from "../utils/identifiers";
+import { getNextSortClause } from "../utils/tableToolbar";
 import {
   createSqlFileTab,
   getSqlFileName,
@@ -3008,27 +3008,13 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       if (!activeTab) return;
 
       const currentSort = activeTab.sortClause || "";
-      const parts = currentSort.trim().split(/\s+/);
-
-      let newSort = "";
-
-      const sortCol = parts[0]?.replace(/^["`]|["`]$/g, "") ?? "";
-
-      // Check if we are currently sorting by this column
-      if (sortCol === colName && parts.length <= 2) {
-        const currentDir = parts[1]?.toUpperCase();
-
-        if (!currentDir || currentDir === "ASC") {
-          // ASC -> DESC
-          newSort = `${formatSqlIdentifier(colName, activeCapabilities ?? activeDriver)} DESC`;
-        } else {
-          // DESC -> None (Clear)
-          newSort = "";
-        }
-      } else {
-        // New column -> ASC
-        newSort = `${formatSqlIdentifier(colName, activeCapabilities ?? activeDriver)} ASC`;
-      }
+      const defaultDir = settings.defaultSortDirection ?? "asc";
+      const newSort = getNextSortClause(
+        currentSort,
+        colName,
+        defaultDir,
+        activeCapabilities ?? activeDriver,
+      );
 
       handleToolbarUpdate(
         activeTab.filterClause || "",
@@ -3036,7 +3022,13 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         activeTab.limitClause,
       );
     },
-    [activeTab, activeDriver, activeCapabilities, handleToolbarUpdate],
+    [
+      activeTab,
+      settings.defaultSortDirection,
+      activeDriver,
+      activeCapabilities,
+      handleToolbarUpdate,
+    ],
   );
 
   const handlePendingChange = useCallback(
