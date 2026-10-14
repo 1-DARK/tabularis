@@ -4807,7 +4807,7 @@ pub async fn execute_plugin_read_only_query<R: Runtime>(
     match params.driver.as_str() {
         "sqlite" | "postgres" | "mysql" | "mariadb" => {
             driver
-                .execute_read_only_query(&params, &query, Some(100), 1, schema.as_deref())
+                .execute_read_only_query(&params, &query, None, 1, schema.as_deref())
                 .await
         }
         _ => Err("This driver does not support sandboxed read-only queries".to_string()),

@@ -93,7 +93,7 @@ describe("plugin isolation acceptance contract", () => {
     expect(transport).toContain('throw new Error("method_not_allowed")');
 
     const backend = projectFile("src-tauri/src/commands.rs");
-    expect(backend).toContain("execute_read_only_query(&params, &query, Some(100), 1");
+    expect(backend).toContain("execute_read_only_query(&params, &query, None, 1");
     expect(backend).toContain("classify_query_kind(&query)");
     expect(projectFile("src-tauri/src/drivers/driver_trait.rs")).toContain("async fn execute_read_only_query(");
     expect(projectFile("src-tauri/src/drivers/sqlite/mod.rs")).toContain("PRAGMA query_only = ON");

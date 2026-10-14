@@ -57,7 +57,9 @@ writes. The host repeats this check with its Rust classifier and runs the query
 in a database-enforced read-only context for built-in SQLite, PostgreSQL, and
 MySQL drivers. Drivers that do not support this mode reject the call. Use
 read-only database credentials as an additional safeguard, especially when
-the database exposes custom side-effecting functions.
+the database exposes custom side-effecting functions. The API returns all rows
+provided by the driver; it does not silently cap results at 100 rows. Add a
+`LIMIT` clause when a plugin only needs a bounded result set.
 
 For a Google OAuth token exchange, import `exchangeGoogleOAuthToken` and pass
 the form fields needed for an `authorization_code` or `refresh_token` grant.

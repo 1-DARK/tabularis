@@ -514,6 +514,10 @@ in [`UI_SANDBOX_DESIGN.md`](./UI_SANDBOX_DESIGN.md).
 | `openUrl(url)` | `Promise<void>` | Open a URL in the system browser |
 | `exchangeGoogleOAuthToken(request)` | `Promise<GoogleOAuthTokenResponse>` | Exchange or refresh Google OAuth tokens at the host-fixed Google endpoint |
 
+`usePluginQuery().executeQuery()` returns all rows provided by the driver; the
+host does not silently cap plugin query results at 100 rows. Add a SQL `LIMIT`
+clause when only a bounded result set is needed.
+
 #### Plugin Modal
 
 `usePluginModal()` lets you open a modal from within a slot component. Its React

@@ -94,6 +94,7 @@ vi.mock("react-i18next", () => ({
     i18n: {
       language: "en",
       changeLanguage: vi.fn(),
+      getResourceBundle: vi.fn(() => ({})),
     },
   }),
   initReactI18next: {
