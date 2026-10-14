@@ -132,7 +132,8 @@ import {
   extractQueryParams,
   interpolateQueryParams,
 } from "../utils/queryParameters";
-import { formatDuration } from "../utils/formatTime";
+import { formatDuration, formatTimingTooltip } from "../utils/formatTime";
+import { useTimingLabels } from "../hooks/useTimingLabels";
 import { notifyQueryFinished } from "../utils/queryNotification";
 import {
   buildSyncPayload,
@@ -282,6 +283,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   } = useEditor();
   const location = useLocation();
   const { matchesShortcut, isMac } = useKeybindings();
+  const timingLabels = useTimingLabels();
   const { showAlert } = useAlert();
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -5317,7 +5319,21 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                           count: activeTab.result.rows.length,
                         })}{" "}
                         {activeTab.executionTime !== null && (
-                          <span className="hidden @[400px]:inline text-muted ml-2 font-mono">
+                          <span
+                            className="hidden @[400px]:inline text-muted ml-2 font-mono"
+                            title={
+                              activeTab.result
+                                ? formatTimingTooltip(
+                                    {
+                                      serverTimeMs: activeTab.result.server_time_ms,
+                                      fetchTimeMs: activeTab.result.fetch_time_ms,
+                                      totalTimeMs: activeTab.executionTime,
+                                    },
+                                    timingLabels,
+                                  ) ?? undefined
+                                : undefined
+                            }
+                          >
                             ({formatDuration(activeTab.executionTime)})
                           </span>
                         )}
