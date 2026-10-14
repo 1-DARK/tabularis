@@ -1456,6 +1456,7 @@
     "exportLoadedRowsWarning": "Apenas {{loaded}} linhas carregadas de {{total}} linhas totais foram exportadas. Navegue pelas páginas do resultado ou execute uma consulta mais restrita antes de exportar se precisar de mais linhas.",
     "queryParameters": "Parâmetros da Consulta",
     "formatSql": "Formatar SQL",
+    "selectCurrentStatement": "Selecionar a instrução atual",
     "convertSelectionToSqlList": "Converter seleção em lista SQL",
     "transformToUppercase": "Converter para maiúsculas",
     "transformToLowercase": "Converter para minúsculas",
