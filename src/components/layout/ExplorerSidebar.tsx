@@ -3,6 +3,7 @@ import { copyTextToClipboard } from "../../utils/clipboard";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { quoteIdentifier, quoteTableRef } from "../../utils/identifiers";
+import { formatObjectNameForCopy, type ObjectNameCopyFormat } from "../../utils/objectNameCopy";
 import { isPostgresDriver, triggerFunctionName } from "../../utils/triggerSql";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -564,6 +565,30 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
       t,
     ],
   );
+
+  const createCopyNameItem = (name: string, schema?: string): ContextMenuItem => {
+    const copyName = (format: ObjectNameCopyFormat) => async () => {
+      try {
+        await copyTextToClipboard(
+          formatObjectNameForCopy(name, format, activeCapabilities ?? activeDriver, schema),
+        );
+        showAlert(t("common.copied"), { kind: "info" });
+      } catch (error) {
+        console.error("Failed to copy object name:", error);
+        showAlert(t("common.error"), { kind: "error" });
+      }
+    };
+
+    return {
+      label: t("sidebar.copyName"),
+      icon: Copy,
+      submenu: [
+        { label: t("sidebar.plainName"), action: copyName("name") },
+        { label: t("sidebar.quotedName"), action: copyName("quoted") },
+        ...(schema ? [{ label: t("sidebar.qualifiedName"), action: copyName("qualified") }] : []),
+      ],
+    };
+  };
 
   // Multi-database: open table/view without qualified prefix — backend uses USE <db> for isolation
   const handleOpenDatabaseTable = (tableName: string, database?: string) => {
@@ -2335,11 +2360,7 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                         setIsClipboardImportOpen(true);
                       },
                     } : null,
-                    {
-                      label: t("sidebar.copyName"),
-                      icon: Copy,
-                      action: () => navigator.clipboard.writeText(contextMenu.id),
-                    },
+                    createCopyNameItem(contextMenu.id, ctxSchema),
                     supportsManageTables(activeCapabilities) ? {
                       label: t("sidebar.addColumn"),
                       icon: Plus,
@@ -2540,11 +2561,7 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                                   setViewEditorModal({ isOpen: true, viewName: contextMenu.id, isNewView: false, schema: viewCtxSchema, database: viewCtxDatabase });
                                 },
                               },
-                              {
-                                label: t("sidebar.copyName"),
-                                icon: Copy,
-                                action: () => navigator.clipboard.writeText(contextMenu.id),
-                              },
+                              createCopyNameItem(contextMenu.id, viewCtxSchema),
                               {
                                 label: t("sidebar.dropView"),
                                 icon: Trash2,
@@ -2632,11 +2649,7 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                                 true,
                                 mvCtxDatabase,
                               ),
-                              {
-                                label: t("sidebar.copyName"),
-                                icon: Copy,
-                                action: () => navigator.clipboard.writeText(contextMenu.id),
-                              },
+                              createCopyNameItem(contextMenu.id, mvCtxSchema),
                             ];
                           })()
                         : contextMenu.type === "routine"
