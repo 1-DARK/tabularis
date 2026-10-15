@@ -282,6 +282,13 @@ fn merge_config(existing: &mut AppConfig, update: AppConfig) {
     }
 
     merge_fields!(
+        cell_double_click_action,
+        column_masking_enabled,
+        column_masking_overrides,
+        column_masking_patterns,
+        result_zebra_stripes,
+        row_editor_follow_selection,
+        sticky_column_headers,
         default_sort_direction,
         plugin_shutdown_grace_seconds,
         editor_highlight_invisible_characters,

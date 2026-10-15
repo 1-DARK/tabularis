@@ -314,3 +314,36 @@ fn config_merge_keeps_plugin_timeouts_and_query_notifications() {
     assert_eq!(config.notify_long_queries, Some(true));
     assert_eq!(config.notify_long_queries_threshold_sec, Some(30));
 }
+
+#[test]
+fn saves_all_grid_preferences_and_preserves_them_on_partial_updates() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = runtime(temp.path());
+    let preferences = serde_json::json!({
+        "cellDoubleClickAction": "edit",
+        "columnMaskingEnabled": false,
+        "columnMaskingOverrides": {"connection.table": {"include": ["secret"]}},
+        "columnMaskingPatterns": ["password"],
+        "resultZebraStripes": false,
+        "rowEditorFollowSelection": false,
+        "stickyColumnHeaders": false
+    });
+    save_config(
+        &runtime,
+        serde_json::from_value(preferences.clone()).unwrap(),
+    )
+    .unwrap();
+    save_config(
+        &runtime,
+        serde_json::from_value(serde_json::json!({"language": "de"})).unwrap(),
+    )
+    .unwrap();
+    let reloaded = serde_json::to_value(load_config(&runtime)).unwrap();
+    for (key, expected) in preferences.as_object().unwrap() {
+        assert_eq!(
+            &reloaded[key], expected,
+            "preference {key} must survive save and reload"
+        );
+    }
+    assert_eq!(reloaded["language"], "de");
+}
