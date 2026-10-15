@@ -25,7 +25,7 @@ import type { SchemaData, RoutineInfo, TriggerInfo } from "../../../contexts/Dat
 import type { TableColumn } from "../../../types/schema";
 import type { ContextMenuData } from "../../../types/sidebar";
 import type { DriverCapabilities } from "../../../types/plugins";
-import { groupRoutinesByType } from "../../../utils/routines";
+import { groupRoutinesByType, routineLabel } from "../../../utils/routines";
 import { formatObjectCount } from "../../../utils/schema";
 import { fuzzyFilter } from "../../../utils/fuzzy";
 import { onActivationKey } from "../../../utils/keyboardEvents";
@@ -202,6 +202,7 @@ export const SidebarDatabaseItem = ({
               onClick={(e) => { e.stopPropagation(); onImport(databaseName); }}
               className="p-1 rounded hover:bg-surface-secondary text-muted hover:text-accent-success transition-colors"
               title={t("dump.importDatabase")}
+              aria-label={t("dump.importDatabase")}
             >
               <Upload size={13} />
             </button>
@@ -211,6 +212,7 @@ export const SidebarDatabaseItem = ({
               onClick={(e) => { e.stopPropagation(); onDump(databaseName); }}
               className="p-1 rounded hover:bg-surface-secondary text-muted hover:text-accent transition-colors"
               title={t("dump.dumpDatabase")}
+              aria-label={t("dump.dumpDatabase")}
             >
               <Download size={13} />
             </button>
@@ -220,6 +222,7 @@ export const SidebarDatabaseItem = ({
               onClick={(e) => { e.stopPropagation(); onViewDiagram(databaseName); }}
               className="p-1 rounded hover:bg-surface-secondary text-muted hover:text-accent-warning transition-colors"
               title={t("sidebar.viewERDiagram")}
+              aria-label={t("sidebar.viewERDiagram")}
             >
               <Network size={13} className="rotate-90" />
             </button>
@@ -228,6 +231,7 @@ export const SidebarDatabaseItem = ({
             onClick={(e) => { e.stopPropagation(); onRefreshDatabase(databaseName); }}
             className="p-1 rounded hover:bg-surface-secondary text-muted hover:text-primary transition-colors"
             title={t("sidebar.refreshTables")}
+            aria-label={t("sidebar.refreshTables")}
           >
             <RefreshCw size={13} />
           </button>
@@ -473,7 +477,7 @@ export const SidebarDatabaseItem = ({
                         />
                         {functionsOpen && groupedRoutines.functions.map((routine) => (
                           <SidebarRoutineItem
-                            key={routine.name}
+                            key={routineLabel(routine.name, routine.identity_args)}
                             routine={routine}
                             connectionId={connectionId}
                             onContextMenu={onContextMenu}
@@ -494,7 +498,7 @@ export const SidebarDatabaseItem = ({
                         />
                         {proceduresOpen && groupedRoutines.procedures.map((routine) => (
                           <SidebarRoutineItem
-                            key={routine.name}
+                            key={routineLabel(routine.name, routine.identity_args)}
                             routine={routine}
                             connectionId={connectionId}
                             onContextMenu={onContextMenu}

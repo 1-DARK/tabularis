@@ -9,6 +9,9 @@ async fn crashed_plugin_process_fails_pending_calls_without_hanging() {
     let (shutdown_tx, _shutdown_rx) = oneshot::channel();
     let process = PluginProcess {
         plugin_id: "crashed-plugin-test".to_string(),
+        route_selected_database: false,
+        accepting_calls: std::sync::atomic::AtomicBool::new(true),
+        manager_task: tokio::sync::Mutex::new(None),
         sender,
         next_id: AtomicU64::new(1),
         shutdown_tx: tokio::sync::Mutex::new(Some(shutdown_tx)),

@@ -25,6 +25,7 @@ interface SidebarColumnItemProps {
   onEdit: (column: TableColumn) => void;
   isView?: boolean;
   schema?: string;
+  database?: string;
   canManage?: boolean;
 }
 
@@ -38,6 +39,7 @@ export const SidebarColumnItem = ({
   onEdit,
   isView = false,
   schema,
+  database,
   canManage,
 }: SidebarColumnItemProps) => {
   const client = useTabularisClient();
@@ -75,6 +77,7 @@ export const SidebarColumnItem = ({
           connectionId,
           query,
           ...(schema ? { schema } : {}),
+          ...(database ? { database } : {}),
         });
 
         onRefresh();

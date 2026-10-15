@@ -154,7 +154,7 @@ describe("NotebookCellWrapper query plans", () => {
     await settle();
     expect(screen.getByRole("textbox", { name: "SQL editor" })).toHaveValue(raw);
     expect(mockInvoke).toHaveBeenCalledExactlyOnceWith("explain_query_plan", {
-      connectionId: "cell-connection", query: sql, schema: activeSchema ?? undefined, analyze: false,
+      connectionId: "cell-connection", query: sql, schema: activeSchema ?? undefined, analyze: false, database: undefined,
     });
     expect(screen.getByTestId("plan")).toHaveTextContent("Result");
   });
@@ -175,7 +175,7 @@ describe("NotebookCellWrapper query plans", () => {
     rerender(<NotebookCellWrapper {...props} activeSchema="reporting" cell={{ ...cell, isCollapsed: false }} />);
     await settle();
     expect(mockInvoke).toHaveBeenCalledExactlyOnceWith("explain_query_plan", {
-      connectionId: "cell-connection", query: props.cell.content, schema: "reporting", analyze: false,
+      connectionId: "cell-connection", query: props.cell.content, schema: "reporting", analyze: false, database: undefined,
     });
   });
 
@@ -198,7 +198,7 @@ describe("NotebookCellWrapper query plans", () => {
     await act(async () => { fireEvent.click(screen.getByTitle("editor.visualExplain.rerun")); });
     expect(mockInvoke).toHaveBeenCalledTimes(2);
     expect(mockInvoke).toHaveBeenLastCalledWith("explain_query_plan", {
-      connectionId: "cell-connection", query: props.cell.content, schema: "reporting", analyze: false,
+      connectionId: "cell-connection", query: props.cell.content, schema: "reporting", analyze: false, database: undefined,
     });
   });
 
@@ -215,7 +215,7 @@ describe("NotebookCellWrapper query plans", () => {
     rerender(<NotebookCellWrapper {...props} cell={cell} explainQuery={{ sql: "SELECT 42", unresolvedRefs: [] }} />);
     await settle();
     expect(mockInvoke).toHaveBeenCalledExactlyOnceWith("explain_query_plan", {
-      connectionId: "cell-connection", query: "SELECT 42", schema: "analytics", analyze: false,
+      connectionId: "cell-connection", query: "SELECT 42", schema: "analytics", analyze: false, database: undefined,
     });
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });

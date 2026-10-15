@@ -116,7 +116,7 @@ describe("VisualExplainPage", () => {
     renderPage();
     await waitFor(() => expect(screen.getByTestId("plan")).toHaveTextContent("deep link"));
     expect(invoke).toHaveBeenCalledExactlyOnceWith("explain_query_plan", {
-      connectionId: "connection-1", query: "SELECT * FROM users", analyze: false, schema: undefined,
+      connectionId: "connection-1", query: "SELECT * FROM users", analyze: false, schema: undefined, database: undefined,
     });
   });
 

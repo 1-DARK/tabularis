@@ -21,6 +21,7 @@ export interface SchemaDiagramRouteParams {
   readonly connectionId: string;
   readonly connectionName: string;
   readonly databaseName: string;
+  readonly database?: string;
   readonly schema?: string;
   readonly focusTable?: string;
 }
@@ -52,6 +53,7 @@ export function buildSchemaDiagramRoute(
     connectionName: params.connectionName,
     databaseName: params.databaseName,
   });
+  if (params.database) search.set("database", params.database);
   if (params.schema) search.set("schema", params.schema);
   if (params.focusTable) search.set("focusTable", params.focusTable);
   return `${BROWSER_ROUTES.schemaDiagram}?${search.toString()}`;

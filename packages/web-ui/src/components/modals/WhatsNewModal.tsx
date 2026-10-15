@@ -93,7 +93,10 @@ export const WhatsNewModal = ({
                   className="h-14 w-14 shrink-0 rounded-lg border border-strong bg-base p-0.5 shadow-sm"
                 />
                 <div className="min-w-0 space-y-1.5">
-                  <h3 id="whats-new-support-title" className="text-sm font-semibold text-primary">
+                  <h3
+                    id="whats-new-support-title"
+                    className="text-sm font-semibold text-primary"
+                  >
                     {t("whatsNew.supportTitle")}
                   </h3>
                   <p className="text-sm leading-relaxed text-secondary">
@@ -101,7 +104,9 @@ export const WhatsNewModal = ({
                   </p>
                   <p className="text-xs text-secondary">
                     {t("whatsNew.supportThanks")}{" "}
-                    <span className="inline-block font-medium italic text-primary">— Andrea · debba</span>
+                    <span className="inline-block font-medium italic text-primary">
+                      — Andrea · debba
+                    </span>
                   </p>
                 </div>
               </div>
@@ -118,7 +123,11 @@ export const WhatsNewModal = ({
                 >
                   <Heart size={14} className="shrink-0" aria-hidden="true" />
                   {t("whatsNew.supportAction")}
-                  <ExternalLink size={14} className="shrink-0" aria-hidden="true" />
+                  <ExternalLink
+                    size={14}
+                    className="shrink-0"
+                    aria-hidden="true"
+                  />
                 </a>
                 <a
                   href={GITHUB_URL}
@@ -130,7 +139,11 @@ export const WhatsNewModal = ({
                   }}
                   className="inline-flex items-center justify-center gap-2 rounded-lg border border-strong bg-base/50 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-surface-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-secondary"
                 >
-                  <Star size={14} className="shrink-0 text-accent-warning" aria-hidden="true" />
+                  <Star
+                    size={14}
+                    className="shrink-0 text-accent-warning"
+                    aria-hidden="true"
+                  />
                   {t("whatsNew.supportStarAction")}
                 </a>
                 <button
@@ -208,7 +221,10 @@ export const WhatsNewModal = ({
                 {entry.breakingChanges.length > 0 && (
                   <ChangelogSection
                     icon={
-                      <AlertTriangle size={14} className="text-accent-warning" />
+                      <AlertTriangle
+                        size={14}
+                        className="text-accent-warning"
+                      />
                     }
                     label={t("whatsNew.breakingChanges")}
                     items={entry.breakingChanges}

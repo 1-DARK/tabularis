@@ -18,6 +18,10 @@ pub struct PluginConfig {
     /// `None` inherits the global value; `0` disables the timeout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub call_timeout_seconds: Option<u32>,
+    /// Per-plugin override of `AppConfig::plugin_shutdown_grace_seconds`.
+    /// `None` inherits the global value; values below 1 are clamped at runtime.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shutdown_grace_seconds: Option<u32>,
 }
 
 /// Per-connection column masking overrides (`table.column` entries).
@@ -65,6 +69,8 @@ pub struct AppConfig {
     pub sticky_column_headers: Option<bool>,
     /// Alternate the background of data grid rows. Default: false.
     pub result_zebra_stripes: Option<bool>,
+    /// Default sort direction on data grid header click: `"asc"` or `"desc"`.
+    pub default_sort_direction: Option<String>,
     /// Keep the row editor sidebar in sync with the selected grid row. Default: true.
     pub row_editor_follow_selection: Option<bool>,
     /// What double-clicking a grid cell does: `"inline"` (default), `"sidebar"`
@@ -109,6 +115,9 @@ pub struct AppConfig {
     /// Maximum seconds the host waits for a plugin to answer a single call.
     /// `0` disables the timeout. Default: 120. Overridable per plugin.
     pub plugin_call_timeout_seconds: Option<u32>,
+    /// Seconds in-flight plugin calls may run after shutdown is requested.
+    /// Values below 1 are clamped at runtime. Default: 2. Overridable per plugin.
+    pub plugin_shutdown_grace_seconds: Option<u32>,
     pub editor_theme: Option<String>,
     /// Font for query result cells ("inherit" follows the interface font). Default: JetBrains Mono.
     pub result_font_family: Option<String>,
@@ -117,6 +126,8 @@ pub struct AppConfig {
     pub editor_line_height: Option<f32>,
     pub editor_tab_size: Option<u32>,
     pub editor_word_wrap: Option<bool>,
+    /// Highlight hidden Unicode and look-alike characters in the SQL editor.
+    pub editor_highlight_invisible_characters: Option<bool>,
     pub editor_show_line_numbers: Option<bool>,
     /// Whether the Enter key accepts the active autocomplete suggestion in the
     /// SQL editor. Maps to Monaco's `acceptSuggestionOnEnter` setting: `true`
@@ -138,6 +149,8 @@ pub struct AppConfig {
     pub formatter_function_case: Option<String>,
     pub formatter_lines_between_queries: Option<u32>,
     pub formatter_dense_operators: Option<bool>,
+    /// Case of SQL keywords inserted by autocomplete: "match" | "upper" | "lower"
+    pub autocomplete_keyword_case: Option<String>,
     /// Connection health check interval in seconds. 0 = disabled. Default: 30.
     pub ping_interval: Option<u32>,
     /// Maximum number of query history entries per connection. Default: 500.
@@ -298,6 +311,7 @@ pub fn get_config_dir<R: tauri::Runtime>(_app: &AppHandle<R>) -> Option<PathBuf>
 
 pub(crate) fn cache_config(config: &AppConfig) {
     crate::plugins::call_timeout::apply_config(config);
+    crate::plugins::shutdown_grace::apply_config(config);
     if let Ok(mut cached) = CONFIG_CACHE.write() {
         *cached = config.clone();
     }
@@ -336,6 +350,7 @@ pub fn load_config_from_disk() -> AppConfig {
     // snapshot is kept in that case.
     if trusted {
         crate::plugins::call_timeout::apply_config(&config);
+        crate::plugins::shutdown_grace::apply_config(&config);
     }
     config
 }
@@ -419,11 +434,52 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     Ok(())
 }
 
+/// Composes the config-storage key for per-connection schema selection/
+/// preference. A non-empty `database` scopes the key to that database, so a
+/// nested multi-database driver (e.g. PostgreSQL browsing several databases
+/// on one connection) keeps each database's schema selection independent
+/// instead of every database sharing one flat per-connection entry.
+pub(crate) fn schema_storage_key(connection_id: &str, database: Option<&str>) -> String {
+    match database {
+        Some(db) if !db.is_empty() => format!("{connection_id}::{db}"),
+        _ => connection_id.to_string(),
+    }
+}
+
+/// Looks up a schema preference, falling back to the pre-multi-db flat
+/// per-connection entry when the database-scoped key has never been set.
+///
+/// A connection's schema preference saved before it opted into
+/// multi-database browsing lives under the flat `connection_id` key. Once
+/// opted in, every lookup passes a database and scopes to
+/// `connection_id::database` instead — without this fallback, that old
+/// preference is orphaned and silently lost the first time each database is
+/// looked up under its new per-database key.
+pub(crate) fn resolve_schema_preference(
+    prefs: &HashMap<String, String>,
+    connection_id: &str,
+    database: Option<&str>,
+) -> Option<String> {
+    let key = schema_storage_key(connection_id, database);
+    if let Some(value) = prefs.get(&key) {
+        return Some(value.clone());
+    }
+    if key != connection_id {
+        return prefs.get(connection_id).cloned();
+    }
+    None
+}
+
 #[tauri::command]
-pub fn get_schema_preference(app: AppHandle, connection_id: String) -> Option<String> {
+pub fn get_schema_preference(
+    app: AppHandle,
+    connection_id: String,
+    database: Option<String>,
+) -> Option<String> {
     crate::application::metadata::get_schema_preference(
         &app.state::<crate::runtime::RuntimeContext>(),
         &connection_id,
+        database,
     )
 }
 
@@ -432,11 +488,13 @@ pub fn set_schema_preference(
     app: AppHandle,
     connection_id: String,
     schema: String,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::metadata::set_schema_preference(
         &app.state::<crate::runtime::RuntimeContext>(),
         connection_id,
         schema,
+        database,
     )
 }
 
@@ -476,10 +534,15 @@ pub fn set_last_open_connections(
 }
 
 #[tauri::command]
-pub fn get_selected_schemas(app: AppHandle, connection_id: String) -> Vec<String> {
+pub fn get_selected_schemas(
+    app: AppHandle,
+    connection_id: String,
+    database: Option<String>,
+) -> Vec<String> {
     crate::application::metadata::get_selected_schemas(
         &app.state::<crate::runtime::RuntimeContext>(),
         &connection_id,
+        database,
     )
 }
 
@@ -488,11 +551,13 @@ pub fn set_selected_schemas(
     app: AppHandle,
     connection_id: String,
     schemas: Vec<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::metadata::set_selected_schemas(
         &app.state::<crate::runtime::RuntimeContext>(),
         connection_id,
         schemas,
+        database,
     )
 }
 
@@ -761,6 +826,7 @@ pub fn get_config_json(app: AppHandle) -> Result<String, String> {
 
 #[tauri::command]
 pub fn relaunch_app(app: AppHandle) {
+    crate::window_placement::persist_cached(&app);
     app.restart();
 }
 
@@ -856,6 +922,81 @@ mod tests {
     }
 
     #[test]
+    pub(crate) fn schema_storage_key_plain_connection_without_database() {
+        assert_eq!(schema_storage_key("conn-1", None), "conn-1");
+        assert_eq!(schema_storage_key("conn-1", Some("")), "conn-1");
+    }
+
+    #[test]
+    pub(crate) fn schema_storage_key_scopes_to_database_when_given() {
+        assert_eq!(
+            schema_storage_key("conn-1", Some("analytics")),
+            "conn-1::analytics"
+        );
+    }
+
+    #[test]
+    pub(crate) fn schema_storage_key_keeps_two_databases_on_the_same_connection_independent() {
+        let a = schema_storage_key("conn-1", Some("db_a"));
+        let b = schema_storage_key("conn-1", Some("db_b"));
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    pub(crate) fn resolve_schema_preference_prefers_the_scoped_key_when_it_exists() {
+        let mut prefs = HashMap::new();
+        prefs.insert("conn-1".to_string(), "legacy_public".to_string());
+        prefs.insert(
+            "conn-1::analytics".to_string(),
+            "analytics_schema".to_string(),
+        );
+
+        assert_eq!(
+            resolve_schema_preference(&prefs, "conn-1", Some("analytics")),
+            Some("analytics_schema".to_string())
+        );
+    }
+
+    #[test]
+    pub(crate) fn resolve_schema_preference_falls_back_to_the_flat_key_after_a_multi_db_opt_in() {
+        // Regression: a connection's schema preference saved before it opted
+        // into multi-database browsing lives under the flat "conn-1" key.
+        // Once opted in, every lookup passes a database and would otherwise
+        // silently miss under the new "conn-1::analytics" key forever.
+        let mut prefs = HashMap::new();
+        prefs.insert("conn-1".to_string(), "legacy_public".to_string());
+
+        assert_eq!(
+            resolve_schema_preference(&prefs, "conn-1", Some("analytics")),
+            Some("legacy_public".to_string())
+        );
+    }
+
+    #[test]
+    pub(crate) fn resolve_schema_preference_returns_none_when_neither_key_exists() {
+        let prefs = HashMap::new();
+        assert_eq!(
+            resolve_schema_preference(&prefs, "conn-1", Some("analytics")),
+            None
+        );
+    }
+
+    #[test]
+    pub(crate) fn resolve_schema_preference_plain_connection_reads_only_the_flat_key() {
+        let mut prefs = HashMap::new();
+        prefs.insert("conn-1".to_string(), "public".to_string());
+
+        assert_eq!(
+            resolve_schema_preference(&prefs, "conn-1", None),
+            Some("public".to_string())
+        );
+        assert_eq!(
+            resolve_schema_preference(&prefs, "conn-1", Some("")),
+            Some("public".to_string())
+        );
+    }
+
+    #[test]
     fn old_hidden_schemas_json_deserializes_without_error() {
         // Ensure old config files with hiddenSchemas don't break deserialization
         let json = r#"{"hiddenSchemas":{"conn-1":["secret"]}}"#;
@@ -877,6 +1018,7 @@ mod tests {
         assert!(config.editor_line_height.is_none());
         assert!(config.editor_tab_size.is_none());
         assert!(config.editor_word_wrap.is_none());
+        assert!(config.editor_highlight_invisible_characters.is_none());
         assert!(config.editor_show_line_numbers.is_none());
         assert!(config.editor_accept_suggestion_on_enter.is_none());
     }
@@ -890,6 +1032,7 @@ mod tests {
         config.editor_line_height = Some(1.5);
         config.editor_tab_size = Some(4);
         config.editor_word_wrap = Some(false);
+        config.editor_highlight_invisible_characters = Some(false);
         config.editor_show_line_numbers = Some(true);
         config.editor_theme = Some("tabularis-light".to_string());
         config.editor_accept_suggestion_on_enter = Some(true);
@@ -904,6 +1047,7 @@ mod tests {
         assert!(json.contains("editorLineHeight"));
         assert!(json.contains("editorTabSize"));
         assert!(json.contains("editorWordWrap"));
+        assert!(json.contains("editorHighlightInvisibleCharacters"));
         assert!(json.contains("editorShowLineNumbers"));
         assert!(json.contains("editorTheme"));
         assert!(json.contains("editorAcceptSuggestionOnEnter"));
@@ -928,6 +1072,7 @@ mod tests {
             "editorLineHeight": 1.8,
             "editorTabSize": 2,
             "editorWordWrap": true,
+            "editorHighlightInvisibleCharacters": false,
             "editorShowLineNumbers": true,
             "editorTheme": "tabularis-dark",
             "editorAcceptSuggestionOnEnter": true,
@@ -942,6 +1087,7 @@ mod tests {
         assert_eq!(config.editor_font_size, Some(14));
         assert_eq!(config.editor_tab_size, Some(2));
         assert_eq!(config.editor_word_wrap, Some(true));
+        assert_eq!(config.editor_highlight_invisible_characters, Some(false));
         assert_eq!(config.editor_show_line_numbers, Some(true));
         assert_eq!(config.editor_theme.as_deref(), Some("tabularis-dark"));
         assert_eq!(config.editor_accept_suggestion_on_enter, Some(true));
@@ -1044,6 +1190,17 @@ mod tests {
         assert!(json.contains("displayTimezone"));
         let parsed: AppConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.display_timezone.as_deref(), Some("Asia/Tokyo"));
+    }
+
+    #[test]
+    fn default_sort_direction_serializes_with_camel_case_and_round_trips() {
+        let mut config = AppConfig::default();
+        assert!(config.default_sort_direction.is_none());
+        config.default_sort_direction = Some("desc".into());
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("defaultSortDirection"));
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.default_sort_direction.as_deref(), Some("desc"));
     }
 
     #[test]

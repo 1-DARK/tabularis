@@ -11,9 +11,10 @@ interface ExplainAiAnalysisProps {
 }
 
 export function ExplainAiAnalysis({ plan }: ExplainAiAnalysisProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { settings } = useSettings();
   const client = useTabularisClient();
+  const resolvedLanguage = i18n.resolvedLanguage ?? i18n.language;
   const [analysis, setAnalysis] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +43,7 @@ export function ExplainAiAnalysis({ plan }: ExplainAiAnalysisProps) {
           provider: settings.aiProvider,
           model: settings.aiModel || "",
           query: queryWithPlan,
-          language: getAiExplanationLanguage(settings.language),
+          language: getAiExplanationLanguage(settings.language, resolvedLanguage),
         },
       });
       setAnalysis(result);
@@ -51,7 +52,7 @@ export function ExplainAiAnalysis({ plan }: ExplainAiAnalysisProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [client, plan, settings.aiProvider, settings.aiModel, settings.language, t]);
+  }, [client, plan, settings.aiProvider, settings.aiModel, settings.language, resolvedLanguage, t]);
 
   useEffect(() => {
     if (plan.raw_output) {

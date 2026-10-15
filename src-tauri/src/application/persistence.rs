@@ -282,6 +282,10 @@ fn merge_config(existing: &mut AppConfig, update: AppConfig) {
     }
 
     merge_fields!(
+        default_sort_direction,
+        plugin_shutdown_grace_seconds,
+        editor_highlight_invisible_characters,
+        autocomplete_keyword_case,
         theme,
         follow_system_theme,
         light_theme_id,

@@ -4,16 +4,24 @@ import type { QueryResult, QueryResultEntry, Tab } from "../types/editor";
  * Protocol for syncing query results between the main editor window and a
  * detached results window. The main window owns all query/DB logic and is the
  * single source of truth: it pushes result state to the detached window via
- * {@link RESULTS_SYNC_EVENT} and receives user actions back via
+ * {@link resultsSyncEvent} and receives user actions back via
  * {@link RESULTS_ACTION_EVENT}. Keeping the shape and dispatch in one tested
  * module avoids event-name / payload drift between the two windows.
  */
 
 export const RESULTS_SYNC_EVENT = "results-window:sync";
+export const RESULTS_COPY_EVENT = "results-window:copy";
 export const RESULTS_ACTION_EVENT = "results-window:action";
 export const RESULTS_READY_EVENT = "results-window:ready";
 export const RESULTS_CLOSED_EVENT = "results-window:closed";
-export const RESULTS_COPY_EVENT = "results-window:copy";
+
+// Per-tab event names: Tauri inlines an event's payload into every webview
+// listening on that name, so a shared name would ship each tab's results to
+// every detached window.
+export const resultsSyncEvent = (tabId: string) =>
+  `results-window:sync:${tabId}`;
+export const resultsCopyEvent = (tabId: string) =>
+  `results-window:copy:${tabId}`;
 
 /** Synthetic entry id used to render a legacy single `Tab.result` through the
  * entry-based detached view. */

@@ -19,6 +19,8 @@ interface ViewEditorModalProps {
   viewName?: string;
   isNewView?: boolean;
   onSuccess?: () => void;
+  schema?: string;
+  database?: string;
 }
 
 export const ViewEditorModal = ({
@@ -28,11 +30,14 @@ export const ViewEditorModal = ({
   viewName,
   isNewView = false,
   onSuccess,
+  schema: schemaProp,
+  database,
 }: ViewEditorModalProps) => {
   const client = useTabularisClient();
   const { t } = useTranslation();
   const platform = usePlatformCapabilities();
-  const { activeSchema, activeCapabilities } = useDatabase();
+  const { activeSchema: connectionActiveSchema, activeCapabilities } = useDatabase();
+  const activeSchema = schemaProp ?? connectionActiveSchema;
   const { showAlert } = useAlert();
   const [name, setName] = useState("");
   const [definition, setDefinition] = useState("");
@@ -55,6 +60,7 @@ export const ViewEditorModal = ({
         connectionId,
         viewName: vName,
         ...(activeSchema ? { schema: activeSchema } : {}),
+        ...(database ? { database } : {}),
       });
       const selectPart = extractEditableViewDefinition(def);
       setDefinition(selectPart);
@@ -64,7 +70,7 @@ export const ViewEditorModal = ({
     } finally {
       setLoading(false);
     }
-  }, [activeSchema, client, connectionId, t]);
+  }, [client, connectionId, t, activeSchema, database]);
 
   useEffect(() => {
     if (isOpen) {
@@ -102,6 +108,7 @@ export const ViewEditorModal = ({
         limit: 10,
         page: 1,
         ...(activeSchema ? { schema: activeSchema } : {}),
+        ...(database ? { database } : {}),
       });
       setPreviewResult({
         columns: result.columns,
@@ -136,6 +143,7 @@ export const ViewEditorModal = ({
           viewName: name,
           definition,
           ...(activeSchema ? { schema: activeSchema } : {}),
+          ...(database ? { database } : {}),
         });
         showAlert(t("views.createSuccess"), { kind: "info" });
       } else {
@@ -156,6 +164,7 @@ export const ViewEditorModal = ({
           viewName: name,
           definition,
           ...(activeSchema ? { schema: activeSchema } : {}),
+          ...(database ? { database } : {}),
         });
         showAlert(t("views.alterSuccess"), { kind: "info" });
       }

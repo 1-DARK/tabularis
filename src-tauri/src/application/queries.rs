@@ -25,6 +25,7 @@ pub enum QueryCommand {
         page: Option<u32>,
         schema: Option<String>,
         query_session_id: Option<String>,
+        database: Option<String>,
     },
     ExecuteBatch {
         connection_id: String,
@@ -34,18 +35,21 @@ pub enum QueryCommand {
         schema: Option<String>,
         query_session_id: Option<String>,
         batch_id: Option<String>,
+        database: Option<String>,
     },
     Count {
         connection_id: String,
         query: String,
         schema: Option<String>,
         query_session_id: Option<String>,
+        database: Option<String>,
     },
     Explain {
         connection_id: String,
         query: String,
         analyze: bool,
         schema: Option<String>,
+        database: Option<String>,
     },
     ReleaseSession {
         connection_id: String,
@@ -119,6 +123,7 @@ pub async fn execute(
             page,
             schema,
             query_session_id,
+            database,
         } => execute_query(
             runtime,
             &state.query_cancellation,
@@ -130,6 +135,7 @@ pub async fn execute(
             page,
             schema,
             query_session_id,
+            database,
         )
         .await
         .and_then(json),
@@ -141,6 +147,7 @@ pub async fn execute(
             schema,
             query_session_id,
             batch_id,
+            database,
         } => execute_query_batch(
             runtime,
             &state.query_cancellation,
@@ -153,6 +160,7 @@ pub async fn execute(
             schema,
             query_session_id,
             batch_id,
+            database,
         )
         .await
         .and_then(json),
@@ -161,6 +169,7 @@ pub async fn execute(
             query,
             schema,
             query_session_id,
+            database,
         } => count_query(
             runtime,
             scope.session_id,
@@ -168,6 +177,7 @@ pub async fn execute(
             query,
             schema,
             query_session_id,
+            database,
         )
         .await
         .and_then(json),
@@ -176,6 +186,7 @@ pub async fn execute(
             query,
             analyze,
             schema,
+            database,
         } => explain_query_plan(
             runtime,
             &state.query_cancellation,
@@ -184,6 +195,7 @@ pub async fn execute(
             query,
             analyze,
             schema,
+            database,
         )
         .await
         .and_then(json),
@@ -245,6 +257,7 @@ pub async fn execute_query(
     page: Option<u32>,
     schema: Option<String>,
     query_session_id: Option<String>,
+    database: Option<String>,
 ) -> Result<QueryResult, String> {
     log::info!(
         "Executing query on connection: {} | Query: {}",
@@ -253,7 +266,9 @@ pub async fn execute_query(
     );
     let sanitized_query = sanitize_user_query(&query);
     let dropped = crate::sql_database_statements::dropped_database(&sanitized_query);
-    let (driver, params) = driver_and_params(runtime, scope.session_id, &connection_id).await?;
+    let (driver, params) =
+        driver_and_params(runtime, scope.session_id, &connection_id, database).await?;
+
     let effective_limit = response_limit(policy, limit);
     let driver_session = query_session_id.as_deref().map(|id| {
         super::query_sessions::register(scope.session_id, &connection_id, id, driver.clone())
@@ -339,6 +354,7 @@ pub async fn execute_query_batch(
     schema: Option<String>,
     query_session_id: Option<String>,
     batch_id: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<BatchStatementResult>, String> {
     log::info!(
         "Executing query batch on connection: {} | {} statement(s)",
@@ -353,7 +369,9 @@ pub async fn execute_query_batch(
         .iter()
         .map(|query| crate::sql_database_statements::dropped_database(query))
         .collect();
-    let (driver, params) = driver_and_params(runtime, scope.session_id, &connection_id).await?;
+    let (driver, params) =
+        driver_and_params(runtime, scope.session_id, &connection_id, database).await?;
+
     let progress: Option<Arc<BatchProgressFn>> = batch_id.map(|batch_id| {
         let events = runtime.events.clone();
         let session_id = scope.session_id;
@@ -446,6 +464,7 @@ pub async fn explain_query_plan(
     query: String,
     analyze: bool,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<ExplainQueryOutput, String> {
     let sanitized_query = sanitize_user_query(&query);
     if !crate::drivers::common::is_explainable_query(&sanitized_query) {
@@ -454,7 +473,9 @@ pub async fn explain_query_plan(
                 .to_string(),
         );
     }
-    let (driver, params) = driver_and_params(runtime, scope.session_id, &connection_id).await?;
+    let (driver, params) =
+        driver_and_params(runtime, scope.session_id, &connection_id, database).await?;
+
     let task = tokio::spawn(async move {
         driver
             .explain_query(&params, &sanitized_query, analyze, schema.as_deref())
@@ -484,8 +505,10 @@ pub async fn count_query(
     query: String,
     schema: Option<String>,
     query_session_id: Option<String>,
+    database: Option<String>,
 ) -> Result<u64, String> {
-    let (driver, params) = driver_and_params(runtime, session_id, &connection_id).await?;
+    let (driver, params) = driver_and_params(runtime, session_id, &connection_id, database).await?;
+
     let sanitized = query.trim().trim_end_matches(';');
     let count_query = format!("SELECT COUNT(*) FROM ({sanitized}) as count_wrapper");
     let result = match query_session_id.as_deref() {
@@ -522,7 +545,7 @@ pub async fn get_server_now(
     session_id: Option<Uuid>,
     connection_id: String,
 ) -> Result<String, String> {
-    let (driver, params) = driver_and_params(runtime, session_id, &connection_id).await?;
+    let (driver, params) = driver_and_params(runtime, session_id, &connection_id, None).await?;
     let query = if params.driver == "sqlite" {
         "SELECT datetime('now', 'localtime')"
     } else {
@@ -638,10 +661,11 @@ async fn driver_and_params(
     runtime: &RuntimeContext,
     session_id: Option<Uuid>,
     connection_id: &str,
+    database: Option<String>,
 ) -> Result<(Arc<dyn DatabaseDriver>, crate::models::ConnectionParams), String> {
     let runtime = runtime.clone();
     let connection_id = connection_id.to_string();
-    let (_driver_id, params) = tokio::task::spawn_blocking(move || {
+    let (_driver_id, mut params) = tokio::task::spawn_blocking(move || {
         crate::application::connections::resolve_saved_connection_params(
             &runtime,
             session_id,
@@ -650,6 +674,9 @@ async fn driver_and_params(
     })
     .await
     .map_err(|error| error.to_string())??;
+    if let Some(db) = database.filter(|db| !db.is_empty()) {
+        params.database = crate::models::DatabaseSelection::Single(db);
+    }
     let driver = crate::drivers::registry::get_connection_driver(&params).await?;
     Ok((driver, params))
 }

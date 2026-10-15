@@ -362,3 +362,273 @@ async fn icon_upload_tokens_are_bound_to_the_authenticated_session() {
     .unwrap();
     assert!(stored.as_str().unwrap().starts_with("connection-icons/"));
 }
+
+struct FailingSecrets {
+    memory: MemorySecrets,
+    fail_suffix: Option<&'static str>,
+    block_config: Mutex<Option<PathBuf>>,
+}
+
+impl RuntimeSecrets for FailingSecrets {
+    fn get(&self, account: &str) -> Result<Option<String>, String> {
+        self.memory.get(account)
+    }
+    fn set(&self, account: &str, secret: &str) -> Result<(), String> {
+        if self
+            .fail_suffix
+            .is_some_and(|suffix| account.ends_with(suffix))
+        {
+            return Err("Keychain unavailable".into());
+        }
+        self.memory.set(account, secret)?;
+        if let Some(path) = self.block_config.lock().unwrap().take() {
+            if path.is_file() {
+                std::fs::remove_file(&path).unwrap();
+            }
+            std::fs::create_dir(&path).unwrap();
+        }
+        Ok(())
+    }
+    fn delete(&self, account: &str) -> Result<(), String> {
+        self.memory.delete(account)
+    }
+}
+
+#[test]
+fn keychain_failure_persists_passwords_and_reports_fallback_without_exposing_them() {
+    let (temp, _, state) = fixture();
+    let secrets = Arc::new(FailingSecrets {
+        memory: MemorySecrets::default(),
+        fail_suffix: Some(":ssh"),
+        block_config: Mutex::new(None),
+    });
+    let runtime = RuntimeContext::new(
+        Arc::new(FixedRuntimePaths::new(
+            temp.path().into(),
+            temp.path().into(),
+        )),
+        Arc::new(NoopRuntimeEvents),
+        secrets.clone(),
+    );
+    let mut params = connection_params("db-secret");
+    params.ssh_password = Some("ssh-secret".into());
+    let saved = save_connection(&runtime, &state, "Fallback".into(), params, None, None).unwrap();
+    assert_eq!(saved.params.save_in_keychain, Some(false));
+    assert_eq!(saved.params.password, None);
+    let persisted = find_connection(&load_file(&runtime).unwrap(), &saved.id).unwrap();
+    assert_eq!(persisted.params.password.as_deref(), Some("db-secret"));
+    assert_eq!(persisted.params.ssh_password.as_deref(), Some("ssh-secret"));
+    assert!(secrets.memory.values.lock().unwrap().is_empty());
+}
+
+#[test]
+fn failed_config_save_rolls_back_new_credentials() {
+    let (temp, runtime, state) = fixture();
+    let secrets = Arc::new(FailingSecrets {
+        memory: MemorySecrets::default(),
+        fail_suffix: None,
+        block_config: Mutex::new(Some(runtime.paths.connections_file())),
+    });
+    let runtime = RuntimeContext::new(
+        Arc::new(FixedRuntimePaths::new(
+            temp.path().into(),
+            temp.path().into(),
+        )),
+        Arc::new(NoopRuntimeEvents),
+        secrets.clone(),
+    );
+    assert!(save_connection(
+        &runtime,
+        &state,
+        "Failure".into(),
+        connection_params("secret"),
+        None,
+        None
+    )
+    .is_err());
+    assert!(secrets.memory.values.lock().unwrap().is_empty());
+}
+
+#[test]
+fn duplicate_clears_a_missing_uri_marker() {
+    let (_temp, runtime, state) = fixture();
+    let mut params = connection_params("secret");
+    params.connection_uri = Some("postgres://user:secret@localhost/db".into());
+    let original =
+        save_connection(&runtime, &state, "Original".into(), params, None, None).unwrap();
+    runtime
+        .secrets
+        .delete(&secret_account(&original.id, CONNECTION_URI_SUFFIX))
+        .unwrap();
+    let duplicate = duplicate_connection(&runtime, &state, &original.id).unwrap();
+    assert_eq!(duplicate.params.connection_uri_in_keychain, None);
+}
+
+#[test]
+fn update_omitted_password_retains_the_secret_when_disabling_keychain() {
+    let (_temp, runtime, state) = fixture();
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "Original".into(),
+        connection_params("secret"),
+        None,
+        None,
+    )
+    .unwrap();
+    let mut params = saved.params;
+    params.save_in_keychain = Some(false);
+    update_connection(
+        &runtime,
+        &state,
+        saved.id.clone(),
+        "Edited".into(),
+        params,
+        None,
+        None,
+    )
+    .unwrap();
+    let persisted = find_connection(&load_file(&runtime).unwrap(), &saved.id).unwrap();
+    assert_eq!(persisted.params.password.as_deref(), Some("secret"));
+    assert_eq!(
+        runtime
+            .secrets
+            .get(&secret_account(&saved.id, DB_SECRET_SUFFIX))
+            .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn switching_to_multiple_databases_backfills_saved_queries_and_history() {
+    use super::super::productivity::{self, ProductivityCommand};
+    let (_temp, runtime, state) = fixture();
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "Original".into(),
+        connection_params("secret"),
+        None,
+        None,
+    )
+    .unwrap();
+    let config = runtime.paths.config_dir();
+    productivity::execute(
+        config,
+        ProductivityCommand::SaveQuery {
+            connection_id: saved.id.clone(),
+            name: "Query".into(),
+            sql: "SELECT 1".into(),
+            database: None,
+        },
+    )
+    .await
+    .unwrap();
+    productivity::execute(
+        config,
+        ProductivityCommand::AddQueryHistoryEntry {
+            connection_id: saved.id.clone(),
+            sql: "SELECT 1".into(),
+            executed_at: "2026-10-15".into(),
+            execution_time_ms: None,
+            status: "success".into(),
+            rows_affected: None,
+            error: None,
+            database: None,
+        },
+    )
+    .await
+    .unwrap();
+    let mut params = saved.params;
+    params.database = DatabaseSelection::Multiple(vec!["browser-db".into(), "other".into()]);
+    update_connection(
+        &runtime,
+        &state,
+        saved.id.clone(),
+        "Edited".into(),
+        params,
+        None,
+        None,
+    )
+    .unwrap();
+    let queries = productivity::execute(
+        config,
+        ProductivityCommand::GetSavedQueries {
+            connection_id: saved.id.clone(),
+        },
+    )
+    .await
+    .unwrap();
+    let history = productivity::execute(
+        config,
+        ProductivityCommand::GetQueryHistory {
+            connection_id: saved.id,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(queries[0]["database"], "browser-db");
+    assert_eq!(history["entries"][0]["database"], "browser-db");
+}
+
+#[test]
+fn switching_driver_does_not_keep_the_previous_drivers_uri() {
+    let (_temp, runtime, state) = fixture();
+    let mut params = connection_params("secret");
+    params.connection_uri = Some("postgres://user:secret@localhost/db".into());
+    let saved = save_connection(&runtime, &state, "Original".into(), params, None, None).unwrap();
+    let mut params = saved.params;
+    params.driver = "mysql".into();
+    let updated = update_connection(
+        &runtime,
+        &state,
+        saved.id.clone(),
+        "Edited".into(),
+        params,
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(updated.params.connection_uri_in_keychain, None);
+    assert_eq!(
+        runtime
+            .secrets
+            .get(&secret_account(&saved.id, CONNECTION_URI_SUFFIX))
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn unreadable_existing_secret_is_not_overwritten_or_deleted() {
+    struct UnreadableSecrets(Mutex<Vec<String>>);
+    impl RuntimeSecrets for UnreadableSecrets {
+        fn get(&self, _account: &str) -> Result<Option<String>, String> {
+            Err("Read denied".into())
+        }
+        fn set(&self, _account: &str, _secret: &str) -> Result<(), String> {
+            self.0.lock().unwrap().push("set".into());
+            Ok(())
+        }
+        fn delete(&self, _account: &str) -> Result<(), String> {
+            self.0.lock().unwrap().push("delete".into());
+            Ok(())
+        }
+    }
+    let (temp, _, _) = fixture();
+    let secrets = Arc::new(UnreadableSecrets(Mutex::new(Vec::new())));
+    let runtime = RuntimeContext::new(
+        Arc::new(FixedRuntimePaths::new(
+            temp.path().into(),
+            temp.path().into(),
+        )),
+        Arc::new(NoopRuntimeEvents),
+        secrets.clone(),
+    );
+    let mut writes = SecretWrites::default();
+    assert!(writes
+        .set(&runtime, "existing:db".into(), "replacement")
+        .is_err());
+    writes.rollback(&runtime);
+    assert!(secrets.0.lock().unwrap().is_empty());
+}

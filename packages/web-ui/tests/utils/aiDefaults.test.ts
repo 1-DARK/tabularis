@@ -35,3 +35,12 @@ describe("detectAiDefaults", () => {
       .toEqual({ aiProvider: "anthropic", aiModel: "model-a" });
   });
 });
+
+it("does not load either catalog while hydrating ChatGPT with an empty model", async () => {
+    call.mockReset();
+    for (const aiModel of [null, ""]) {
+      expect(await detectAiDefaults(client, { ...DEFAULT_SETTINGS, aiEnabled: true, aiProvider: "chatgpt", aiModel }))
+        .toEqual({});
+    }
+    expect(call).not.toHaveBeenCalled();
+  });

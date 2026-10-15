@@ -789,13 +789,16 @@ pub(crate) fn resolve_k8s_params(params: &ConnectionParams) -> Result<Connection
         port,
         &options,
     );
-    if let Some(tunnel) = crate::k8s_tunnel::get_tunnels().lock().unwrap().get(&key) {
-        let mut resolved = params.clone();
-        resolved.k8s_enabled = Some(false);
-        resolved.host = Some("127.0.0.1".to_string());
-        resolved.port = Some(tunnel.local_port);
-        return Ok(resolved);
-    }
+    let preferred_local_port = match crate::k8s_tunnel::reuse_or_discard_dead(&key) {
+        Ok(local_port) => {
+            let mut resolved = params.clone();
+            resolved.k8s_enabled = Some(false);
+            resolved.host = Some("127.0.0.1".to_string());
+            resolved.port = Some(local_port);
+            return Ok(resolved);
+        }
+        Err(previous) => previous,
+    };
     let tunnel = crate::k8s_tunnel::K8sTunnel::new(
         context,
         namespace,
@@ -803,12 +806,9 @@ pub(crate) fn resolve_k8s_params(params: &ConnectionParams) -> Result<Connection
         resource_name,
         port,
         &options,
+        preferred_local_port,
     )?;
-    let local_port = tunnel.local_port;
-    crate::k8s_tunnel::get_tunnels()
-        .lock()
-        .unwrap()
-        .insert(key, tunnel);
+    let local_port = crate::k8s_tunnel::insert_tunnel(key, tunnel);
     let mut resolved = params.clone();
     resolved.k8s_enabled = Some(false);
     resolved.host = Some("127.0.0.1".to_string());

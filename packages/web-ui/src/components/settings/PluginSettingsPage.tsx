@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { choosePlatformServerPath } from "../../platform/dialogs";
-import { FolderOpen, Check, RotateCcw, ExternalLink } from "lucide-react";
+import { FolderOpen, Check, RotateCcw, ExternalLink, Loader2 } from "lucide-react";
 import { useSettings } from "../../hooks/useSettings";
 import { useDatabase } from "../../hooks/useDatabase";
 import { useDrivers } from "../../hooks/useDrivers";
@@ -16,7 +16,11 @@ import {
   getDisplayInterpreter,
   withCallTimeoutOverride,
   resolveEffectiveCallTimeout,
+  withShutdownGraceOverride,
+  resolveEffectiveShutdownGrace,
   MAX_PLUGIN_CALL_TIMEOUT_SECONDS,
+  MAX_PLUGIN_SHUTDOWN_GRACE_SECONDS,
+  MIN_PLUGIN_SHUTDOWN_GRACE_SECONDS,
   resolveSettingsWithDefaults,
   validateSettings,
 } from "../../utils/pluginConfig";
@@ -79,8 +83,15 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
   const [callTimeout, setCallTimeout] = useState(
     currentConfig?.callTimeoutSeconds?.toString() ?? "",
   );
-  const inheritedCallTimeout = resolveEffectiveCallTimeout(
+  const [shutdownGrace, setShutdownGrace] = useState(
+    currentConfig?.shutdownGraceSeconds?.toString() ?? "",
+  );
+  const globalCallTimeout = resolveEffectiveCallTimeout(
     settings.pluginCallTimeoutSeconds,
+    undefined,
+  );
+  const globalShutdownGrace = resolveEffectiveShutdownGrace(
+    settings.pluginShutdownGraceSeconds,
     undefined,
   );
   const definitions = useMemo(() => manifest?.settings ?? [], [manifest]);
@@ -89,6 +100,7 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
   >(() => resolveSettingsWithDefaults(definitions, currentConfig?.settings));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const getSettingLabel = useCallback(
     (def: PluginSettingDefinition) =>
@@ -138,6 +150,7 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
   );
 
   const handleSave = useCallback(async () => {
+    if (saving) return;
     const validationErrors = validateSettings(definitions, dynamicValues);
     if (Object.keys(validationErrors).length > 0) {
       const errorMessages: Record<string, string> = {};
@@ -151,9 +164,15 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
       return;
     }
 
-    const baseConfig = withCallTimeoutOverride(
-      resolvePluginConfig(currentConfig, interpreter),
-      callTimeout,
+    setSaving(true);
+    setSaved(false);
+    try {
+    const baseConfig = withShutdownGraceOverride(
+      withCallTimeoutOverride(
+        resolvePluginConfig(currentConfig, interpreter),
+        callTimeout,
+      ),
+      shutdownGrace,
     );
     const mergedSettings =
       definitions.length > 0
@@ -184,11 +203,16 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
     }
 
     setSaved(true);
+    } finally {
+      setSaving(false);
+    }
   }, [
+    saving,
     definitions,
     dynamicValues,
     interpreter,
     callTimeout,
+    shutdownGrace,
     currentConfig,
     settings.plugins,
     updateSetting,
@@ -380,7 +404,7 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
               aria-label={t("settings.plugins.pluginSettings.callTimeout")}
               placeholder={t(
                 "settings.plugins.pluginSettings.callTimeoutPlaceholder",
-                { seconds: inheritedCallTimeout },
+                { seconds: globalCallTimeout },
               )}
               onChange={(e) => {
                 setCallTimeout(e.target.value);
@@ -399,6 +423,48 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
                 className="inline-flex items-center justify-center w-8 h-8 border border-default rounded-md text-muted hover:text-primary hover:border-strong transition-colors shrink-0"
                 title={t("settings.plugins.pluginSettings.callTimeoutInherit")}
                 aria-label={t("settings.plugins.pluginSettings.callTimeoutInherit")}
+              >
+                <RotateCcw size={12} />
+              </button>
+            )}
+          </div>
+        </SettingSection>
+      )}
+
+      {!isBuiltin && (
+        <SettingSection
+          title={t("settings.plugins.pluginSettings.shutdownGrace")}
+          description={t("settings.plugins.pluginSettings.shutdownGraceDesc")}
+        >
+          <div className="py-3 flex items-center gap-2">
+            <input autoCorrect="off" autoCapitalize="off" autoComplete="off" spellCheck={false}
+              type="number"
+              min={MIN_PLUGIN_SHUTDOWN_GRACE_SECONDS}
+              max={MAX_PLUGIN_SHUTDOWN_GRACE_SECONDS}
+              step={1}
+              value={shutdownGrace}
+              aria-label={t("settings.plugins.pluginSettings.shutdownGrace")}
+              placeholder={t(
+                "settings.plugins.pluginSettings.shutdownGracePlaceholder",
+                { seconds: globalShutdownGrace },
+              )}
+              onChange={(e) => {
+                setShutdownGrace(e.target.value);
+                setSaved(false);
+              }}
+              className="w-56 bg-base border border-default rounded-lg px-3 py-2 text-sm text-primary placeholder:text-muted focus:outline-none focus:border-focus/50"
+            />
+            <span className="text-sm text-muted">{t("settings.seconds")}</span>
+            {shutdownGrace !== "" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShutdownGrace("");
+                  setSaved(false);
+                }}
+                className="inline-flex items-center justify-center w-8 h-8 border border-default rounded-md text-muted hover:text-primary hover:border-strong transition-colors shrink-0"
+                title={t("settings.plugins.pluginSettings.shutdownGraceInherit")}
+                aria-label={t("settings.plugins.pluginSettings.shutdownGraceInherit")}
               >
                 <RotateCcw size={12} />
               </button>
@@ -442,8 +508,11 @@ function PluginSettingsForm({ pluginId, manifest }: PluginSettingsFormProps) {
       <div className="flex items-center gap-3 pt-2">
         <button
           onClick={handleSave}
-          className="px-4 py-2 bg-accent-primary hover:bg-accent-primary/90 text-inverse rounded-lg text-sm font-medium transition-colors"
+          disabled={saving}
+          aria-busy={saving}
+          className="inline-flex items-center gap-2 px-4 py-2 bg-accent-primary hover:bg-accent-primary/90 text-inverse rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
+          {saving && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
           {t("common.save")}
         </button>
         {saved && (

@@ -86,3 +86,42 @@ describe('useReferencedRecord hook integration', () => {
     });
   });
 });
+
+const baseParams = { connectionId: "conn-1", fk: fk("fk_users", "user_id", "users", "id"), value: 42, driver: "postgres", schema: "public", sourceColumnType: "integer" };
+
+describe("fetchReferencedRecord database threading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(invoke).mockResolvedValue({ columns: [], rows: [], affected_rows: 0 });
+  });
+
+  it("passes the database override to execute_query when set", async () => {
+    await fetchReferencedRecord({ ...baseParams, database: "analytics" }, client);
+
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "execute_query",
+      expect.objectContaining({ database: "analytics" }),
+    );
+  });
+
+  it("omits database from execute_query when not set (backward-compatible)", async () => {
+    await fetchReferencedRecord({ ...baseParams }, client);
+
+    const callArgs = vi.mocked(invoke).mock.calls[0][1] as Record<string, unknown>;
+    expect(callArgs).not.toHaveProperty("database");
+  });
+
+  it("omits database when set to null", async () => {
+    await fetchReferencedRecord({ ...baseParams, database: null }, client);
+
+    const callArgs = vi.mocked(invoke).mock.calls[0][1] as Record<string, unknown>;
+    expect(callArgs).not.toHaveProperty("database");
+  });
+
+  it("omits database when set to empty string", async () => {
+    await fetchReferencedRecord({ ...baseParams, database: "" }, client);
+
+    const callArgs = vi.mocked(invoke).mock.calls[0][1] as Record<string, unknown>;
+    expect(callArgs).not.toHaveProperty("database");
+  });
+});

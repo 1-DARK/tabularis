@@ -203,6 +203,23 @@ fn resolve_ssm_params(params: &ConnectionParams) -> Result<ConnectionParams, Str
     crate::application::tunnels::resolve_ssm_params(params)
 }
 
+/// Resolve params for closing a pool without respawning tunnels.
+///
+/// `build_connection_key` uses `connection_id` (plus driver/database/TLS), not
+/// the tunnel's local port, so closing never needs a live SSH tunnel, SSM
+/// session, or kubectl port-forward. Disabling all tunnel types here means a
+/// dead bastion / unreachable cluster cannot prevent pool cleanup (#1065).
+pub(crate) fn params_for_pool_close(
+    params: &ConnectionParams,
+    connection_id: &str,
+) -> Result<ConnectionParams, String> {
+    let mut for_close = params.clone();
+    for_close.k8s_enabled = Some(false);
+    for_close.ssh_enabled = Some(false);
+    for_close.ssm_enabled = Some(false);
+    resolve_connection_params_with_id(&for_close, connection_id)
+}
+
 /// Resolve connection params and set connection_id for stable pooling
 pub fn resolve_connection_params_with_id(
     params: &ConnectionParams,
@@ -265,6 +282,20 @@ fn persist_secret_change(
     }
 }
 
+/// The keychain URI to put back if persisting a change fails. A connection can
+/// claim a keychain entry that was never written (duplicates used to copy the
+/// flag but not the URI), so a missing entry means there is nothing to
+/// restore. Only a genuine read failure aborts the change.
+fn previous_keychain_connection_uri(
+    stored_in_keychain: bool,
+    read: impl FnOnce() -> Result<Option<String>, String>,
+) -> Result<Option<String>, String> {
+    if !stored_in_keychain {
+        return Ok(None);
+    }
+    read().map_err(|_| "Failed to read the stored connection URI from the OS keychain".to_string())
+}
+
 /// `change` is `None` to leave the stored URI untouched, `Some(Some(uri))` to
 /// write it, and `Some(None)` to clear it.
 fn persist_connection_uri_change(
@@ -277,10 +308,9 @@ fn persist_connection_uri_change(
     let Some(value) = change else {
         return persist();
     };
-    let previous_keychain = stored_in_keychain
-        .then(|| keychain_utils::get_connection_uri(connection_id))
-        .transpose()
-        .map_err(|_| "Failed to read the stored connection URI from the OS keychain".to_string())?;
+    let previous_keychain = previous_keychain_connection_uri(stored_in_keychain, || {
+        keychain_utils::find_connection_uri(connection_id)
+    })?;
     let previous_cache = cache
         .connection_uris
         .lock()
@@ -316,6 +346,84 @@ fn persist_connection_uri_change(
             keychain_result.map_err(|_| "Failed to roll back the stored connection URI".to_string())
         },
     )
+}
+
+/// Keychain secrets a connection save wrote, each with the value it held
+/// before. If the config file write fails afterwards they are put back, so a
+/// save that never landed doesn't leave secrets behind in the keychain.
+#[derive(Default)]
+struct KeychainSecretWrites {
+    db_password: Option<Option<String>>,
+    ssh_password: Option<Option<String>>,
+    ssh_key_passphrase: Option<Option<String>>,
+}
+
+impl KeychainSecretWrites {
+    /// Delete every secret this save wrote to the keychain. Used once the
+    /// config file landed with the secrets inline because a later keychain
+    /// write failed, so nothing the config doesn't point at is left behind.
+    fn discard(self, cache: &credential_cache::CredentialCache, connection_id: &str) {
+        Self {
+            db_password: self.db_password.map(|_| None),
+            ssh_password: self.ssh_password.map(|_| None),
+            ssh_key_passphrase: self.ssh_key_passphrase.map(|_| None),
+        }
+        .roll_back(cache, connection_id);
+    }
+
+    fn roll_back(self, cache: &credential_cache::CredentialCache, connection_id: &str) {
+        fn restore(
+            label: &str,
+            connection_id: &str,
+            previous: Option<String>,
+            set: impl FnOnce(&str) -> Result<(), String>,
+            delete: impl FnOnce() -> Result<(), String>,
+        ) {
+            let result = match previous.as_deref() {
+                Some(value) => set(value),
+                None => delete(),
+            };
+            if let Err(err) = result {
+                log::warn!(
+                    "Failed to roll back the {} for {} after a failed save: {}",
+                    label,
+                    connection_id,
+                    err
+                );
+            }
+        }
+
+        if let Some(previous) = self.db_password {
+            restore(
+                "DB password",
+                connection_id,
+                previous,
+                |value| keychain_utils::set_db_password(connection_id, value),
+                || keychain_utils::delete_db_password(connection_id),
+            );
+            credential_cache::invalidate_db_password(cache, connection_id);
+        }
+        if let Some(previous) = self.ssh_password {
+            restore(
+                "SSH password",
+                connection_id,
+                previous,
+                |value| keychain_utils::set_ssh_password(connection_id, value),
+                || keychain_utils::delete_ssh_password(connection_id),
+            );
+            credential_cache::invalidate_ssh_password(cache, connection_id);
+        }
+        if let Some(previous) = self.ssh_key_passphrase {
+            restore(
+                "SSH key passphrase",
+                connection_id,
+                previous,
+                |value| keychain_utils::set_ssh_key_passphrase(connection_id, value),
+                || keychain_utils::delete_ssh_key_passphrase(connection_id),
+            );
+            credential_cache::invalidate_ssh_key_passphrase(cache, connection_id);
+        }
+    }
 }
 
 /// Strip the URI out of the params that go to `connections.json`, leaving only
@@ -483,11 +591,13 @@ pub async fn get_connection_by_id<R: Runtime>(
 pub async fn get_schemas<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
     crate::application::metadata::get_schemas(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
+        database,
     )
     .await
 }
@@ -515,7 +625,8 @@ pub async fn set_selected_databases<R: Runtime>(
         &app.state::<crate::runtime::RuntimeContext>(),
         &connection_id,
         databases,
-    )?;
+    )
+    .await?;
     app.state::<std::sync::Arc<crate::connection_cache::ConnectionCache>>()
         .invalidate();
     Ok(())
@@ -526,12 +637,14 @@ pub async fn get_routines<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<RoutineInfo>, String> {
     crate::application::metadata::get_routines(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -542,6 +655,9 @@ pub async fn get_routine_parameters<R: Runtime>(
     connection_id: String,
     routine_name: String,
     schema: Option<String>,
+    database: Option<String>,
+    /* The signature of the overload the user clicked, where the dialect has them (#893) */
+    identity_args: Option<String>,
 ) -> Result<Vec<RoutineParameter>, String> {
     crate::application::database_objects::get_routine_parameters(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -549,6 +665,8 @@ pub async fn get_routine_parameters<R: Runtime>(
         &connection_id,
         routine_name,
         schema,
+        database,
+        identity_args,
     )
     .await
 }
@@ -560,6 +678,8 @@ pub async fn get_routine_definition<R: Runtime>(
     routine_name: String,
     routine_type: String, // "PROCEDURE" or "FUNCTION" - mainly for MySQL SHOW CREATE
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<String, String> {
     crate::application::database_objects::get_routine_definition(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -568,6 +688,8 @@ pub async fn get_routine_definition<R: Runtime>(
         routine_name,
         routine_type,
         schema,
+        database,
+        identity_args,
     )
     .await
 }
@@ -578,12 +700,14 @@ pub async fn get_table_query_template<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     request: crate::models::TableQueryTemplateRequest,
+    database: Option<String>,
 ) -> Result<Option<String>, String> {
     crate::application::database_objects::get_table_query_template(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         request,
+        database,
     )
     .await
 }
@@ -632,6 +756,8 @@ pub async fn get_routine_edit_script<R: Runtime>(
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<String, String> {
     crate::application::database_objects::get_routine_edit_script(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -640,6 +766,8 @@ pub async fn get_routine_edit_script<R: Runtime>(
         routine_name,
         routine_type,
         schema,
+        database,
+        identity_args,
     )
     .await
 }
@@ -651,6 +779,8 @@ pub async fn drop_routine<R: Runtime>(
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::drop_routine(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -659,6 +789,8 @@ pub async fn drop_routine<R: Runtime>(
         routine_name,
         routine_type,
         schema,
+        database,
+        identity_args,
     )
     .await
 }
@@ -668,12 +800,14 @@ pub async fn get_schema_snapshot<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<crate::models::TableSchema>, String> {
     crate::application::metadata::get_schema_snapshot(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -683,11 +817,15 @@ pub async fn get_ai_schema_context<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
     let saved_conn = find_connection_by_id(&app, &connection_id)?;
     let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
     let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
-    let params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    let mut params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    if let Some(db) = database.filter(|d| !d.is_empty()) {
+        params.database = crate::models::DatabaseSelection::Single(db);
+    }
     let driver = driver_for_params(&params).await?;
     let identifier_quote = driver.manifest().capabilities.identifier_quote.as_str();
     let context = driver
@@ -722,36 +860,76 @@ pub async fn save_connection<R: Runtime>(
     let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
     let connection_uri = runtime_connection_uri(&params).map(str::to_owned);
     let mut params_to_save = params_for_persistence(&params, connection_uri.is_some());
+    let mut keychain_writes = KeychainSecretWrites::default();
 
     if params.save_in_keychain.unwrap_or(false) {
         log::debug!("Storing passwords in keychain for connection: {}", name);
+        let mut keychain_stored = true;
         match keychain_utils::stored_password_change(params.password.as_deref()) {
             keychain_utils::StoredPasswordChange::Store(pwd) => {
-                keychain_utils::set_db_password(&id, pwd)?;
-                credential_cache::set_db_password_cached(&cache, &id, pwd);
+                match keychain_utils::set_db_password(&id, pwd) {
+                    Ok(()) => {
+                        keychain_writes.db_password = Some(None);
+                        credential_cache::set_db_password_cached(&cache, &id, pwd);
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Keychain unavailable while saving connection {}; storing secrets in the config file: {}",
+                            name, err
+                        );
+                        keychain_stored = false;
+                    }
+                }
             }
             // A fresh id has nothing to delete; an empty password is simply
             // not stored (keyutils would reject it anyway).
             keychain_utils::StoredPasswordChange::Keep
             | keychain_utils::StoredPasswordChange::Delete => {}
         }
-        if params.ssh_enabled.unwrap_or(false) {
+        if keychain_stored && params.ssh_enabled.unwrap_or(false) {
             if let Some(ssh_pwd) = &params.ssh_password {
-                keychain_utils::set_ssh_password(&id, ssh_pwd)?;
-                credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
+                match keychain_utils::set_ssh_password(&id, ssh_pwd) {
+                    Ok(()) => {
+                        keychain_writes.ssh_password = Some(None);
+                        credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Keychain unavailable while saving the SSH password for {}; storing secrets in the config file: {}",
+                            name, err
+                        );
+                        keychain_stored = false;
+                    }
+                }
             }
-            if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
-                if !ssh_passphrase.trim().is_empty() {
-                    keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase)?;
-                    credential_cache::set_ssh_key_passphrase_cached(&cache, &id, ssh_passphrase);
+            if keychain_stored {
+                if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
+                    if !ssh_passphrase.trim().is_empty() {
+                        match keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase) {
+                            Ok(()) => {
+                                keychain_writes.ssh_key_passphrase = Some(None);
+                                credential_cache::set_ssh_key_passphrase_cached(
+                                    &cache,
+                                    &id,
+                                    ssh_passphrase,
+                                );
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Keychain unavailable while saving the SSH key passphrase for {}; storing secrets in the config file: {}",
+                                    name, err
+                                );
+                                keychain_stored = false;
+                            }
+                        }
+                    }
                 }
             }
         }
-        params_to_save.password = None;
-        params_to_save.ssh_password = None;
-        params_to_save.ssh_key_passphrase = None;
+        persistence::apply_secret_persistence(&mut params_to_save, keychain_stored);
     }
 
+    let persisted_in_keychain = params_to_save.save_in_keychain.unwrap_or(false);
     let new_conn = SavedConnection {
         id: id.clone(),
         name: name.clone(),
@@ -764,18 +942,30 @@ pub async fn save_connection<R: Runtime>(
         environment: validate_environment(environment)?,
     };
     conn_file.connections.push(new_conn.clone());
-    persist_connection_uri_change(
+    if let Err(err) = persist_connection_uri_change(
         &cache,
         &id,
         false,
         connection_uri.as_deref().map(Some),
         || save_connections_and_invalidate(&app, &path, &conn_file),
-    )?;
+    ) {
+        keychain_writes.roll_back(&cache, &id);
+        return Err(err);
+    }
+    if !persisted_in_keychain {
+        // A later keychain write failed and the secrets went to the config
+        // file instead; drop the ones that did reach the keychain.
+        keychain_writes.discard(&cache, &id);
+    }
 
     log::info!("Connection saved successfully: {} (ID: {})", name, id);
 
+    let requested_keychain = params.save_in_keychain.unwrap_or(false);
     let mut returned_conn = new_conn;
     returned_conn.params = params; // Return with password for frontend state
+    if requested_keychain && !persisted_in_keychain {
+        returned_conn.params.save_in_keychain = Some(false);
+    }
     Ok(returned_conn)
 }
 
@@ -891,41 +1081,85 @@ pub async fn update_connection<R: Runtime>(
         params_for_persistence(&params, connection_uri.is_some() || preserve_stored_uri);
 
     let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
+    let mut keychain_writes = KeychainSecretWrites::default();
     if params.save_in_keychain.unwrap_or(false) {
+        let mut keychain_stored = true;
         match keychain_utils::stored_password_change(params.password.as_deref()) {
             keychain_utils::StoredPasswordChange::Store(pwd) => {
-                keychain_utils::set_db_password(&id, pwd)?;
-                credential_cache::set_db_password_cached(&cache, &id, pwd);
+                let previous = keychain_utils::get_db_password(&id, "").ok();
+                match keychain_utils::set_db_password(&id, pwd) {
+                    Ok(()) => {
+                        keychain_writes.db_password = Some(previous);
+                        credential_cache::set_db_password_cached(&cache, &id, pwd);
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Keychain unavailable while updating connection {}; storing secrets in the config file: {}",
+                            id, err
+                        );
+                        keychain_stored = false;
+                    }
+                }
             }
             // The frontend sends an explicit empty password when a plugin hid
             // the login inputs. The previous secret must not survive, or the
             // next connect would hand a stale login to the driver.
             keychain_utils::StoredPasswordChange::Delete => {
+                let previous = keychain_utils::get_db_password(&id, "").ok();
                 keychain_utils::delete_db_password(&id)?;
+                keychain_writes.db_password = Some(previous);
                 credential_cache::invalidate_db_password(&cache, &id);
             }
             keychain_utils::StoredPasswordChange::Keep => {}
         }
-        if params.ssh_enabled.unwrap_or(false) {
+        if keychain_stored && params.ssh_enabled.unwrap_or(false) {
             if let Some(ssh_pwd) = &params.ssh_password {
-                keychain_utils::set_ssh_password(&id, ssh_pwd)?;
-                credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
-            }
-            if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
-                if !ssh_passphrase.trim().is_empty() {
-                    keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase)?;
-                    credential_cache::set_ssh_key_passphrase_cached(&cache, &id, ssh_passphrase);
+                let previous = keychain_utils::get_ssh_password(&id, "").ok();
+                match keychain_utils::set_ssh_password(&id, ssh_pwd) {
+                    Ok(()) => {
+                        keychain_writes.ssh_password = Some(previous);
+                        credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "Keychain unavailable while updating the SSH password for {}; storing secrets in the config file: {}",
+                            id, err
+                        );
+                        keychain_stored = false;
+                    }
                 }
             }
-        } else {
+            if keychain_stored {
+                if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
+                    if !ssh_passphrase.trim().is_empty() {
+                        let previous = keychain_utils::get_ssh_key_passphrase(&id, "").ok();
+                        match keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase) {
+                            Ok(()) => {
+                                keychain_writes.ssh_key_passphrase = Some(previous);
+                                credential_cache::set_ssh_key_passphrase_cached(
+                                    &cache,
+                                    &id,
+                                    ssh_passphrase,
+                                );
+                            }
+                            Err(err) => {
+                                log::warn!(
+                                    "Keychain unavailable while updating the SSH key passphrase for {}; storing secrets in the config file: {}",
+                                    id, err
+                                );
+                                keychain_stored = false;
+                            }
+                        }
+                    }
+                }
+            }
+        } else if keychain_stored {
             keychain_utils::delete_ssh_password(&id).ok();
             keychain_utils::delete_ssh_key_passphrase(&id).ok();
             credential_cache::invalidate_ssh_password(&cache, &id);
             credential_cache::invalidate_ssh_key_passphrase(&cache, &id);
         }
-        params_to_save.password = None;
-        params_to_save.ssh_password = None;
-        params_to_save.ssh_key_passphrase = None;
+        persistence::apply_secret_persistence(&mut params_to_save, keychain_stored);
     } else {
         keychain_utils::delete_db_password(&id).ok();
         keychain_utils::delete_ssh_password(&id).ok();
@@ -945,6 +1179,7 @@ pub async fn update_connection<R: Runtime>(
     let original_appearance = conn_file.connections[conn_idx].appearance.clone();
     // Tags are managed by set_connection_tags; preserve them across edits.
     let original_tag_ids = conn_file.connections[conn_idx].tag_ids.clone();
+    let persisted_in_keychain = params_to_save.save_in_keychain.unwrap_or(false);
 
     let updated = SavedConnection {
         id: id.clone(),
@@ -960,9 +1195,19 @@ pub async fn update_connection<R: Runtime>(
 
     conn_file.connections[conn_idx] = updated.clone();
 
-    persist_connection_uri_change(&cache, &id, existing_uri_in_keychain, uri_change, || {
-        save_connections_and_invalidate(&app, &path, &conn_file)
-    })?;
+    if let Err(err) =
+        persist_connection_uri_change(&cache, &id, existing_uri_in_keychain, uri_change, || {
+            save_connections_and_invalidate(&app, &path, &conn_file)
+        })
+    {
+        keychain_writes.roll_back(&cache, &id);
+        return Err(err);
+    }
+    if !persisted_in_keychain {
+        // Same as save: the fallback put the secrets in the config file, so
+        // the keychain copies from this update are orphans.
+        keychain_writes.discard(&cache, &id);
+    }
 
     let mut metadata_changed = false;
     for driver_id in [&previous_driver_id, &updated.params.driver] {
@@ -1002,8 +1247,12 @@ pub async fn update_connection<R: Runtime>(
         }
     }
 
+    let requested_keychain = params.save_in_keychain.unwrap_or(false);
     let mut returned_conn = updated;
     returned_conn.params = params;
+    if requested_keychain && !persisted_in_keychain {
+        returned_conn.params.save_in_keychain = Some(false);
+    }
     Ok(returned_conn)
 }
 
@@ -1106,6 +1355,23 @@ pub async fn duplicate_connection<R: Runtime>(
         new_params.ssh_password = None;
         new_params.ssh_key_passphrase = None;
     }
+
+    // A connection URI only lives in the keychain, under the original's id.
+    // Give the duplicate its own entry, or drop the marker if there is nothing
+    // to copy: a marker without an entry leaves a copy that can neither
+    // connect nor be deleted.
+    let original_uri = if original.params.connection_uri_in_keychain.unwrap_or(false) {
+        credential_cache::get_connection_uri_cached(&cache, &original.id, true)
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    if let Some(uri) = &original_uri {
+        keychain_utils::set_connection_uri(&new_id, uri)?;
+        credential_cache::set_connection_uri_cached(&cache, &new_id, uri);
+    }
+    new_params = params_for_persistence(&new_params, original_uri.is_some());
 
     // Copy the icon file so the duplicate owns its own copy.
     // If the original has an Image icon, the duplicate must not share the same file path —
@@ -1293,7 +1559,7 @@ async fn migrate_ssh_connections<R: Runtime>(app: &AppHandle<R>) -> Result<(), S
 
     // Save migrated SSH connections
     let ssh_json = serde_json::to_string_pretty(&ssh_connections).map_err(|e| e.to_string())?;
-    fs::write(ssh_path, ssh_json).map_err(|e| e.to_string())?;
+    persistence::write_private_file(&ssh_path, ssh_json)?;
 
     // Save migrated connections using new format (preserving groups)
     conn_file.connections = migrated_connections;
@@ -1785,6 +2051,29 @@ mod tests {
     }
 
     #[test]
+    fn params_for_pool_close_disables_all_tunnel_types() {
+        // Pool keys depend on connection_id, not the tunnel's local port, so
+        // closing a pool must never respawn an SSH/SSM/K8s tunnel (#1065).
+        // Verify that all three are forced off regardless of the input.
+        let params = ConnectionParams {
+            k8s_enabled: Some(true),
+            ssh_enabled: Some(true),
+            ssm_enabled: Some(true),
+            ssh_host: Some("bastion".to_string()),
+            ssh_port: Some(22),
+            ssh_user: Some("user".to_string()),
+            ..base_params()
+        };
+
+        let resolved = params_for_pool_close(&params, "conn-1").expect("resolve");
+        assert_eq!(resolved.k8s_enabled, Some(false));
+        assert_eq!(resolved.ssh_enabled, Some(false));
+        assert_eq!(resolved.ssm_enabled, Some(false));
+        // connection_id is set for stable pool keying.
+        assert_eq!(resolved.connection_id.as_deref(), Some("conn-1"));
+    }
+
+    #[test]
     fn resolve_sanitizes_local_path_driver_databases() {
         let driver = "__test_resolve_local_path_driver__";
         crate::drivers::registry::set_local_path_driver(driver, true);
@@ -1844,6 +2133,43 @@ mod tests {
 
         assert_eq!(runtime_connection_uri(&params), None);
         assert!(validate_connection_uri_persistence(&params).is_ok());
+    }
+
+    #[test]
+    fn previous_uri_skips_the_keychain_when_none_is_stored() {
+        let previous = previous_keychain_connection_uri(false, || {
+            panic!("the keychain must not be read without a stored marker")
+        });
+
+        assert_eq!(previous, Ok(None));
+    }
+
+    #[test]
+    fn previous_uri_returns_the_stored_value() {
+        let uri = "mongodb+srv://cluster.example.invalid/app";
+        let previous = previous_keychain_connection_uri(true, || Ok(Some(uri.to_string())));
+
+        assert_eq!(previous, Ok(Some(uri.to_string())));
+    }
+
+    #[test]
+    fn previous_uri_treats_a_missing_entry_as_nothing_to_restore() {
+        // A duplicate used to carry the marker without its own entry. Deleting
+        // it must not fail just because there is nothing to restore.
+        let previous = previous_keychain_connection_uri(true, || Ok(None));
+
+        assert_eq!(previous, Ok(None));
+    }
+
+    #[test]
+    fn previous_uri_fails_on_a_genuine_keychain_error() {
+        let previous =
+            previous_keychain_connection_uri(true, || Err("securityd is not running".to_string()));
+
+        assert_eq!(
+            previous,
+            Err("Failed to read the stored connection URI from the OS keychain".to_string())
+        );
     }
 
     #[test]
@@ -3066,12 +3392,14 @@ pub async fn get_tables<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<TableInfo>, String> {
     crate::application::metadata::get_tables(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -3082,6 +3410,7 @@ pub async fn get_columns<R: Runtime>(
     connection_id: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<TableColumn>, String> {
     crate::application::metadata::get_columns(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3089,6 +3418,7 @@ pub async fn get_columns<R: Runtime>(
         &connection_id,
         table_name,
         schema,
+        database,
     )
     .await
 }
@@ -3099,6 +3429,7 @@ pub async fn get_foreign_keys<R: Runtime>(
     connection_id: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<ForeignKey>, String> {
     crate::application::metadata::get_foreign_keys(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3106,6 +3437,7 @@ pub async fn get_foreign_keys<R: Runtime>(
         &connection_id,
         table_name,
         schema,
+        database,
     )
     .await
 }
@@ -3116,6 +3448,7 @@ pub async fn get_indexes<R: Runtime>(
     connection_id: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<Index>, String> {
     crate::application::metadata::get_indexes(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3123,6 +3456,7 @@ pub async fn get_indexes<R: Runtime>(
         &connection_id,
         table_name,
         schema,
+        database,
     )
     .await
 }
@@ -3182,11 +3516,15 @@ pub async fn save_blob_to_file<R: Runtime>(
     pk_map: std::collections::HashMap<String, serde_json::Value>,
     file_path: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     let saved_conn = find_connection_by_id(&app, &connection_id)?;
     let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
     let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
-    let params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    let mut params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    if let Some(db) = database.filter(|d| !d.is_empty()) {
+        params.database = crate::models::DatabaseSelection::Single(db);
+    }
     let drv = driver_for_params(&params).await?;
     drv.save_blob_to_file(
         &params,
@@ -3431,6 +3769,7 @@ pub async fn execute_query<R: Runtime>(
     limit: Option<u32>,
     page: Option<u32>,
     schema: Option<String>,
+    database: Option<String>,
     session_id: Option<String>,
 ) -> Result<QueryResult, String> {
     crate::application::queries::execute_query(
@@ -3444,6 +3783,7 @@ pub async fn execute_query<R: Runtime>(
         page,
         schema,
         session_id,
+        database,
     )
     .await
 }
@@ -3497,6 +3837,7 @@ pub async fn execute_query_batch<R: Runtime>(
     limit: Option<u32>,
     page: Option<u32>,
     schema: Option<String>,
+    database: Option<String>,
     batch_id: Option<String>,
     session_id: Option<String>,
 ) -> Result<Vec<BatchStatementResult>, String> {
@@ -3512,6 +3853,7 @@ pub async fn execute_query_batch<R: Runtime>(
         schema,
         session_id,
         batch_id,
+        database,
     )
     .await
 }
@@ -3526,6 +3868,7 @@ pub async fn explain_query_plan<R: Runtime>(
     query: String,
     analyze: bool,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<ExplainQueryOutput, String> {
     crate::application::queries::explain_query_plan(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3535,6 +3878,7 @@ pub async fn explain_query_plan<R: Runtime>(
         query,
         analyze,
         schema,
+        database,
     )
     .await
 }
@@ -3579,6 +3923,7 @@ pub async fn count_query<R: Runtime>(
     connection_id: String,
     query: String,
     schema: Option<String>,
+    database: Option<String>,
     session_id: Option<String>,
 ) -> Result<u64, String> {
     crate::application::queries::count_query(
@@ -3588,6 +3933,7 @@ pub async fn count_query<R: Runtime>(
         query,
         schema,
         session_id,
+        database,
     )
     .await
 }
@@ -3652,6 +3998,7 @@ pub async fn open_er_diagram_window(
     database_name: String,
     focus_table: Option<String>,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     use tauri::{WebviewUrl, WebviewWindowBuilder};
     use urlencoding::encode;
@@ -3677,6 +4024,16 @@ pub async fn open_er_diagram_window(
 
     if let Some(s) = &schema {
         url.push_str(&format!("&schema={}", encode(s)));
+    }
+
+    // `database` (distinct from the display-only `database_name` above) is only
+    // set for a schema-based multi-db connection (PostgreSQL browsing several
+    // databases) — it's the value the schema-diagram page actually routes its
+    // snapshot request with, alongside `schema`. Absent for the flat multi-db
+    // (MySQL) and plain single-database cases, which already resolve correctly
+    // through `schema` alone.
+    if let Some(db) = &database {
+        url.push_str(&format!("&database={}", encode(db)));
     }
 
     // Derive a unique window label per (connection, database, schema) so that
@@ -3859,12 +4216,14 @@ pub async fn get_views<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<crate::models::ViewInfo>, String> {
     crate::application::metadata::get_views(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -3875,6 +4234,7 @@ pub async fn get_view_definition<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
     crate::application::database_objects::get_view_definition(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3882,6 +4242,7 @@ pub async fn get_view_definition<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -3893,6 +4254,7 @@ pub async fn create_view<R: Runtime>(
     view_name: String,
     definition: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::create_view(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3901,6 +4263,7 @@ pub async fn create_view<R: Runtime>(
         view_name,
         definition,
         schema,
+        database,
     )
     .await
 }
@@ -3912,6 +4275,7 @@ pub async fn alter_view<R: Runtime>(
     view_name: String,
     definition: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::alter_view(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3920,6 +4284,7 @@ pub async fn alter_view<R: Runtime>(
         view_name,
         definition,
         schema,
+        database,
     )
     .await
 }
@@ -3930,6 +4295,7 @@ pub async fn drop_view<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::drop_view(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3937,6 +4303,7 @@ pub async fn drop_view<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -3947,6 +4314,7 @@ pub async fn get_view_columns<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<TableColumn>, String> {
     crate::application::metadata::get_view_columns(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3954,6 +4322,7 @@ pub async fn get_view_columns<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -3963,12 +4332,14 @@ pub async fn get_materialized_views<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<crate::models::ViewInfo>, String> {
     crate::application::metadata::get_materialized_views(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -3979,6 +4350,7 @@ pub async fn get_materialized_view_columns<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<TableColumn>, String> {
     crate::application::metadata::get_materialized_view_columns(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -3986,6 +4358,7 @@ pub async fn get_materialized_view_columns<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -3996,6 +4369,7 @@ pub async fn get_materialized_view_definition<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
     crate::application::metadata::get_materialized_view_definition(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4003,6 +4377,7 @@ pub async fn get_materialized_view_definition<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -4013,6 +4388,7 @@ pub async fn refresh_materialized_view<R: Runtime>(
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::refresh_materialized_view(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4020,6 +4396,7 @@ pub async fn refresh_materialized_view<R: Runtime>(
         &connection_id,
         view_name,
         schema,
+        database,
     )
     .await
 }
@@ -4029,12 +4406,14 @@ pub async fn get_triggers<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<TriggerInfo>, String> {
     crate::application::metadata::get_triggers(
         &app.state::<crate::runtime::RuntimeContext>(),
         None,
         &connection_id,
         schema,
+        database,
     )
     .await
 }
@@ -4046,6 +4425,7 @@ pub async fn get_trigger_definition<R: Runtime>(
     trigger_name: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
     crate::application::database_objects::get_trigger_definition(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4054,6 +4434,7 @@ pub async fn get_trigger_definition<R: Runtime>(
         trigger_name,
         table_name,
         schema,
+        database,
     )
     .await
 }
@@ -4064,6 +4445,7 @@ pub async fn create_trigger<R: Runtime>(
     connection_id: String,
     trigger_sql: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::create_trigger(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4071,6 +4453,7 @@ pub async fn create_trigger<R: Runtime>(
         &connection_id,
         trigger_sql,
         schema,
+        database,
     )
     .await
 }
@@ -4082,6 +4465,7 @@ pub async fn drop_trigger<R: Runtime>(
     trigger_name: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::drop_trigger(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4090,6 +4474,7 @@ pub async fn drop_trigger<R: Runtime>(
         trigger_name,
         table_name,
         schema,
+        database,
     )
     .await
 }
@@ -4254,7 +4639,7 @@ pub async fn get_active_connections() -> Vec<String> {
     crate::health_check::active_connections().await
 }
 
-/// Disconnect from a database connection by closing its connection pool
+/// Disconnect from a database connection by closing all of its connection pools
 #[tauri::command]
 pub async fn disconnect_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -4415,6 +4800,7 @@ pub async fn drop_index_action<R: Runtime>(
     table: String,
     index_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::drop_index(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4423,6 +4809,7 @@ pub async fn drop_index_action<R: Runtime>(
         table,
         index_name,
         schema,
+        database,
     )
     .await
 }
@@ -4434,6 +4821,7 @@ pub async fn drop_foreign_key_action<R: Runtime>(
     table: String,
     fk_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
     crate::application::database_objects::drop_foreign_key(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -4442,6 +4830,7 @@ pub async fn drop_foreign_key_action<R: Runtime>(
         table,
         fk_name,
         schema,
+        database,
     )
     .await
 }

@@ -429,6 +429,8 @@ pub async fn get_models(
                     }
                 }
 
+                // Account-specific ChatGPT models use the dedicated settings command.
+                cached_models.remove("chatgpt");
                 return Ok(cached_models);
             }
         }
@@ -577,6 +579,14 @@ async fn resolve_model(
         return Ok(model.to_string());
     }
     match provider {
+        "chatgpt" => crate::chatgpt::list_models()
+            .await?
+            .into_iter()
+            .next()
+            .map(|m| m.slug)
+            .ok_or_else(|| {
+                "No ChatGPT models available. Continue with ChatGPT in AI settings.".into()
+            }),
         "ollama" => {
             let models = fetch_ollama_models(ollama_port).await;
             models
@@ -609,6 +619,9 @@ async fn dispatch_provider(
     system_prompt: &str,
     ollama_port: u16,
 ) -> Result<String, String> {
+    if gen_req.provider == "chatgpt" {
+        return crate::chatgpt::generate(&gen_req.model, &gen_req.prompt, system_prompt).await;
+    }
     let api_key = if gen_req.provider != "ollama" {
         crate::application::ai::get_api_key(runtime, cache, &gen_req.provider)?
     } else {
@@ -1195,6 +1208,10 @@ fn clean_response(text: &str) -> String {
     }
     text.to_string()
 }
+
+#[cfg(test)]
+#[path = "ai_provider_tests.rs"]
+mod provider_tests;
 
 #[cfg(test)]
 mod tests {

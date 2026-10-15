@@ -1,14 +1,16 @@
 use super::connection_files::GeneratedFile;
 use super::file_transfers::{ClaimedUpload, FileTransferStore};
 use crate::commands::{register_abort_handle, unregister_abort_handle, AbortHandleMap};
+use crate::drivers::driver_trait::DatabaseDriver;
 use crate::drivers::{mysql, postgres, sqlite};
 use crate::dump_utils::{drop_table_if_exists, format_table_ref, insert_into_statement};
-use crate::models::ConnectionParams;
+use crate::models::{ConnectionParams, Pagination, TableColumn};
 use crate::pool_manager::{get_mysql_pool, get_postgres_pool, get_sqlite_pool};
 use crate::runtime::RuntimeContext;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::collections::HashSet;
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
@@ -160,7 +162,7 @@ pub async fn dump_database(
     }
     let (driver, mut params) =
         super::connections::resolve_saved_connection_params(runtime, session_id, &connection_id)?;
-    if let Some(database) = database.as_ref() {
+    if let Some(database) = database.as_ref().filter(|database| !database.is_empty()) {
         params.database = crate::models::DatabaseSelection::Single(database.clone());
     }
     let schema = schema.unwrap_or_else(|| "public".to_string());
@@ -242,10 +244,9 @@ pub async fn import_database(
 ) -> Result<(), String> {
     let (driver, mut params) =
         super::connections::resolve_saved_connection_params(runtime, session_id, &connection_id)?;
-    if let Some(database) = database {
+    if let Some(database) = database.filter(|database| !database.is_empty()) {
         params.database = crate::models::DatabaseSelection::Single(database);
     }
-    let schema = schema.unwrap_or_else(|| "public".to_string());
     let (file_path, is_zip, claimed_upload) = resolve_import_source(runtime, source)?;
     let runtime_for_task = runtime.clone();
     let connection_for_task = connection_id.clone();
@@ -259,7 +260,7 @@ pub async fn import_database(
             &connection_for_task,
             &params,
             &driver,
-            &schema,
+            schema.as_deref(),
         )
         .await
     });
@@ -353,12 +354,13 @@ async fn write_dump(
     writeln!(writer, "-- Date: {}\n", chrono::Local::now().to_rfc3339())
         .map_err(|error| error.to_string())?;
 
-    let all_tables = match driver {
-        "mysql" => mysql::get_tables(params, None).await?,
-        "postgres" => postgres::get_tables(params, schema).await?,
-        "sqlite" => sqlite::get_tables(params).await?,
-        _ => return Err("Unsupported driver".to_string()),
+    let drv = crate::drivers::registry::get_connection_driver(params).await?;
+    let schema_for_listing = if is_postgres_driver(driver) {
+        Some(schema)
+    } else {
+        None
     };
+    let all_tables = drv.get_tables(params, schema_for_listing).await?;
     let tables = options
         .tables
         .clone()
@@ -384,15 +386,23 @@ async fn write_dump(
                 format_table_ref(driver, schema, table)
             )
             .map_err(|error| error.to_string())?;
-            writeln!(writer, "{}", drop_table_if_exists(driver, schema, table))
-                .map_err(|error| error.to_string())?;
-            let ddl = match driver {
-                "mysql" => mysql::get_table_ddl(params, table).await?,
-                "postgres" => postgres::get_table_ddl(params, table, schema).await?,
-                "sqlite" => sqlite::get_table_ddl(params, table).await?,
-                _ => return Err("Unsupported driver".to_string()),
-            };
-            writeln!(writer, "{}\n", ddl).map_err(|error| error.to_string())?;
+            // Never emit DROP unless the driver can also recreate the table.
+            match drv.get_table_ddl(params, table, Some(schema)).await {
+                Ok(ddl) => {
+                    writeln!(writer, "{}", drop_table_if_exists(driver, schema, table))
+                        .map_err(|error| error.to_string())?;
+                    writeln!(writer, "{}\n", ddl).map_err(|error| error.to_string())?;
+                }
+                Err(error) => {
+                    writeln!(
+                        writer,
+                        "-- WARNING: could not generate DDL for {}: {} (table left unchanged)\n",
+                        format_table_ref(driver, schema, table),
+                        error
+                    )
+                    .map_err(|error| error.to_string())?;
+                }
+            }
         }
         if options.data {
             writeln!(
@@ -401,7 +411,7 @@ async fn write_dump(
                 format_table_ref(driver, schema, table)
             )
             .map_err(|error| error.to_string())?;
-            export_table_data(&mut writer, params, driver, table, schema).await?;
+            export_table_data(&mut writer, &drv, params, driver, table, schema).await?;
             writeln!(writer).map_err(|error| error.to_string())?;
         }
         let processed = index + 1;
@@ -424,6 +434,7 @@ async fn write_dump(
 
 async fn export_table_data(
     writer: &mut BufWriter<File>,
+    drv: &Arc<dyn DatabaseDriver>,
     params: &ConnectionParams,
     driver: &str,
     table: &str,
@@ -494,7 +505,39 @@ async fn export_table_data(
             }
             flush_insert_batch(writer, driver, schema, table, &mut batch)?;
         }
-        _ => return Err("Unsupported driver".to_string()),
+        _ => {
+            let fallback_schema = if is_postgres_driver(driver) {
+                Some(schema)
+            } else {
+                None
+            };
+            let json_columns =
+                json_column_names(&drv.get_columns(params, table, fallback_schema).await?);
+            let mut batch = Vec::new();
+            let mut page = 1u32;
+            loop {
+                let result = drv
+                    .execute_query(params, &query, Some(1000), page, fallback_schema)
+                    .await?;
+                let fetched = result.rows.len() as u32;
+                for row in result.rows {
+                    batch.push(format_row_values(
+                        row,
+                        &result.columns,
+                        &json_columns,
+                        driver,
+                    ));
+                    if batch.len() >= 100 {
+                        flush_insert_batch(writer, driver, schema, table, &mut batch)?;
+                    }
+                }
+                if fetched == 0 || !plugin_dump_has_more(result.pagination, fetched, 1000) {
+                    break;
+                }
+                page += 1;
+            }
+            flush_insert_batch(writer, driver, schema, table, &mut batch)?;
+        }
     }
     Ok(())
 }
@@ -560,7 +603,20 @@ fn escape_sql_value(driver: &str, value: serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "NULL".to_string(),
         serde_json::Value::Number(number) => number.to_string(),
-        serde_json::Value::Bool(value) => if value { "1" } else { "0" }.to_string(),
+        serde_json::Value::Bool(value) => if is_postgres_driver(driver) {
+            if value {
+                "TRUE"
+            } else {
+                "FALSE"
+            }
+        } else {
+            if value {
+                "1"
+            } else {
+                "0"
+            }
+        }
+        .to_string(),
         serde_json::Value::String(value) => escape_sql_string(driver, &value),
         // Arrays/objects only reach here from non-JSON columns (e.g. hstore);
         // serialize them and escape the text exactly like any other string.
@@ -583,6 +639,75 @@ fn escape_json_column_value(driver: &str, value: serde_json::Value) -> String {
     }
 }
 
+/// Whether the plugin-driver fallback's paginated fetch loop (in
+/// `export_table_data`) should request another page.
+///
+/// A plugin's `execute_query` RPC may not populate `pagination` at all —
+/// defaulting the "no pagination info" case to `false` (as if the table
+/// were exhausted) would silently truncate a dump the moment a table has
+/// more rows than one page, with no error raised. Falling back to whether
+/// the page came back full instead matches `export.rs`'s established
+/// pattern for the same "driver doesn't report pagination" gap: it may
+/// cost one extra empty-page fetch when a table's row count is an exact
+/// multiple of the page size, but it never drops rows.
+fn plugin_dump_has_more(pagination: Option<Pagination>, fetched: u32, page_size: u32) -> bool {
+    pagination
+        .map(|p| p.has_more)
+        .unwrap_or(fetched >= page_size)
+}
+
+/// Whether a driver id is Postgres-flavored: the builtin `postgres` client,
+/// or the `postgresql` plugin. Only these actually have a `public`-schema
+/// convention for unqualified dump/import statements — used to decide
+/// whether the generic plugin-driver fallbacks in `export_table_data` and
+/// `import_database` may default a missing schema to "public", or must
+/// leave a non-Postgres plugin's own schema/database default alone.
+fn is_postgres_driver(driver: &str) -> bool {
+    driver == "postgres" || driver == "postgresql"
+}
+
+/// Column names whose PostgreSQL type is `json`/`jsonb`. Used to decide
+/// which cells in a row fetched through the generic (plugin-driver)
+/// `execute_query` RPC need `escape_json_column_value` rather than
+/// `escape_sql_value` — see `export_table_data`'s fallback arm. Unlike the
+/// builtin drivers' own extraction (which sees the source column type
+/// directly), `QueryResult` only carries column *names*, so a JSON column
+/// can't be told apart from a plain text column by inspecting a cell's
+/// value alone — both arrive as a `serde_json::Value::String`.
+fn json_column_names(columns: &[TableColumn]) -> HashSet<String> {
+    columns
+        .iter()
+        .filter(|c| {
+            let t = c.data_type.to_ascii_lowercase();
+            t == "json" || t == "jsonb"
+        })
+        .map(|c| c.name.clone())
+        .collect()
+}
+
+/// Formats one row from the generic `execute_query` RPC into a parenthesized
+/// SQL value list, e.g. `(1, 'Alice', NULL)`. `columns` must be the same
+/// `QueryResult.columns` the row's values came from, in the same order.
+fn format_row_values(
+    row: Vec<serde_json::Value>,
+    columns: &[String],
+    json_columns: &HashSet<String>,
+    driver: &str,
+) -> String {
+    let values: Vec<String> = row
+        .into_iter()
+        .zip(columns.iter())
+        .map(|(val, col_name)| {
+            if json_columns.contains(col_name) {
+                escape_json_column_value(driver, val)
+            } else {
+                escape_sql_value(driver, val)
+            }
+        })
+        .collect();
+    format!("({})", values.join(", "))
+}
+
 async fn execute_import(
     runtime: &RuntimeContext,
     session_id: Option<Uuid>,
@@ -591,7 +716,7 @@ async fn execute_import(
     connection_id: &str,
     params: &ConnectionParams,
     driver: &str,
-    schema: &str,
+    schema: Option<&str>,
 ) -> Result<(), String> {
     let file = File::open(file_path).map_err(|error| error.to_string())?;
     let (reader, extracted_sql) = create_sql_reader(file, is_zip, runtime.paths.data_dir())?;
@@ -654,7 +779,10 @@ async fn execute_import(
                 .await
                 .map_err(|error| error.to_string())?;
             tx.execute(
-                &format!("SET search_path TO \"{}\"", schema.replace('"', "\"\"")),
+                &format!(
+                    "SET search_path TO \"{}\"",
+                    schema.unwrap_or("public").replace('"', "\"\"")
+                ),
                 &[],
             )
             .await
@@ -691,7 +819,24 @@ async fn execute_import(
             tx.commit().await.map_err(|error| error.to_string())?;
             emit_import_complete(runtime, session_id, connection_id, executed);
         }
-        _ => return Err("Unsupported driver".to_string()),
+        _ => {
+            let drv = crate::drivers::registry::get_connection_driver(params).await?;
+            let fallback_schema = if is_postgres_driver(driver) {
+                Some(schema.unwrap_or("public"))
+            } else {
+                schema
+            };
+            // Plugin RPC calls are independent: a failed import can leave prior statements committed.
+            let mut executed = 0;
+            while let Some(statement) = stream.next_statement()? {
+                drv.execute_query(params, &statement, None, 1, fallback_schema)
+                    .await
+                    .map_err(|error| statement_error(executed, error, &statement))?;
+                executed += 1;
+                emit_import_interval(runtime, session_id, connection_id, executed);
+            }
+            emit_import_complete(runtime, session_id, connection_id, executed);
+        }
     }
     Ok(())
 }

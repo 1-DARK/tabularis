@@ -1,3 +1,7 @@
+#[path = "connection_secret_writes.rs"]
+mod connection_secret_writes;
+use connection_secret_writes::SecretWrites;
+
 use crate::models::{
     ConnectionAppearance, ConnectionGroup, ConnectionParams, ConnectionsFile, SavedConnection,
     TestConnectionRequest,
@@ -145,7 +149,7 @@ pub async fn execute_for_session(
             connection_id,
             databases,
         } => {
-            set_selected_databases(runtime, &connection_id, databases)?;
+            set_selected_databases(runtime, &connection_id, databases).await?;
             state.connection_cache.invalidate();
             Ok(Value::Null)
         }
@@ -482,31 +486,53 @@ fn persist_secrets_for_create(
     runtime: &RuntimeContext,
     id: &str,
     params: &mut ConnectionParams,
+    writes: &mut SecretWrites,
 ) -> Result<(), String> {
     if let Some(uri) = non_empty(params.connection_uri.as_ref()) {
         if !params.save_in_keychain.unwrap_or(false) {
             return Err("Connection URIs must be stored in the OS keychain".to_string());
         }
-        runtime
-            .secrets
-            .set(&secret_account(id, CONNECTION_URI_SUFFIX), uri)?;
+        writes.set(runtime, secret_account(id, CONNECTION_URI_SUFFIX), uri)?;
         params.connection_uri_in_keychain = Some(true);
         params.connection_uri = None;
     }
+    persist_passwords(runtime, id, params, writes)
+}
+
+fn persist_passwords(
+    runtime: &RuntimeContext,
+    id: &str,
+    params: &mut ConnectionParams,
+    writes: &mut SecretWrites,
+) -> Result<(), String> {
     if !params.save_in_keychain.unwrap_or(false) {
         return Ok(());
     }
-    set_optional_secret(runtime, id, DB_SECRET_SUFFIX, params.password.as_ref())?;
-    set_optional_secret(runtime, id, SSH_SECRET_SUFFIX, params.ssh_password.as_ref())?;
-    set_optional_secret(
-        runtime,
-        id,
-        SSH_PASSPHRASE_SUFFIX,
-        params.ssh_key_passphrase.as_ref(),
-    )?;
-    params.password = None;
-    params.ssh_password = None;
-    params.ssh_key_passphrase = None;
+    let mut password_writes = SecretWrites::default();
+    let result = (|| {
+        for (suffix, value) in [
+            (DB_SECRET_SUFFIX, params.password.as_deref()),
+            (SSH_SECRET_SUFFIX, params.ssh_password.as_deref()),
+            (SSH_PASSPHRASE_SUFFIX, params.ssh_key_passphrase.as_deref()),
+        ] {
+            if let Some(value) = value {
+                if value.is_empty() {
+                    password_writes.delete(runtime, secret_account(id, suffix))?;
+                } else {
+                    password_writes.set(runtime, secret_account(id, suffix), value)?;
+                }
+            }
+        }
+        Ok::<(), String>(())
+    })();
+    if let Err(error) = result {
+        password_writes.rollback(runtime);
+        log::warn!("Keychain unavailable for connection {id}; storing passwords in the config file: {error}");
+        crate::persistence::apply_secret_persistence(params, false);
+    } else {
+        writes.append(password_writes);
+        crate::persistence::apply_secret_persistence(params, true);
+    }
     Ok(())
 }
 
@@ -515,76 +541,52 @@ fn merge_and_persist_update_secrets(
     id: &str,
     existing: &ConnectionParams,
     params: &mut ConnectionParams,
+    writes: &mut SecretWrites,
 ) -> Result<(), String> {
     let keychain = params.save_in_keychain.unwrap_or(false);
     if let Some(uri) = non_empty(params.connection_uri.as_ref()) {
         if !keychain {
             return Err("Connection URIs must be stored in the OS keychain".to_string());
         }
-        runtime
-            .secrets
-            .set(&secret_account(id, CONNECTION_URI_SUFFIX), uri)?;
+        writes.set(runtime, secret_account(id, CONNECTION_URI_SUFFIX), uri)?;
         params.connection_uri_in_keychain = Some(true);
-    } else if keychain && existing.connection_uri_in_keychain.unwrap_or(false) {
+    } else if keychain
+        && existing.driver == params.driver
+        && existing.connection_uri_in_keychain.unwrap_or(false)
+        && params.connection_uri_in_keychain != Some(false)
+    {
         params.connection_uri_in_keychain = Some(true);
+    } else if existing.connection_uri_in_keychain.unwrap_or(false) {
+        writes.delete(runtime, secret_account(id, CONNECTION_URI_SUFFIX))?;
+        params.connection_uri_in_keychain = None;
     } else {
-        runtime
-            .secrets
-            .delete(&secret_account(id, CONNECTION_URI_SUFFIX))?;
         params.connection_uri_in_keychain = None;
     }
     params.connection_uri = None;
 
-    if keychain {
-        match crate::keychain_utils::stored_password_change(params.password.as_deref()) {
-            crate::keychain_utils::StoredPasswordChange::Store(password) => {
-                runtime
-                    .secrets
-                    .set(&secret_account(id, DB_SECRET_SUFFIX), password)?;
-            }
-            // An explicit empty password (a plugin hid the login inputs) must
-            // not leave the previous secret behind for the next connect.
-            crate::keychain_utils::StoredPasswordChange::Delete => {
-                runtime
-                    .secrets
-                    .delete(&secret_account(id, DB_SECRET_SUFFIX))?;
-            }
-            crate::keychain_utils::StoredPasswordChange::Keep => {}
-        }
-        set_optional_secret(runtime, id, SSH_SECRET_SUFFIX, params.ssh_password.as_ref())?;
-        set_optional_secret(
-            runtime,
-            id,
+    // Browser responses redact secrets; an omitted field must keep its saved value.
+    for (field, previous, suffix) in [
+        (&mut params.password, &existing.password, DB_SECRET_SUFFIX),
+        (
+            &mut params.ssh_password,
+            &existing.ssh_password,
+            SSH_SECRET_SUFFIX,
+        ),
+        (
+            &mut params.ssh_key_passphrase,
+            &existing.ssh_key_passphrase,
             SSH_PASSPHRASE_SUFFIX,
-            params.ssh_key_passphrase.as_ref(),
-        )?;
-        params.password = None;
-        params.ssh_password = None;
-        params.ssh_key_passphrase = None;
-    } else {
-        if non_empty(params.password.as_ref()).is_none() {
-            params.password = existing.password.clone();
+        ),
+    ] {
+        if field.is_none() {
+            *field = if existing.save_in_keychain.unwrap_or(false) {
+                runtime.secrets.get(&secret_account(id, suffix))?
+            } else {
+                previous.clone()
+            };
         }
-        if non_empty(params.ssh_password.as_ref()).is_none() {
-            params.ssh_password = existing.ssh_password.clone();
-        }
-        if non_empty(params.ssh_key_passphrase.as_ref()).is_none() {
-            params.ssh_key_passphrase = existing.ssh_key_passphrase.clone();
-        }
-        delete_connection_secrets(runtime, id)?;
     }
-    Ok(())
-}
-
-fn set_optional_secret(
-    runtime: &RuntimeContext,
-    id: &str,
-    suffix: &str,
-    value: Option<&String>,
-) -> Result<(), String> {
-    if let Some(value) = non_empty(value) {
-        runtime.secrets.set(&secret_account(id, suffix), value)?;
-    }
+    persist_passwords(runtime, id, params, writes)?;
     Ok(())
 }
 
@@ -652,22 +654,40 @@ fn save_connection(
 ) -> Result<SavedConnection, String> {
     let mut file = load_file(runtime)?;
     let id = Uuid::new_v4().to_string();
-    params.connection_id = None;
-    persist_secrets_for_create(runtime, &id, &mut params)?;
-    let connection = SavedConnection {
-        id,
-        name,
-        params,
-        group_id: None,
-        sort_order: None,
-        detect_json_in_text_columns,
-        appearance: None,
-        tag_ids: None,
-        environment: validate_environment(environment)?,
-    };
-    file.connections.push(connection.clone());
-    save_file(runtime, state, &file)?;
-    Ok(redact_connection(connection))
+    let environment = validate_environment(environment)?;
+    let mut writes = SecretWrites::default();
+    let result = (|| {
+        params.connection_id = None;
+        persist_secrets_for_create(runtime, &id, &mut params, &mut writes)?;
+        let connection = SavedConnection {
+            id,
+            name,
+            params,
+            group_id: None,
+            sort_order: None,
+            detect_json_in_text_columns,
+            appearance: None,
+            tag_ids: None,
+            environment,
+        };
+        file.connections.push(connection.clone());
+        save_file(runtime, state, &file)?;
+        if !connection.params.save_in_keychain.unwrap_or(false) {
+            for suffix in [DB_SECRET_SUFFIX, SSH_SECRET_SUFFIX, SSH_PASSPHRASE_SUFFIX] {
+                if let Err(error) = runtime
+                    .secrets
+                    .delete(&secret_account(&connection.id, suffix))
+                {
+                    log::warn!("Failed to remove unused connection credential: {error}");
+                }
+            }
+        }
+        Ok(redact_connection(connection))
+    })();
+    if result.is_err() {
+        writes.rollback(runtime);
+    }
+    result
 }
 
 /// Drops cached plugin connection metadata for both the old and the new driver
@@ -712,22 +732,63 @@ fn update_connection(
         .position(|connection| connection.id == id)
         .ok_or_else(|| "Connection not found".to_string())?;
     let existing = file.connections[index].clone();
-    params.connection_id = None;
-    merge_and_persist_update_secrets(runtime, &id, &existing.params, &mut params)?;
-    let connection = SavedConnection {
-        id,
-        name,
-        params,
-        group_id: existing.group_id,
-        sort_order: existing.sort_order,
-        detect_json_in_text_columns,
-        appearance: existing.appearance,
-        tag_ids: existing.tag_ids,
-        environment: validate_environment(environment)?,
-    };
-    file.connections[index] = connection.clone();
-    save_file(runtime, state, &file)?;
-    Ok(redact_connection(connection))
+    let environment = validate_environment(environment)?;
+    let mut writes = SecretWrites::default();
+    let result = (|| {
+        params.connection_id = None;
+        merge_and_persist_update_secrets(runtime, &id, &existing.params, &mut params, &mut writes)?;
+        let connection = SavedConnection {
+            id,
+            name,
+            params,
+            group_id: existing.group_id,
+            sort_order: existing.sort_order,
+            detect_json_in_text_columns,
+            appearance: existing.appearance,
+            tag_ids: existing.tag_ids,
+            environment,
+        };
+        file.connections[index] = connection.clone();
+        save_file(runtime, state, &file)?;
+        if !connection.params.save_in_keychain.unwrap_or(false) {
+            for suffix in [DB_SECRET_SUFFIX, SSH_SECRET_SUFFIX, SSH_PASSPHRASE_SUFFIX] {
+                if let Err(error) = runtime
+                    .secrets
+                    .delete(&secret_account(&connection.id, suffix))
+                {
+                    log::warn!("Failed to remove unused connection credential: {error}");
+                }
+            }
+        }
+        crate::credential_cache::invalidate_all_for_connection(
+            &state.credential_cache,
+            &connection.id,
+        );
+        if let Some(database) = crate::models::single_db_before_multi_transition(
+            &existing.params.database,
+            &connection.params.database,
+        ) {
+            if let Err(error) = super::productivity::backfill_saved_queries_for_connection(
+                runtime.paths.config_dir(),
+                &connection.id,
+                &database,
+            ) {
+                log::warn!("Failed to backfill saved query database: {error}");
+            }
+            if let Err(error) = super::productivity::backfill_query_history_for_connection(
+                runtime.paths.config_dir(),
+                &connection.id,
+                &database,
+            ) {
+                log::warn!("Failed to backfill query history database: {error}");
+            }
+        }
+        Ok(redact_connection(connection))
+    })();
+    if result.is_err() {
+        writes.rollback(runtime);
+    }
+    result
 }
 
 fn delete_connection(
@@ -742,9 +803,9 @@ fn delete_connection(
         .find(|connection| connection.id == id)
         .and_then(|connection| connection.appearance.clone());
     file.connections.retain(|connection| connection.id != id);
+    save_file(runtime, state, &file)?;
     delete_connection_secrets(runtime, id)?;
     crate::credential_cache::invalidate_all_for_connection(&state.credential_cache, id);
-    save_file(runtime, state, &file)?;
     crate::connection_appearance::cascade_delete_if_image(
         runtime.paths.data_dir(),
         appearance.as_ref(),
@@ -759,37 +820,52 @@ fn duplicate_connection(
     id: &str,
 ) -> Result<SavedConnection, String> {
     let mut file = load_file(runtime)?;
-    let original = find_connection(&file, id)?;
+    let mut original = find_connection(&file, id)?;
     let new_id = Uuid::new_v4().to_string();
-    if original.params.save_in_keychain.unwrap_or(false) {
-        for suffix in [
-            DB_SECRET_SUFFIX,
-            SSH_SECRET_SUFFIX,
-            SSH_PASSPHRASE_SUFFIX,
-            CONNECTION_URI_SUFFIX,
-        ] {
-            if let Some(secret) = runtime.secrets.get(&secret_account(id, suffix))? {
-                runtime
-                    .secrets
-                    .set(&secret_account(&new_id, suffix), &secret)?;
+    let mut writes = SecretWrites::default();
+    let result = (|| {
+        {
+            for suffix in [
+                DB_SECRET_SUFFIX,
+                SSH_SECRET_SUFFIX,
+                SSH_PASSPHRASE_SUFFIX,
+                CONNECTION_URI_SUFFIX,
+            ] {
+                let should_copy = if suffix == CONNECTION_URI_SUFFIX {
+                    original.params.connection_uri_in_keychain.unwrap_or(false)
+                } else {
+                    original.params.save_in_keychain.unwrap_or(false)
+                };
+                if !should_copy {
+                    continue;
+                }
+                if let Some(secret) = runtime.secrets.get(&secret_account(id, suffix))? {
+                    writes.set(runtime, secret_account(&new_id, suffix), &secret)?;
+                } else if suffix == CONNECTION_URI_SUFFIX {
+                    original.params.connection_uri_in_keychain = None;
+                }
             }
         }
+        let appearance = duplicate_appearance(runtime.paths.data_dir(), &original, &new_id);
+        let duplicate = SavedConnection {
+            id: new_id,
+            name: format!("{} (Copy)", original.name),
+            params: original.params,
+            group_id: original.group_id,
+            sort_order: None,
+            detect_json_in_text_columns: original.detect_json_in_text_columns,
+            appearance,
+            tag_ids: original.tag_ids,
+            environment: validate_environment(original.environment).unwrap_or(None),
+        };
+        file.connections.push(duplicate.clone());
+        save_file(runtime, state, &file)?;
+        Ok(redact_connection(duplicate))
+    })();
+    if result.is_err() {
+        writes.rollback(runtime);
     }
-    let appearance = duplicate_appearance(runtime.paths.data_dir(), &original, &new_id);
-    let duplicate = SavedConnection {
-        id: new_id,
-        name: format!("{} (Copy)", original.name),
-        params: original.params,
-        group_id: original.group_id,
-        sort_order: None,
-        detect_json_in_text_columns: original.detect_json_in_text_columns,
-        appearance,
-        tag_ids: original.tag_ids,
-        environment: validate_environment(original.environment).unwrap_or(None),
-    };
-    file.connections.push(duplicate.clone());
-    save_file(runtime, state, &file)?;
-    Ok(redact_connection(duplicate))
+    result
 }
 
 fn duplicate_appearance(
@@ -1093,8 +1169,9 @@ pub async fn disconnect_connection(
                     .await;
             }
         }
-        let (_, params) = resolve_saved_connection_params(runtime, session_id, connection_id)?;
-        crate::pool_manager::close_pool_with_id(&params, Some(connection_id)).await;
+        let saved = find_connection(&load_file(runtime)?, connection_id)?;
+        crate::pool_manager::close_pools_for_connection_id(&saved.params.driver, connection_id)
+            .await;
     }
     emit_active_connections(runtime, state, session_id).await;
     Ok(())
@@ -1329,7 +1406,7 @@ fn json(value: impl Serialize) -> Result<Value, String> {
 #[path = "connections_tests.rs"]
 mod tests;
 
-pub fn set_selected_databases(
+pub async fn set_selected_databases(
     runtime: &RuntimeContext,
     connection_id: &str,
     mut databases: Vec<String>,
@@ -1346,7 +1423,11 @@ pub fn set_selected_databases(
         .iter_mut()
         .find(|connection| connection.id == connection_id)
         .ok_or("Connection not found")?;
-    connection.params.database = if databases.len() == 1 {
+    let is_schema_based = crate::drivers::registry::get_driver(&connection.params.driver)
+        .await
+        .map(|driver| driver.manifest().capabilities.schemas)
+        .unwrap_or(false);
+    connection.params.database = if databases.len() == 1 && !is_schema_based {
         crate::models::DatabaseSelection::Single(databases.remove(0))
     } else {
         crate::models::DatabaseSelection::Multiple(databases)

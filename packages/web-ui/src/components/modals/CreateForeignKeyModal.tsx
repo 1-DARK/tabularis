@@ -15,6 +15,8 @@ interface CreateForeignKeyModalProps {
   connectionId: string;
   tableName: string;
   driver: string;
+  schema?: string;
+  database?: string;
 }
 
 interface TableColumn {
@@ -33,11 +35,14 @@ export const CreateForeignKeyModal = ({
   onSuccess,
   connectionId,
   tableName,
-  driver
+  driver,
+  schema: schemaProp,
+  database,
 }: CreateForeignKeyModalProps) => {
   const client = useTabularisClient();
   const { t } = useTranslation();
-  const { activeSchema, connectionDataMap } = useDatabase();
+  const { activeSchema: connectionActiveSchema, connectionDataMap } = useDatabase();
+  const activeSchema = schemaProp ?? connectionActiveSchema;
   const { allDrivers } = useDrivers();
   const canCreateFk = supportsCreateForeignKeys(connectionDataMap[connectionId]?.capabilities ?? getCapabilitiesForDriver(driver, allDrivers));
   const [fkName, setFkName] = useState('');
@@ -65,7 +70,10 @@ export const CreateForeignKeyModal = ({
         setOnUpdate('NO ACTION');
         setError('');
 
-        const schemaParam = activeSchema ? { schema: activeSchema } : {};
+        const schemaParam = {
+          ...(activeSchema ? { schema: activeSchema } : {}),
+          ...(database ? { database } : {}),
+        };
         Promise.all([
             client.call('get_tables', { connectionId, ...schemaParam }),
             client.call('get_columns', { connectionId, tableName, ...schemaParam })
@@ -76,12 +84,12 @@ export const CreateForeignKeyModal = ({
             if (tbls.length > 0) setRefTable(tbls[0].name);
         }).catch(e => setError(String(e)));
     }
-  }, [client, isOpen, connectionId, tableName, activeSchema]);
+  }, [client, isOpen, connectionId, tableName, activeSchema, database]);
 
   useEffect(() => {
       if (refTable && isOpen) {
           setFetchingRefCols(true);
-          client.call('get_columns', { connectionId, tableName: refTable, ...(activeSchema ? { schema: activeSchema } : {}) })
+          client.call('get_columns', { connectionId, tableName: refTable, ...(activeSchema ? { schema: activeSchema } : {}), ...(database ? { database } : {}) })
             .then(cols => {
                 setRefColumns(cols);
                 if (cols.length > 0) setRefColumn(cols[0].name);
@@ -89,7 +97,7 @@ export const CreateForeignKeyModal = ({
             .catch(e => console.error(e))
             .finally(() => setFetchingRefCols(false));
       }
-  }, [client, refTable, isOpen, connectionId, activeSchema]);
+  }, [client, refTable, isOpen, connectionId, activeSchema, database]);
 
   useEffect(() => {
       if (localColumn && refTable) {
@@ -149,6 +157,7 @@ export const CreateForeignKeyModal = ({
               connectionId,
               query: sql,
               ...(activeSchema ? { schema: activeSchema } : {}),
+              ...(database ? { database } : {}),
             });
           }
           onSuccess();

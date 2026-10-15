@@ -39,6 +39,7 @@ import {
   PanelBottomOpen,
   Eye,
   EyeOff,
+  Hash,
   ListChecks,
 } from "lucide-react";
 import { usePlatformCapabilities } from "../../hooks/usePlatformCapabilities";
@@ -68,10 +69,12 @@ import {
   moveCellPosition,
   getColumnLayoutKey,
   resolveLockedColumnWidths,
+  isUuidColumnType,
   type LockedColumnWidths,
   createDataGridResultCommands,
   type RangeExtendKey,
 } from "../../utils/dataGrid";
+import { getSortButtonAction } from "../../utils/tableToolbar";
 import { useSettings } from "../../hooks/useSettings";
 import { useTabularisClient } from "../../hooks/useTabularisClient";
 import { useJsonEditorActivity } from "../../hooks/useJsonEditorActivity";
@@ -91,6 +94,7 @@ import {
   getCellValueFilterOperators,
   type CellValueFilterOperator,
 } from "../../utils/cellValueFilter";
+import { isLinkString } from "../../utils/jsonValueDecorators";
 import {
   getDateInputMode,
   parseDateTime,
@@ -106,6 +110,8 @@ import {
   getSelectedRows,
   projectColumns,
   copyTextToClipboard,
+  columnNamesAsLines,
+  columnNamesAsJson,
 } from "../../utils/clipboard";
 import {
   DEFAULT_MASKING_PATTERNS,
@@ -147,6 +153,11 @@ interface DataGridProps {
   onForeignKeyShowPanel?: (fk: ForeignKey, value: unknown) => void;
   onForeignKeyHidePanel?: () => void;
   connectionId?: string | null;
+  /** The active tab's own schema/database — wins over the connection's
+   * globally active schema, which can point at a different tab's selection
+   * (see #822 follow-up). */
+  schema?: string | null;
+  database?: string | null;
   onRefresh?: () => void;
   onEditingChange?: (editing: boolean) => void;
   pendingChanges?: Record<
@@ -224,10 +235,35 @@ const RANGE_EXTEND_KEYS = new Set([
   "ArrowRight",
 ]);
 
+// SQL tag shown in the chip next to each "Filter by this value" entry.
+const CELL_VALUE_FILTER_BADGES: Record<CellValueFilterOperator, string> = {
+  "=": "=",
+  "<>": "<>",
+  ">": ">",
+  ">=": ">=",
+  "<": "<",
+  "<=": "<=",
+  contains: "LIKE",
+  "IS NULL": "IS",
+  "IS NOT NULL": "IS NOT",
+};
+
+// Value shown next to the column name in the "Filter by this value" submenu.
+const formatCellValueFilterHint = (value: unknown): string => {
+  if (value === null || value === undefined) return "NULL";
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text === "" ? "''" : text.length > 80 ? `${text.slice(0, 80)}…` : text;
+};
+
 // i18n label per "Filter by this value" operator.
 const CELL_VALUE_FILTER_LABEL_KEYS: Record<CellValueFilterOperator, string> = {
   "=": "dataGrid.filterEquals",
   "<>": "dataGrid.filterNotEquals",
+  ">": "dataGrid.filterGreaterThan",
+  ">=": "dataGrid.filterGreaterOrEqual",
+  "<": "dataGrid.filterLessThan",
+  "<=": "dataGrid.filterLessOrEqual",
+  contains: "dataGrid.filterContains",
   "IS NULL": "dataGrid.filterIsNull",
   "IS NOT NULL": "dataGrid.filterIsNotNull",
 };
@@ -249,6 +285,8 @@ export const DataGrid = React.memo(
     onForeignKeyShowPanel,
     onForeignKeyHidePanel,
     connectionId,
+    schema: schemaProp,
+    database,
     onRefresh,
     onEditingChange,
     pendingChanges,
@@ -280,7 +318,8 @@ export const DataGrid = React.memo(
     const client = useTabularisClient();
     const platform = usePlatformCapabilities();
     const keybindings = useContext(KeybindingsContext);
-    const { activeSchema, connections, activeDriver } = useDatabase();
+    const { activeSchema: globalActiveSchema, connections, activeDriver } = useDatabase();
+    const activeSchema = schemaProp ?? globalActiveSchema;
     const guardProductionWrite = useProductionGuard();
     const { showAlert } = useAlert();
     const { showToast } = useToast();
@@ -290,6 +329,7 @@ export const DataGrid = React.memo(
     const colorByType = settings.resultColorByType ?? false;
     const stickyColumnHeaders = settings.stickyColumnHeaders ?? true;
     const zebraStripes = settings.resultZebraStripes ?? false;
+    const defaultSortDirection = settings.defaultSortDirection ?? "asc";
 
     // Sensitive-column masking (#485): display-only — copy/export keep the
     // real values; only the rendered grid masks them.
@@ -885,6 +925,7 @@ export const DataGrid = React.memo(
           tableName,
           pkColumns,
           schema: activeSchema,
+          database,
         });
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -901,6 +942,7 @@ export const DataGrid = React.memo(
         tableName,
         pkColumns,
         activeSchema,
+        database,
         rightSidebar.openRowEditor,
       ],
     );
@@ -1220,6 +1262,7 @@ export const DataGrid = React.memo(
             colName,
             newVal: value,
             ...(activeSchema ? { schema: activeSchema } : {}),
+            ...(database ? { database } : {}),
           });
           if (onRefresh) onRefresh();
         } catch (e) {
@@ -1243,6 +1286,7 @@ export const DataGrid = React.memo(
       pkColumns,
       connectionId,
       activeSchema,
+      database,
       onRefresh,
       showAlert,
       t,
@@ -1337,6 +1381,16 @@ export const DataGrid = React.memo(
               const sortState = getColumnSortState(colName, sortClause);
               const displaySortState: "none" | "asc" | "desc" =
                 sortState ?? "none";
+              const sortAction = getSortButtonAction(
+                displaySortState,
+                defaultSortDirection,
+              );
+              const sortButtonLabel =
+                sortAction === "asc"
+                  ? t("dataGrid.sortByAsc", { col: colName })
+                  : sortAction === "desc"
+                    ? t("dataGrid.sortByDesc", { col: colName })
+                    : t("dataGrid.clearSort");
               // Column data type for the DataGrip-style header hover tooltip.
               // Only populated when column metadata is present (i.e. table
               // browse), not for arbitrary query results.
@@ -1375,23 +1429,13 @@ export const DataGrid = React.memo(
                     <button
                       type="button"
                       className="flex flex-col items-center justify-center cursor-pointer"
-                      aria-label={
-                        displaySortState === "none"
-                          ? t("dataGrid.sortByAsc", { col: colName })
-                          : displaySortState === "asc"
-                            ? t("dataGrid.sortByDesc", { col: colName })
-                            : t("dataGrid.clearSort")
-                      }
+                      aria-label={sortButtonLabel}
                       title={
                         // Suppress the native sort-hint title while the type
                         // tooltip is shown, to avoid two overlapping tooltips.
                         hasMetadataTooltip
                           ? undefined
-                          : displaySortState === "none"
-                            ? t("dataGrid.sortByAsc", { col: colName })
-                            : displaySortState === "asc"
-                              ? t("dataGrid.sortByDesc", { col: colName })
-                              : t("dataGrid.clearSort")
+                          : sortButtonLabel
                       }
                       onClick={(e) => {
                         e.preventDefault();
@@ -1440,6 +1484,7 @@ export const DataGrid = React.memo(
         columnHelper,
         t,
         sortClause,
+        defaultSortDirection,
         onSort,
         columnTypeMap,
         columnCommentMap,
@@ -1703,6 +1748,56 @@ export const DataGrid = React.memo(
       setContextMenu(null);
     }, [contextMenu, openInSidebar]);
 
+    // E2E test hooks: expose handlers for tauri-wd tests. tauri-webdriver can't
+    // trigger React's onDoubleClick/onContextMenu (the actions API dispatches
+    // mousedown/mouseup/click but never dblclick/contextmenu). These hooks let
+    // tests call the real handler functions directly via browser.execute().
+    // Harmless in production — sets globals nobody reads.
+    const w = window as unknown as Record<string, unknown>;
+    w.__e2e_dblclickCell = (rowIndex: number, colIndex: number) => {
+      const mergedRow = mergedRows[rowIndex];
+      if (!mergedRow) return false;
+      handleCellDoubleClick(rowIndex, colIndex, mergedRow.rowData[colIndex]);
+      return true;
+    };
+    w.__e2e_contextMenu = (rowIndex: number, colIndex: number) => {
+      const mergedRow = mergedRows[rowIndex];
+      const row = mergedRow?.rowData ?? [];
+      const colName = columns[colIndex] ?? "";
+      handleContextMenu(
+        { preventDefault: () => {}, clientX: 200, clientY: 200 } as unknown as React.MouseEvent,
+        row, rowIndex, colIndex, colName,
+      );
+      return true;
+    };
+    // Direct FK navigation hook — bypasses the context menu (which uses setState
+    // that doesn't re-render from browser.execute). Calls onForeignKeyNavigate
+    // directly with a FK object the test provides (fetched with the database
+    // override, since the DataGrid's fksByColumn may be empty due to the bug).
+    w.__e2e_fkNavigate = (fk: unknown, value: unknown) => {
+      if (onForeignKeyNavigate) {
+        onForeignKeyNavigate(fk as ForeignKey, value);
+        return true;
+      }
+      return false;
+    };
+    // Direct pending-change hook — bypasses the textarea edit + Enter commit
+    // (the native input event that sets the textarea value doesn't reliably
+    // trigger React's onChange in WKWebView, so handleEditCommit sees the
+    // value as unchanged and drops the pending change). Mirrors handleEditCommit
+    // (buildPkMap + onPendingChange) but with a forced value, so the Submit
+    // Changes button appears and the edit is staged against the (buggy) PK.
+    w.__e2e_pendingChange = (rowIndex: number, colIndex: number, newValue: unknown) => {
+      const mergedRow = mergedRows[rowIndex];
+      if (!mergedRow || !onPendingChange || pkIndexMaps.length === 0 || !pkColumns) {
+        return false;
+      }
+      const pkMapVal = buildPkMap(pkColumns, mergedRow.rowData, pkIndexMaps);
+      const colName = columns[colIndex];
+      onPendingChange(pkMapVal, colName, newValue);
+      return true;
+    };
+
     const openJsonEditor = useCallback(() => {
       if (!contextMenu) return;
       const isInsertion = contextMenu.mergedRow?.type === "insertion";
@@ -1743,6 +1838,10 @@ export const DataGrid = React.memo(
       [setCellValue],
     );
     const setCellNull = useCallback(() => setCellValue(null), [setCellValue]);
+    const setCellRandomUuid = useCallback(
+      () => setCellValue(crypto.randomUUID()),
+      [setCellValue],
+    );
     const setCellDefault = useCallback(() => {
       if (!contextMenu) return;
       const isInsertion = contextMenu.mergedRow?.type === "insertion";
@@ -1855,6 +1954,22 @@ export const DataGrid = React.memo(
       await copyToClipboard(`${tName}${headerContextMenu.colName}`);
       setHeaderContextMenu(null);
     }, [headerContextMenu, tableName, copyToClipboard]);
+
+    const copyColumnNamesAsLines = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsLines(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
+
+    const copyColumnNamesAsJson = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsJson(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
 
     const copySelectedCells = useCallback(async () => {
       if (selectedRowIndices.size === 0) return;
@@ -2942,6 +3057,13 @@ export const DataGrid = React.memo(
                     action: setCellServerNow,
                   });
                 }
+                if (isUuidColumnType(colDataType)) {
+                  menuItems.push({
+                    label: t("dataGrid.setRandomUuid"),
+                    icon: Hash,
+                    action: setCellRandomUuid,
+                  });
+                }
               }
 
               if (isJsonCellTarget(colDataType, contextCellValue)) {
@@ -2952,11 +3074,36 @@ export const DataGrid = React.memo(
                 });
               }
 
+              // "Open link": only for a plain http(s) URL or mailto address, so
+              // other schemes (file:, javascript:, ...) never reach the opener.
+              // A masked cell shows dots, so it never offers its real value.
+              if (
+                isLinkString(contextCellValue) &&
+                !isCellMasked(contextMenu.rowIndex, contextMenu.colIndex)
+              ) {
+                const link = contextCellValue.trim();
+                menuItems.push({
+                  label: t("contextMenu.openLink"),
+                  icon: ExternalLink,
+                  action: () => {
+                    setContextMenu(null);
+                    platform.openExternalUrl(link).catch((e: unknown) => {
+                      console.error("Failed to open link:", e);
+                      showToast(
+                        t("contextMenu.openLinkFailed", { error: String(e) }),
+                        { kind: "error" },
+                      );
+                    });
+                  },
+                });
+              }
+
               // "Filter by this value": hidden for blobs/JSON (their wire
               // formats don't survive a WHERE comparison) and for insertion
               // rows, which have no stored value to filter on yet. Masking is
               // display-only, so a masked cell only gets IS NULL / IS NOT NULL
-              // and its real value never reaches the WHERE input.
+              // and its real value never reaches the WHERE input. The
+              // operators are grouped in a submenu so the menu stays short.
               if (onFilterByValue && tableName && !isInsertion) {
                 const isContextCellMasked = isCellMasked(
                   contextMenu.rowIndex,
@@ -2969,26 +3116,37 @@ export const DataGrid = React.memo(
                   !isBlobCell &&
                   !isJsonCellTarget(colDataType, contextCellValue)
                 ) {
-                  for (const op of getCellValueFilterOperators(
-                    contextCellValue,
-                    { masked: isContextCellMasked },
-                  )) {
-                    menuItems.push({
-                      label: t(CELL_VALUE_FILTER_LABEL_KEYS[op], {
-                        column: colName,
-                      }),
-                      icon: Filter,
-                      action: () => {
-                        onFilterByValue(
-                          colName,
-                          op,
-                          isContextCellMasked ? null : contextCellValue,
-                          colDataType || undefined,
-                        );
-                        setContextMenu(null);
+                  menuItems.push({
+                    label: t("dataGrid.filterByValue"),
+                    icon: Filter,
+                    submenu: [
+                      {
+                        label: colName,
+                        header: true,
+                        mono: true,
+                        // A masked cell never shows its real value here.
+                        hint: isContextCellMasked
+                          ? undefined
+                          : formatCellValueFilterHint(contextCellValue),
                       },
-                    });
-                  }
+                      ...getCellValueFilterOperators(contextCellValue, {
+                        masked: isContextCellMasked,
+                        columnType: colDataType,
+                      }).map((op) => ({
+                        label: t(CELL_VALUE_FILTER_LABEL_KEYS[op]),
+                        badge: CELL_VALUE_FILTER_BADGES[op],
+                        action: () => {
+                          onFilterByValue(
+                            colName,
+                            op,
+                            isContextCellMasked ? null : contextCellValue,
+                            colDataType || undefined,
+                          );
+                          setContextMenu(null);
+                        },
+                      })),
+                    ],
+                  });
                 }
               }
 
@@ -3184,6 +3342,7 @@ export const DataGrid = React.memo(
                       connectionId: connectionId ?? null,
                       tableName: tableName ?? null,
                       schema: activeSchema,
+                      database,
                       driver: activeDriver,
                       columnName: contextMenu.colName,
                       rowIndex: contextMenu.rowIndex,
@@ -3249,6 +3408,22 @@ export const DataGrid = React.memo(
                   label: t("dataGrid.copyColumnNameTable"),
                   icon: Copy,
                   action: copyHeaderNameTable,
+                },
+                {
+                  label: t("dataGrid.copyColumnNames"),
+                  icon: Copy,
+                  submenu: [
+                    {
+                      label: t("dataGrid.copyColumnNamesLines"),
+                      icon: Copy,
+                      action: copyColumnNamesAsLines,
+                    },
+                    {
+                      label: t("dataGrid.copyColumnNamesJson"),
+                      icon: Copy,
+                      action: copyColumnNamesAsJson,
+                    },
+                  ],
                 },
                 {
                   label: t("dataGrid.copyColumnValues"),

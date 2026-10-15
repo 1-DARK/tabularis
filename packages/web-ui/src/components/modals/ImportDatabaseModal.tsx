@@ -24,6 +24,9 @@ interface ImportDatabaseModalProps {
   targetDatabase?: string;
   inputFile: ChosenInputFile;
   onSuccess?: () => void;
+  /** Explicit schema for a schema-based multi-db connection (Postgres nested
+   * tree), overriding the connection's global active schema. */
+  schema?: string;
 }
 
 export const ImportDatabaseModal = ({
@@ -34,11 +37,13 @@ export const ImportDatabaseModal = ({
   targetDatabase,
   inputFile,
   onSuccess,
+  schema: schemaProp,
 }: ImportDatabaseModalProps) => {
   const { t } = useTranslation();
   const client = useTabularisClient();
   const platform = usePlatformCapabilities();
-  const { activeSchema } = useDatabase();
+  const { activeSchema: connectionActiveSchema } = useDatabase();
+  const activeSchema = schemaProp ?? connectionActiveSchema;
   const { showAlert } = useAlert();
   const [isImporting, setIsImporting] = useState(false);
   const [progress, setProgress] =

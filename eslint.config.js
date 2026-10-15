@@ -25,6 +25,7 @@ export default defineConfig([
     "packages/web-ui/tests",
     "web-ui-project/tests",
     "tests",
+    "e2e",
     "coverage",
     "src-tauri/target/**",
   ]),

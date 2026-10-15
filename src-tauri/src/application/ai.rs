@@ -46,6 +46,7 @@ pub enum AiCommand {
     GetSchemaContext {
         connection_id: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetActivity {
         filter: Option<EventFilter>,
@@ -110,12 +111,14 @@ pub async fn execute(
         AiCommand::GetSchemaContext {
             connection_id,
             schema,
+            database,
         } => json(
             crate::application::metadata::get_ai_schema_context(
                 runtime,
                 web_session_id,
                 &connection_id,
                 schema,
+                database,
             )
             .await?,
         ),

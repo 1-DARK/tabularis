@@ -58,11 +58,11 @@ describe("BlobInput", () => {
     });
   });
 
-  it("fetches truncated database blobs through tokenized platform downloads", async () => {
-    const value = "BLOB:100:image/png:iVBORw==";
+  it.each(["image/png", "application/octet-stream"])("fetches truncated %s blobs from the selected database", async (mimeType) => {
+    const value = `BLOB:100:${mimeType}:iVBORw==`;
     platform.fetchDatabaseBlob.mockResolvedValue({
       contents: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
-      mimeType: "image/png",
+      mimeType,
     });
     render(
       <BlobInput
@@ -71,6 +71,7 @@ describe("BlobInput", () => {
         dataType="BLOB"
         connectionId="connection-1"
         tableName="files"
+        database="archive"
         colName="payload"
         pkMap={{ id: 1 }}
       />,
@@ -82,6 +83,7 @@ describe("BlobInput", () => {
       expect(platform.fetchDatabaseBlob).toHaveBeenCalledWith({
         connectionId: "connection-1",
         table: "files",
+        database: "archive",
         colName: "payload",
         pkMap: { id: 1 },
       });

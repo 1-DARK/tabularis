@@ -548,6 +548,7 @@ struct AiRequest<T> {
 struct AiSchemaContextRequest {
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -751,6 +752,7 @@ struct PluginReadmeRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ConnectionIdRequest {
     connection_id: String,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -837,6 +839,7 @@ impl QueryHistoryStatus {
 struct MetadataRequest {
     connection_id: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -845,6 +848,7 @@ struct TableMetadataRequest {
     connection_id: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -853,6 +857,7 @@ struct ViewMetadataRequest {
     connection_id: String,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -862,6 +867,7 @@ struct ViewDefinitionRequest {
     view_name: String,
     definition: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -870,6 +876,8 @@ struct RoutineNameRequest {
     connection_id: String,
     routine_name: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -879,6 +887,8 @@ struct RoutineTargetRequest {
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -906,6 +916,7 @@ struct TriggerTargetRequest {
     trigger_name: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -914,6 +925,7 @@ struct CreateTriggerRequest {
     connection_id: String,
     trigger_sql: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -976,6 +988,7 @@ struct DropIndexRequest {
     table: String,
     index_name: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -985,6 +998,7 @@ struct DropForeignKeyRequest {
     table: String,
     fk_name: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1021,6 +1035,7 @@ struct ApplyDbUserPrivilegesRequest {
 struct SetSelectedSchemasRequest {
     connection_id: String,
     schemas: Vec<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1028,6 +1043,7 @@ struct SetSelectedSchemasRequest {
 struct SetSchemaPreferenceRequest {
     connection_id: String,
     schema: String,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1046,6 +1062,7 @@ struct ExecuteQueryRequest {
     page: Option<u32>,
     schema: Option<String>,
     session_id: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1058,6 +1075,7 @@ struct ExecuteQueryBatchRequest {
     schema: Option<String>,
     batch_id: Option<String>,
     session_id: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1067,6 +1085,7 @@ struct CountQueryRequest {
     query: String,
     schema: Option<String>,
     session_id: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1076,6 +1095,7 @@ struct ExplainQueryRequest {
     query: String,
     analyze: bool,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -2609,6 +2629,7 @@ fn decode_ai_command(command: AiRpcCommand, body: &[u8]) -> Result<AiCommand, St
             AiCommand::GetSchemaContext {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         AiRpcCommand::GetActivity => {
@@ -3179,6 +3200,7 @@ fn decode_query_command(command: QueryRpcCommand, body: &[u8]) -> Result<QueryCo
                 page: request.page,
                 schema: request.schema,
                 query_session_id: request.session_id,
+                database: request.database,
             }
         }
         QueryRpcCommand::ExecuteBatch => {
@@ -3191,6 +3213,7 @@ fn decode_query_command(command: QueryRpcCommand, body: &[u8]) -> Result<QueryCo
                 schema: request.schema,
                 query_session_id: request.session_id,
                 batch_id: request.batch_id,
+                database: request.database,
             }
         }
         QueryRpcCommand::Count => {
@@ -3200,6 +3223,7 @@ fn decode_query_command(command: QueryRpcCommand, body: &[u8]) -> Result<QueryCo
                 query: request.query,
                 schema: request.schema,
                 query_session_id: request.session_id,
+                database: request.database,
             }
         }
         QueryRpcCommand::Explain => {
@@ -3209,6 +3233,7 @@ fn decode_query_command(command: QueryRpcCommand, body: &[u8]) -> Result<QueryCo
                 query: request.query,
                 analyze: request.analyze,
                 schema: request.schema,
+                database: request.database,
             }
         }
         QueryRpcCommand::GetServerNow => {
@@ -3290,6 +3315,7 @@ fn decode_database_object_command(
             DatabaseObjectCommand::GetTableQueryTemplate {
                 connection_id: request.connection_id,
                 request: request.request,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetDataTypes => {
@@ -3320,18 +3346,21 @@ fn decode_database_object_command(
                         connection_id: request.connection_id,
                         view_name: request.view_name,
                         schema: request.schema,
+                        database: request.database,
                     }
                 }
                 DatabaseObjectRpcCommand::DropView => DatabaseObjectCommand::DropView {
                     connection_id: request.connection_id,
                     view_name: request.view_name,
                     schema: request.schema,
+                    database: request.database,
                 },
                 DatabaseObjectRpcCommand::RefreshMaterializedView => {
                     DatabaseObjectCommand::RefreshMaterializedView {
                         connection_id: request.connection_id,
                         view_name: request.view_name,
                         schema: request.schema,
+                        database: request.database,
                     }
                 }
                 _ => unreachable!(),
@@ -3345,6 +3374,7 @@ fn decode_database_object_command(
                     view_name: request.view_name,
                     definition: request.definition,
                     schema: request.schema,
+                    database: request.database,
                 }
             } else {
                 DatabaseObjectCommand::AlterView {
@@ -3352,6 +3382,7 @@ fn decode_database_object_command(
                     view_name: request.view_name,
                     definition: request.definition,
                     schema: request.schema,
+                    database: request.database,
                 }
             }
         }
@@ -3361,6 +3392,8 @@ fn decode_database_object_command(
                 connection_id: request.connection_id,
                 routine_name: request.routine_name,
                 schema: request.schema,
+                database: request.database,
+                identity_args: request.identity_args,
             }
         }
         DatabaseObjectRpcCommand::GetRoutineDefinition
@@ -3374,6 +3407,8 @@ fn decode_database_object_command(
                         routine_name: request.routine_name,
                         routine_type: request.routine_type,
                         schema: request.schema,
+                        database: request.database,
+                        identity_args: request.identity_args,
                     }
                 }
                 DatabaseObjectRpcCommand::GetRoutineEditScript => {
@@ -3382,6 +3417,8 @@ fn decode_database_object_command(
                         routine_name: request.routine_name,
                         routine_type: request.routine_type,
                         schema: request.schema,
+                        database: request.database,
+                        identity_args: request.identity_args,
                     }
                 }
                 DatabaseObjectRpcCommand::DropRoutine => DatabaseObjectCommand::DropRoutine {
@@ -3389,6 +3426,8 @@ fn decode_database_object_command(
                     routine_name: request.routine_name,
                     routine_type: request.routine_type,
                     schema: request.schema,
+                    database: request.database,
+                    identity_args: request.identity_args,
                 },
                 _ => unreachable!(),
             }
@@ -3419,6 +3458,7 @@ fn decode_database_object_command(
                     trigger_name: request.trigger_name,
                     table_name: request.table_name,
                     schema: request.schema,
+                    database: request.database,
                 }
             } else {
                 DatabaseObjectCommand::DropTrigger {
@@ -3426,6 +3466,7 @@ fn decode_database_object_command(
                     trigger_name: request.trigger_name,
                     table_name: request.table_name,
                     schema: request.schema,
+                    database: request.database,
                 }
             }
         }
@@ -3435,6 +3476,7 @@ fn decode_database_object_command(
                 connection_id: request.connection_id,
                 trigger_sql: request.trigger_sql,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetCreateTableSql => {
@@ -3497,6 +3539,7 @@ fn decode_database_object_command(
                 table: request.table,
                 index_name: request.index_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::DropForeignKey => {
@@ -3506,6 +3549,7 @@ fn decode_database_object_command(
                 table: request.table,
                 fk_name: request.fk_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetDbPrivilegeCatalog => {
@@ -3601,6 +3645,7 @@ fn decode_metadata_command(
             let request: ConnectionIdRequest = decode_payload(body)?;
             MetadataCommand::GetSchemas {
                 connection_id: request.connection_id,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetTables => {
@@ -3608,6 +3653,7 @@ fn decode_metadata_command(
             MetadataCommand::GetTables {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetColumns => {
@@ -3616,6 +3662,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 table_name: request.table_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetForeignKeys => {
@@ -3624,6 +3671,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 table_name: request.table_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetIndexes => {
@@ -3632,6 +3680,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 table_name: request.table_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetViews => {
@@ -3639,6 +3688,7 @@ fn decode_metadata_command(
             MetadataCommand::GetViews {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetViewColumns => {
@@ -3647,6 +3697,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 view_name: request.view_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetMaterializedViews => {
@@ -3654,6 +3705,7 @@ fn decode_metadata_command(
             MetadataCommand::GetMaterializedViews {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetMaterializedViewColumns => {
@@ -3662,6 +3714,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 view_name: request.view_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetMaterializedViewDefinition => {
@@ -3670,6 +3723,7 @@ fn decode_metadata_command(
                 connection_id: request.connection_id,
                 view_name: request.view_name,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetRoutines => {
@@ -3677,6 +3731,7 @@ fn decode_metadata_command(
             MetadataCommand::GetRoutines {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetTriggers => {
@@ -3684,6 +3739,7 @@ fn decode_metadata_command(
             MetadataCommand::GetTriggers {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetSchemaSnapshot => {
@@ -3691,12 +3747,14 @@ fn decode_metadata_command(
             MetadataCommand::GetSchemaSnapshot {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetSelectedSchemas => {
             let request: ConnectionIdRequest = decode_payload(body)?;
             MetadataCommand::GetSelectedSchemas {
                 connection_id: request.connection_id,
+                database: request.database,
             }
         }
         MetadataRpcCommand::SetSelectedSchemas => {
@@ -3704,12 +3762,14 @@ fn decode_metadata_command(
             MetadataCommand::SetSelectedSchemas {
                 connection_id: request.connection_id,
                 schemas: request.schemas,
+                database: request.database,
             }
         }
         MetadataRpcCommand::GetSchemaPreference => {
             let request: ConnectionIdRequest = decode_payload(body)?;
             MetadataCommand::GetSchemaPreference {
                 connection_id: request.connection_id,
+                database: request.database,
             }
         }
         MetadataRpcCommand::SetSchemaPreference => {
@@ -3717,6 +3777,7 @@ fn decode_metadata_command(
             MetadataCommand::SetSchemaPreference {
                 connection_id: request.connection_id,
                 schema: request.schema,
+                database: request.database,
             }
         }
     })
@@ -4179,6 +4240,7 @@ mod tests;
 struct TableQueryTemplateRequest {
     connection_id: String,
     request: crate::models::TableQueryTemplateRequest,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

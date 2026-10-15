@@ -53,14 +53,14 @@
     "authorizationLevel": "Minimum intended web authorization scope; all levels still require an authenticated session."
   },
   "summary": {
-    "literalCommandCount": 16,
-    "literalCallSiteCount": 18,
+    "literalCommandCount": 15,
+    "literalCallSiteCount": 16,
     "dynamicCallSiteCount": 0,
-    "handlerRegistrationCount": 294,
-    "registeredCommandCount": 294,
+    "handlerRegistrationCount": 301,
+    "registeredCommandCount": 301,
     "duplicateHandlerRegistrations": [],
     "frontendCommandsMissingRegistration": [],
-    "registeredCommandsWithoutFrontendCall": 278
+    "registeredCommandsWithoutFrontendCall": 286
   },
   "commands": [
     {
@@ -204,20 +204,6 @@
       ]
     },
     {
-      "name": "open_plugins_dir",
-      "featureGroup": "plugins",
-      "eventUse": "none",
-      "filesystemUse": "read",
-      "authorizationLevel": "local-admin",
-      "registered": true,
-      "callSites": [
-        {
-          "file": "packages/web-ui/src/components/settings/PluginsTab.tsx",
-          "line": 787
-        }
-      ]
-    },
-    {
       "name": "open_storage_location",
       "featureGroup": "configuration",
       "eventUse": "none",
@@ -254,10 +240,6 @@
       "registered": true,
       "callSites": [
         {
-          "file": "packages/web-ui/src/components/modals/ConfigJsonModal.tsx",
-          "line": 59
-        },
-        {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
           "line": 289
         }
@@ -287,11 +269,11 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/contexts/DatabaseProvider.tsx",
-          "line": 157
+          "line": 171
         },
         {
           "file": "packages/web-ui/src/pages/Editor.tsx",
-          "line": 687
+          "line": 702
         }
       ]
     }
@@ -306,6 +288,7 @@
     "apply_prepared_tabularis_import",
     "apply_tabularis_import",
     "build_routine_call_sql",
+    "cancel_chatgpt_sign_in",
     "cancel_dump",
     "cancel_export",
     "cancel_import",
@@ -397,6 +380,8 @@
     "get_alter_column_sql",
     "get_available_databases",
     "get_cellname_prompt",
+    "get_chatgpt_models",
+    "get_chatgpt_session",
     "get_columns",
     "get_config",
     "get_config_json",
@@ -494,9 +479,11 @@
     "map_inferred_column_types",
     "move_connection_to_group",
     "move_group_to_parent",
+    "open_chatgpt_usage",
     "open_devtools",
     "open_er_diagram_window",
     "open_json_viewer_window",
+    "open_plugins_dir",
     "open_results_window",
     "open_task_manager_window",
     "open_visual_explain_window",
@@ -540,6 +527,7 @@
     "save_ssh_connection",
     "save_system_prompt",
     "save_tabrename_prompt",
+    "select_chatgpt_profile",
     "set_ai_key",
     "set_connection_appearance",
     "set_connection_tags",
@@ -557,6 +545,8 @@
     "set_storage_location",
     "set_theme_package_enabled",
     "set_ui_state",
+    "sign_in_chatgpt",
+    "sign_out_chatgpt",
     "suggest_table_name",
     "test_connection",
     "test_k8s_connection_cmd",

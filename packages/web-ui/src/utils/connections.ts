@@ -108,6 +108,22 @@ export interface ConnectionParams {
 }
 
 /**
+ * Drop blank `ssl_mode` so the backend applies the driver default. The backend
+ * persists an omitted mode as `null`, so a connection loaded from disk can
+ * carry `null` here as well as `undefined`.
+ */
+export function withoutBlankSslMode<T extends { ssl_mode?: string | null }>(
+  params: T,
+): Omit<T, "ssl_mode"> | T {
+  if (params.ssl_mode == null || params.ssl_mode.trim() === "") {
+    const rest = { ...params };
+    delete rest.ssl_mode;
+    return rest;
+  }
+  return params;
+}
+
+/**
  * Update one entry of the opaque `extra` connection fields map.
  *
  * Pure function — returns a new map, never mutates its input.

@@ -2666,3 +2666,20 @@ async fn connection_policy_accepts_new_connection_modal_wire_defaults() {
     }
     assert_eq!(application.contexts.lock().unwrap().len(), 18);
 }
+
+#[test]
+fn decodes_database_scope_and_routine_overload_for_web_commands() {
+    let body = br#"{"connectionId":"connection","database":"secondary","schema":"public"}"#;
+    let command = decode_metadata_command(MetadataRpcCommand::GetTables, body).unwrap();
+    assert!(
+        matches!(command, MetadataCommand::GetTables { database: Some(ref db), .. } if db == "secondary")
+    );
+
+    let body = br#"{"connectionId":"connection","database":"secondary","schema":"public","routineName":"calculate","identityArgs":"integer"}"#;
+    let command =
+        decode_database_object_command(DatabaseObjectRpcCommand::GetRoutineParameters, body)
+            .unwrap();
+    assert!(
+        matches!(command, DatabaseObjectCommand::GetRoutineParameters { database: Some(ref db), identity_args: Some(ref args), .. } if db == "secondary" && args == "integer")
+    );
+}

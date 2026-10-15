@@ -1,4 +1,11 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { MainLayout } from "./components/layout/MainLayout";
 import { ConnectionLayoutProvider } from "./contexts/ConnectionLayoutProvider";
@@ -51,11 +58,16 @@ export function App() {
     dismissUpdate,
     error: updateError,
   } = useUpdate();
-  const { settings, updateSetting, isLoading: isSettingsLoading } = useSettings();
+  const {
+    settings,
+    updateSetting,
+    isLoading: isSettingsLoading,
+  } = useSettings();
   useResultTypeColors();
   const [isDebugMode, setIsDebugMode] = useState(false);
   const deepLinkInstall = useDeepLinkInstall();
-  const [isCommunityModalDismissed, setIsCommunityModalDismissed] = useState(false);
+  const [isCommunityModalDismissed, setIsCommunityModalDismissed] =
+    useState(false);
 
   // Shared with every host (desktop and browser), so What's New shows once per version.
   const isUiStateReady = useUiStateReady();
@@ -72,7 +84,8 @@ export function App() {
     lastSeenVersion !== null &&
     isVersionNewer(APP_VERSION, lastSeenVersion);
 
-  const { entries: allEntries, isLoading: isChangelogLoading } = useChangelog(isWhatsNewOpen);
+  const { entries: allEntries, isLoading: isChangelogLoading } =
+    useChangelog(isWhatsNewOpen);
 
   const whatsNewEntries = useMemo(() => {
     if (!lastSeenVersion) return [];
@@ -195,12 +208,20 @@ export function App() {
       />
 
       <CommunityModal
-        isOpen={!isSettingsLoading && settings.showWelcome !== false && !isCommunityModalDismissed}
+        isOpen={
+          !isSettingsLoading &&
+          settings.showWelcome !== false &&
+          !isCommunityModalDismissed
+        }
         onClose={dismissCommunityModal}
       />
 
       <WhatsNewModal
-        isOpen={isWhatsNewOpen && !isSettingsLoading && (settings.showWelcome === false || isCommunityModalDismissed)}
+        isOpen={
+          isWhatsNewOpen &&
+          !isSettingsLoading &&
+          (settings.showWelcome === false || isCommunityModalDismissed)
+        }
         onClose={dismissWhatsNew}
         entries={whatsNewEntries}
         isLoading={isChangelogLoading}
@@ -224,7 +245,6 @@ export function App() {
         onCancel={deepLinkInstall.cancel}
         configuredRegistry={settings.tabulariumRegistryUrl ?? null}
       />
-
     </>
   );
 }

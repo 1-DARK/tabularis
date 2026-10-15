@@ -14,6 +14,7 @@ pub enum DatabaseObjectCommand {
     GetTableQueryTemplate {
         connection_id: String,
         request: crate::models::TableQueryTemplateRequest,
+        database: Option<String>,
     },
     GetDataTypes {
         driver: String,
@@ -30,39 +31,48 @@ pub enum DatabaseObjectCommand {
         connection_id: String,
         view_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     CreateView {
         connection_id: String,
         view_name: String,
         definition: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     AlterView {
         connection_id: String,
         view_name: String,
         definition: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     DropView {
         connection_id: String,
         view_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     RefreshMaterializedView {
         connection_id: String,
         view_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetRoutineParameters {
         connection_id: String,
         routine_name: String,
         schema: Option<String>,
+        database: Option<String>,
+        identity_args: Option<String>,
     },
     GetRoutineDefinition {
         connection_id: String,
         routine_name: String,
         routine_type: String,
         schema: Option<String>,
+        database: Option<String>,
+        identity_args: Option<String>,
     },
     BuildRoutineCallSql {
         connection_id: String,
@@ -81,29 +91,36 @@ pub enum DatabaseObjectCommand {
         routine_name: String,
         routine_type: String,
         schema: Option<String>,
+        database: Option<String>,
+        identity_args: Option<String>,
     },
     DropRoutine {
         connection_id: String,
         routine_name: String,
         routine_type: String,
         schema: Option<String>,
+        database: Option<String>,
+        identity_args: Option<String>,
     },
     GetTriggerDefinition {
         connection_id: String,
         trigger_name: String,
         table_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     CreateTrigger {
         connection_id: String,
         trigger_sql: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     DropTrigger {
         connection_id: String,
         trigger_name: String,
         table_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetCreateTableSql {
         connection_id: String,
@@ -148,12 +165,14 @@ pub enum DatabaseObjectCommand {
         table: String,
         index_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     DropForeignKey {
         connection_id: String,
         table: String,
         fk_name: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetDbPrivilegeCatalog {
         connection_id: String,
@@ -208,7 +227,11 @@ pub async fn execute(
         DatabaseObjectCommand::GetTableQueryTemplate {
             connection_id,
             request,
-        } => json(get_table_query_template(runtime, session_id, &connection_id, request).await?),
+            database,
+        } => json(
+            get_table_query_template(runtime, session_id, &connection_id, request, database)
+                .await?,
+        ),
         DatabaseObjectCommand::GetDataTypes { driver } => {
             json(crate::commands::get_data_types(driver).await?)
         }
@@ -226,14 +249,24 @@ pub async fn execute(
             connection_id,
             view_name,
             schema,
-        } => {
-            json(get_view_definition(runtime, session_id, &connection_id, view_name, schema).await?)
-        }
+            database,
+        } => json(
+            get_view_definition(
+                runtime,
+                session_id,
+                &connection_id,
+                view_name,
+                schema,
+                database,
+            )
+            .await?,
+        ),
         DatabaseObjectCommand::CreateView {
             connection_id,
             view_name,
             definition,
             schema,
+            database,
         } => {
             create_view(
                 runtime,
@@ -242,6 +275,7 @@ pub async fn execute(
                 view_name,
                 definition,
                 schema,
+                database,
             )
             .await?;
             Ok(Value::Null)
@@ -251,6 +285,7 @@ pub async fn execute(
             view_name,
             definition,
             schema,
+            database,
         } => {
             alter_view(
                 runtime,
@@ -259,6 +294,7 @@ pub async fn execute(
                 view_name,
                 definition,
                 schema,
+                database,
             )
             .await?;
             Ok(Value::Null)
@@ -267,32 +303,61 @@ pub async fn execute(
             connection_id,
             view_name,
             schema,
+            database,
         } => {
-            drop_view(runtime, session_id, &connection_id, view_name, schema).await?;
+            drop_view(
+                runtime,
+                session_id,
+                &connection_id,
+                view_name,
+                schema,
+                database,
+            )
+            .await?;
             Ok(Value::Null)
         }
         DatabaseObjectCommand::RefreshMaterializedView {
             connection_id,
             view_name,
             schema,
+            database,
         } => {
-            refresh_materialized_view(runtime, session_id, &connection_id, view_name, schema)
-                .await?;
+            refresh_materialized_view(
+                runtime,
+                session_id,
+                &connection_id,
+                view_name,
+                schema,
+                database,
+            )
+            .await?;
             Ok(Value::Null)
         }
         DatabaseObjectCommand::GetRoutineParameters {
             connection_id,
             routine_name,
             schema,
+            database,
+            identity_args,
         } => json(
-            get_routine_parameters(runtime, session_id, &connection_id, routine_name, schema)
-                .await?,
+            get_routine_parameters(
+                runtime,
+                session_id,
+                &connection_id,
+                routine_name,
+                schema,
+                database,
+                identity_args,
+            )
+            .await?,
         ),
         DatabaseObjectCommand::GetRoutineDefinition {
             connection_id,
             routine_name,
             routine_type,
             schema,
+            database,
+            identity_args,
         } => json(
             get_routine_definition(
                 runtime,
@@ -301,6 +366,8 @@ pub async fn execute(
                 routine_name,
                 routine_type,
                 schema,
+                database,
+                identity_args,
             )
             .await?,
         ),
@@ -334,6 +401,8 @@ pub async fn execute(
             routine_name,
             routine_type,
             schema,
+            database,
+            identity_args,
         } => json(
             get_routine_edit_script(
                 runtime,
@@ -342,6 +411,8 @@ pub async fn execute(
                 routine_name,
                 routine_type,
                 schema,
+                database,
+                identity_args,
             )
             .await?,
         ),
@@ -350,6 +421,8 @@ pub async fn execute(
             routine_name,
             routine_type,
             schema,
+            database,
+            identity_args,
         } => {
             drop_routine(
                 runtime,
@@ -358,6 +431,8 @@ pub async fn execute(
                 routine_name,
                 routine_type,
                 schema,
+                database,
+                identity_args,
             )
             .await?;
             Ok(Value::Null)
@@ -367,6 +442,7 @@ pub async fn execute(
             trigger_name,
             table_name,
             schema,
+            database,
         } => json(
             get_trigger_definition(
                 runtime,
@@ -375,6 +451,7 @@ pub async fn execute(
                 trigger_name,
                 table_name,
                 schema,
+                database,
             )
             .await?,
         ),
@@ -382,8 +459,17 @@ pub async fn execute(
             connection_id,
             trigger_sql,
             schema,
+            database,
         } => {
-            create_trigger(runtime, session_id, &connection_id, trigger_sql, schema).await?;
+            create_trigger(
+                runtime,
+                session_id,
+                &connection_id,
+                trigger_sql,
+                schema,
+                database,
+            )
+            .await?;
             Ok(Value::Null)
         }
         DatabaseObjectCommand::DropTrigger {
@@ -391,6 +477,7 @@ pub async fn execute(
             trigger_name,
             table_name,
             schema,
+            database,
         } => {
             drop_trigger(
                 runtime,
@@ -399,6 +486,7 @@ pub async fn execute(
                 trigger_name,
                 table_name,
                 schema,
+                database,
             )
             .await?;
             Ok(Value::Null)
@@ -483,6 +571,7 @@ pub async fn execute(
             table,
             index_name,
             schema,
+            database,
         } => {
             drop_index(
                 runtime,
@@ -491,6 +580,7 @@ pub async fn execute(
                 table,
                 index_name,
                 schema,
+                database,
             )
             .await?;
             Ok(Value::Null)
@@ -500,8 +590,18 @@ pub async fn execute(
             table,
             fk_name,
             schema,
+            database,
         } => {
-            drop_foreign_key(runtime, session_id, &connection_id, table, fk_name, schema).await?;
+            drop_foreign_key(
+                runtime,
+                session_id,
+                &connection_id,
+                table,
+                fk_name,
+                schema,
+                database,
+            )
+            .await?;
             Ok(Value::Null)
         }
         DatabaseObjectCommand::GetDbPrivilegeCatalog { connection_id } => {
@@ -606,12 +706,17 @@ async fn connected_driver_and_params(
     runtime: &RuntimeContext,
     session_id: Option<Uuid>,
     connection_id: &str,
+    database: Option<String>,
 ) -> Result<(Arc<dyn DatabaseDriver>, ConnectionParams), String> {
-    let (_driver_id, params) = crate::application::connections::resolve_saved_connection_params(
-        runtime,
-        session_id,
-        connection_id,
-    )?;
+    let (_driver_id, mut params) =
+        crate::application::connections::resolve_saved_connection_params(
+            runtime,
+            session_id,
+            connection_id,
+        )?;
+    if let Some(db) = database.filter(|db| !db.is_empty()) {
+        params.database = crate::models::DatabaseSelection::Single(db);
+    }
     Ok((
         crate::drivers::registry::get_connection_driver(&params).await?,
         params,
@@ -630,8 +735,11 @@ pub async fn get_view_definition(
     connection_id: &str,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .get_view_definition(&params, &view_name, schema.as_deref())
         .await
@@ -644,8 +752,11 @@ pub async fn create_view(
     view_name: String,
     definition: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .create_view(&params, &view_name, &definition, schema.as_deref())
         .await
@@ -658,8 +769,11 @@ pub async fn alter_view(
     view_name: String,
     definition: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .alter_view(&params, &view_name, &definition, schema.as_deref())
         .await
@@ -671,8 +785,11 @@ pub async fn drop_view(
     connection_id: &str,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .drop_view(&params, &view_name, schema.as_deref())
         .await
@@ -684,8 +801,11 @@ pub async fn refresh_materialized_view(
     connection_id: &str,
     view_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .refresh_materialized_view(&params, &view_name, schema.as_deref())
         .await
@@ -697,10 +817,19 @@ pub async fn get_routine_parameters(
     connection_id: &str,
     routine_name: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<Vec<RoutineParameter>, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
-        .get_routine_parameters(&params, &routine_name, schema.as_deref())
+        .get_routine_parameters(
+            &params,
+            &routine_name,
+            schema.as_deref(),
+            identity_args.as_deref(),
+        )
         .await
 }
 
@@ -711,10 +840,20 @@ pub async fn get_routine_definition(
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<String, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
-        .get_routine_definition(&params, &routine_name, &routine_type, schema.as_deref())
+        .get_routine_definition(
+            &params,
+            &routine_name,
+            &routine_type,
+            schema.as_deref(),
+            identity_args.as_deref(),
+        )
         .await
 }
 
@@ -727,7 +866,8 @@ pub async fn build_routine_call_sql(
     args: Vec<RoutineCallArg>,
     schema: Option<String>,
 ) -> Result<String, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver
         .build_routine_call_sql(
             &params,
@@ -758,10 +898,20 @@ pub async fn get_routine_edit_script(
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<String, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
-        .get_routine_edit_script(&params, &routine_name, &routine_type, schema.as_deref())
+        .get_routine_edit_script(
+            &params,
+            &routine_name,
+            &routine_type,
+            schema.as_deref(),
+            identity_args.as_deref(),
+        )
         .await
 }
 
@@ -772,10 +922,20 @@ pub async fn drop_routine(
     routine_name: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
+    identity_args: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
-        .drop_routine(&params, &routine_name, &routine_type, schema.as_deref())
+        .drop_routine(
+            &params,
+            &routine_name,
+            &routine_type,
+            schema.as_deref(),
+            identity_args.as_deref(),
+        )
         .await
 }
 
@@ -786,8 +946,11 @@ pub async fn get_trigger_definition(
     trigger_name: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .get_trigger_definition(&params, &trigger_name, &table_name, schema.as_deref())
         .await
@@ -799,8 +962,11 @@ pub async fn create_trigger(
     connection_id: &str,
     trigger_sql: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .create_trigger(&params, &trigger_sql, schema.as_deref())
         .await
@@ -813,8 +979,11 @@ pub async fn drop_trigger(
     trigger_name: String,
     table_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .drop_trigger(&params, &trigger_name, &table_name, schema.as_deref())
         .await
@@ -911,8 +1080,11 @@ pub async fn drop_index(
     table: String,
     index_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .drop_index(&params, &table, &index_name, schema.as_deref())
         .await
@@ -925,8 +1097,11 @@ pub async fn drop_foreign_key(
     table: String,
     fk_name: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver
         .drop_foreign_key(&params, &table, &fk_name, schema.as_deref())
         .await
@@ -945,7 +1120,8 @@ pub async fn get_db_users(
     session_id: Option<Uuid>,
     connection_id: &str,
 ) -> Result<Vec<DbUserInfo>, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver.get_db_users(&params).await
 }
 
@@ -956,7 +1132,8 @@ pub async fn get_db_user_grants(
     user: String,
     host: String,
 ) -> Result<Vec<String>, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver.get_db_user_grants(&params, &user, &host).await
 }
 
@@ -967,7 +1144,8 @@ pub async fn get_db_user_privileges(
     user: String,
     host: String,
 ) -> Result<Vec<DbUserGrantSet>, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver.get_db_user_privileges(&params, &user, &host).await
 }
 
@@ -979,7 +1157,8 @@ pub async fn create_db_user(
     host: String,
     password: String,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver
         .create_db_user(&params, &user, &host, &password)
         .await
@@ -992,7 +1171,8 @@ pub async fn drop_db_user(
     user: String,
     host: String,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver.drop_db_user(&params, &user, &host).await
 }
 
@@ -1004,7 +1184,8 @@ pub async fn set_db_user_password(
     host: String,
     password: String,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver
         .set_db_user_password(&params, &user, &host, &password)
         .await
@@ -1022,7 +1203,8 @@ pub async fn apply_db_user_privileges(
     privileges: Vec<String>,
     grant: bool,
 ) -> Result<(), String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, None).await?;
     driver
         .apply_db_user_privileges(
             &params,
@@ -1045,8 +1227,11 @@ pub async fn get_table_query_template(
     session_id: Option<Uuid>,
     connection_id: &str,
     request: crate::models::TableQueryTemplateRequest,
+    database: Option<String>,
 ) -> Result<Option<String>, String> {
-    let (driver, params) = connected_driver_and_params(runtime, session_id, connection_id).await?;
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+
     driver.get_table_query_template(&params, &request).await
 }
 
@@ -1064,7 +1249,7 @@ pub async fn map_inferred_column_types(
         }
         let drv = driver_for(&driver).await?;
         if drv.has_connection_metadata() {
-            connected_driver_and_params(runtime, session_id, &id)
+            connected_driver_and_params(runtime, session_id, &id, None)
                 .await?
                 .0
         } else {

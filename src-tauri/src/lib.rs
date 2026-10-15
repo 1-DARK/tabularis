@@ -16,6 +16,7 @@ pub mod ai_schema_context_tests;
 pub mod application;
 pub mod askpass;
 pub mod backup;
+pub mod chatgpt;
 pub mod cli;
 pub mod clipboard_import;
 pub mod commands;
@@ -115,6 +116,11 @@ pub mod ui_state_commands;
 pub mod ui_state_tests;
 pub mod updater;
 pub mod window_decorations;
+// E2E-only mock of the `dialog` plugin (auto-accepts ask/confirm, stubs
+// open/save via env vars). Only compiled with --features e2e-testing.
+#[cfg(feature = "e2e-testing")]
+pub mod e2e_dialog_mock;
+mod window_placement;
 pub mod drivers {
     pub mod common;
     pub mod driver_trait;
@@ -249,10 +255,12 @@ pub fn run() {
         crate::ssh_tunnel::stop_all_tunnels();
         crate::proxy::stop_all_forwards();
         crate::ssm_tunnel::stop_all_tunnels();
+        crate::k8s_tunnel::stop_all_tunnels();
     });
     let run_shutdown_hooks = shutdown_hooks.clone();
 
-    tauri::Builder::default()
+    #[cfg_attr(not(feature = "e2e-testing"), allow(unused_mut))]
+    let mut builder = tauri::Builder::default()
         // Singleton: a second launch (typically a `tabularis://...` URL
         // clicked while the app is already running) hands its argv to the
         // first instance and exits. With `features = ["deep-link"]` the plugin
@@ -275,11 +283,29 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_deep_link::init());
+
+    // Dialog plugin: real in production, mocked under e2e-testing (the mock
+    // auto-accepts ask()/confirm() so native Tauri confirm dialogs — which
+    // WebDriverIO can't click — don't block the trigger-save flow). Registered
+    // as a same-named "dialog" plugin so it replaces the real one at Tauri's
+    // IPC dispatch layer (PluginStore::register retains only the last).
+    #[cfg(not(feature = "e2e-testing"))]
+    {
+        builder = builder.plugin(tauri_plugin_dialog::init());
+    }
+    #[cfg(feature = "e2e-testing")]
+    {
+        builder = builder.plugin(crate::e2e_dialog_mock::init());
+        // In-app WebDriver server. tauri-wd connects to drive the real WKWebView
+        // via the W3C WebDriver protocol on macOS, exercising real Tauri IPC.
+        builder = builder.plugin(tauri_plugin_webdriver_automation::init());
+    }
+
+    builder
         .manage(application_state.pending_install)
         .manage(application_state.query_cancellation)
         .manage(application_state.export_cancellation)
@@ -292,6 +318,7 @@ pub fn run() {
         .manage(application_state.json_viewer_store)
         .manage(application_state.results_window_store)
         .manage(application_state.query_history_state)
+        .manage(window_placement::WindowPlacementCache::default())
         .setup(move |app| {
             #[cfg(target_os = "linux")]
             system_theme::watch(app.handle().clone());
@@ -317,6 +344,11 @@ pub fn run() {
                 &app.handle(),
                 startup_config.window_decorations.as_ref(),
             );
+            // Restore the main window's last normal size and position.
+            // The explicit start_maximized preference below still takes precedence.
+            if let Some(window) = app.get_webview_window("main") {
+                window_placement::restore(&window);
+            }
 
             // Allow the SSH tunnel code (which runs without a Tauri context)
             // to bridge askpass prompts to the frontend.
@@ -465,6 +497,20 @@ pub fn run() {
                 }
             }
             Ok(())
+        })
+        // Only the main window is persisted; utility windows retain their
+        // existing per-feature sizing and placement behavior.
+        .on_window_event(|window, event| {
+            if window.label() != "main" { return; }
+            match event {
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    window_placement::remember(window);
+                }
+                tauri::WindowEvent::CloseRequested { .. } => {
+                    window_placement::persist(window);
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             system_theme::get_linux_system_theme,
@@ -648,6 +694,13 @@ pub fn run() {
             ai::generate_tab_rename,
             ai::suggest_table_name,
             ai::get_ai_models,
+            chatgpt::get_chatgpt_session,
+            chatgpt::sign_in_chatgpt,
+            chatgpt::cancel_chatgpt_sign_in,
+            chatgpt::select_chatgpt_profile,
+            chatgpt::sign_out_chatgpt,
+            chatgpt::get_chatgpt_models,
+            chatgpt::open_chatgpt_usage,
             // Clipboard Import
             clipboard_import::execute_clipboard_import,
             commands::get_ai_schema_context,
@@ -789,6 +842,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |app_handle, event| {
+            // Cmd+Q and relaunch paths can exit without CloseRequested.
+            if matches!(&event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
+                window_placement::persist_cached(app_handle);
+            }
             if let tauri::RunEvent::Exit = event {
                 // Back up the freshest state before the process ends (no-op
                 // unless backups are enabled and due).

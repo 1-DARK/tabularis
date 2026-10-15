@@ -34,8 +34,6 @@ fn test_escape_sql_value() {
         assert_eq!(escape_sql_value(driver, json!(null)), "NULL");
         assert_eq!(escape_sql_value(driver, json!(123)), "123");
         assert_eq!(escape_sql_value(driver, json!(12.34)), "12.34");
-        assert_eq!(escape_sql_value(driver, json!(true)), "1");
-        assert_eq!(escape_sql_value(driver, json!(false)), "0");
         assert_eq!(escape_sql_value(driver, json!("hello")), "'hello'");
         assert_eq!(escape_sql_value(driver, json!("O'Reilly")), "'O''Reilly'");
         assert_eq!(
@@ -243,4 +241,135 @@ async fn session_cleanup_only_aborts_jobs_owned_by_that_session() {
     assert!(owner_task.await.unwrap_err().is_cancelled());
     assert!(!other_task.is_finished());
     other_task.abort();
+}
+
+fn column(name: &str, data_type: &str) -> TableColumn {
+    TableColumn {
+        name: name.to_string(),
+        data_type: data_type.to_string(),
+        is_pk: false,
+        is_nullable: true,
+        is_auto_increment: false,
+        is_generated: false,
+        default_value: None,
+        character_maximum_length: None,
+        comment: None,
+        numeric_precision: None,
+        numeric_scale: None,
+    }
+}
+
+#[test]
+fn test_json_column_names_matches_json_and_jsonb_case_insensitively() {
+    let columns = vec![
+        column("id", "integer"),
+        column("payload", "jsonb"),
+        column("meta", "JSON"),
+        column("name", "text"),
+    ];
+    let json_cols = json_column_names(&columns);
+    assert_eq!(json_cols.len(), 2);
+    assert!(json_cols.contains("payload"));
+    assert!(json_cols.contains("meta"));
+    assert!(!json_cols.contains("id"));
+    assert!(!json_cols.contains("name"));
+}
+
+#[test]
+fn test_json_column_names_empty_for_no_json_columns() {
+    let columns = vec![column("id", "integer"), column("name", "text")];
+    assert!(json_column_names(&columns).is_empty());
+}
+
+#[test]
+fn test_format_row_values_escapes_json_column_differently_from_plain_text() {
+    // Same underlying serde_json::Value::String("hi") in two columns:
+    // the plain text column keeps it literal, the JSON column re-encodes
+    // it as a JSON string literal (surrounding quotes preserved) --
+    // this is the whole reason json_column_names exists (#822 dump fix
+    // for plugin-backed drivers: QueryResult only carries column names,
+    // not types, so this can't be inferred from the value alone).
+    let columns = vec!["name".to_string(), "payload".to_string()];
+    let mut json_cols = HashSet::new();
+    json_cols.insert("payload".to_string());
+
+    let row = vec![json!("hi"), json!("hi")];
+    assert_eq!(
+        format_row_values(row, &columns, &json_cols, "postgres"),
+        r#"('hi', '"hi"')"#
+    );
+}
+
+#[test]
+fn test_format_row_values_regression_json_object_and_null_round_trip() {
+    let columns = vec!["id".to_string(), "payload".to_string(), "note".to_string()];
+    let mut json_cols = HashSet::new();
+    json_cols.insert("payload".to_string());
+
+    let row = vec![json!(1), json!({"a": 1}), serde_json::Value::Null];
+    assert_eq!(
+        format_row_values(row, &columns, &json_cols, "postgres"),
+        r#"(1, '{"a":1}', NULL)"#
+    );
+}
+
+fn pagination(has_more: bool) -> Pagination {
+    Pagination {
+        page: 1,
+        page_size: 1000,
+        total_rows: None,
+        has_more,
+    }
+}
+
+#[test]
+fn test_plugin_dump_has_more_trusts_real_pagination_over_the_fallback() {
+    // A full page that the driver explicitly says is the last one must
+    // not be reinterpreted as "more rows" just because it's full.
+    assert!(!plugin_dump_has_more(Some(pagination(false)), 1000, 1000));
+    // A short page the driver explicitly says has more must still be
+    // honored, even though the fallback heuristic alone would say no.
+    assert!(plugin_dump_has_more(Some(pagination(true)), 10, 1000));
+}
+
+#[test]
+fn test_plugin_dump_has_more_regression_a_full_page_without_pagination_is_not_treated_as_the_end() {
+    // Regression: a plugin's execute_query RPC that never populates
+    // `pagination` used to default this to `false`, silently truncating
+    // any table with more rows than one page.
+    assert!(plugin_dump_has_more(None, 1000, 1000));
+}
+
+#[test]
+fn test_plugin_dump_has_more_a_short_page_without_pagination_ends_the_fetch() {
+    assert!(!plugin_dump_has_more(None, 10, 1000));
+}
+
+#[test]
+fn test_plugin_dump_has_more_an_empty_page_without_pagination_ends_the_fetch() {
+    assert!(!plugin_dump_has_more(None, 0, 1000));
+}
+
+#[test]
+fn test_is_postgres_driver_matches_builtin_and_plugin_ids() {
+    assert!(is_postgres_driver("postgres"));
+    assert!(is_postgres_driver("postgresql"));
+}
+
+#[test]
+fn test_is_postgres_driver_rejects_other_drivers() {
+    assert!(!is_postgres_driver("mysql"));
+    assert!(!is_postgres_driver("sqlite"));
+    assert!(!is_postgres_driver("some-other-plugin"));
+}
+#[test]
+fn boolean_literals_match_the_target_dialect() {
+    for driver in ["postgres", "postgresql"] {
+        assert_eq!(escape_sql_value(driver, json!(true)), "TRUE");
+        assert_eq!(escape_sql_value(driver, json!(false)), "FALSE");
+    }
+    for driver in ["mysql", "sqlite"] {
+        assert_eq!(escape_sql_value(driver, json!(true)), "1");
+        assert_eq!(escape_sql_value(driver, json!(false)), "0");
+    }
 }

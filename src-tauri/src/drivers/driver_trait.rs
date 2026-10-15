@@ -552,11 +552,18 @@ pub trait DatabaseDriver: Send + Sync {
         schema: Option<&str>,
     ) -> Result<Vec<RoutineInfo>, String>;
 
+    /// `identity_args` narrows the lookup to ONE routine where a name is not
+    /// enough to name one. PostgreSQL overloads, so a schema and a name there
+    /// identify a set, and every read below used to take `LIMIT 1` out of it
+    /// and answer about whichever row came back (#893). Carries the signature
+    /// `get_routines` reported for the row the user clicked; `None` asks for
+    /// the old behaviour, still right on the dialects that cannot overload.
     async fn get_routine_parameters(
         &self,
         params: &ConnectionParams,
         routine_name: &str,
         schema: Option<&str>,
+        identity_args: Option<&str>,
     ) -> Result<Vec<RoutineParameter>, String>;
 
     async fn get_routine_definition(
@@ -565,6 +572,7 @@ pub trait DatabaseDriver: Send + Sync {
         routine_name: &str,
         routine_type: &str,
         schema: Option<&str>,
+        identity_args: Option<&str>,
     ) -> Result<String, String>;
 
     // --- Routine management (gated by `DriverCapabilities::routine_management`)
@@ -622,8 +630,9 @@ pub trait DatabaseDriver: Send + Sync {
         routine_name: &str,
         routine_type: &str,
         schema: Option<&str>,
+        identity_args: Option<&str>,
     ) -> Result<String, String> {
-        self.get_routine_definition(params, routine_name, routine_type, schema)
+        self.get_routine_definition(params, routine_name, routine_type, schema, identity_args)
             .await
     }
 
@@ -636,6 +645,9 @@ pub trait DatabaseDriver: Send + Sync {
         routine_name: &str,
         routine_type: &str,
         schema: Option<&str>,
+        /* Unused by the generic statement: a dialect that needs a signature to
+           name one routine overrides this, as the PostgreSQL driver does */
+        _identity_args: Option<&str>,
     ) -> Result<(), String> {
         let sql = crate::drivers::common::generic_drop_routine_sql(
             routine_name,
@@ -718,6 +730,28 @@ pub trait DatabaseDriver: Send + Sync {
             .execute_query(params, query, limit, page, schema)
             .await?;
         Ok((result, false))
+    }
+
+    /// `execute_query` with the database itself refusing writes.
+    ///
+    /// Used for MCP queries that run without the user's approval because
+    /// they were classified as reads. Keyword classification cannot see what
+    /// a function call does, so built-in drivers run the statement in a
+    /// read-only transaction that is always rolled back, and the database
+    /// rejects any write the classifier missed.
+    ///
+    /// The default implementation delegates to [`Self::execute_query`]:
+    /// plugin drivers have no read-only mode, so for them classification is
+    /// the only safeguard.
+    async fn execute_read_only_query(
+        &self,
+        params: &ConnectionParams,
+        query: &str,
+        limit: Option<u32>,
+        page: u32,
+        schema: Option<&str>,
+    ) -> Result<QueryResult, String> {
+        self.execute_query(params, query, limit, page, schema).await
     }
 
     /// `execute_batch` with the caller's connection carried across calls.
@@ -901,6 +935,20 @@ pub trait DatabaseDriver: Send + Sync {
         Err("DDL generation not supported".into())
     }
 
+    /// Returns the DDL (e.g. `CREATE TABLE ...`) for an *existing* table, as
+    /// used by `dump_database` to write a schema-preserving dump. Distinct
+    /// from `get_create_table_sql`, which generates a brand-new statement
+    /// from a column list the caller is proposing (used by the Create Table
+    /// UI) rather than reflecting a table that already exists.
+    async fn get_table_ddl(
+        &self,
+        _params: &ConnectionParams,
+        _table: &str,
+        _schema: Option<&str>,
+    ) -> Result<String, String> {
+        Err("Fetching existing table DDL is not supported by this driver".into())
+    }
+
     async fn drop_index(
         &self,
         _params: &ConnectionParams,
@@ -967,9 +1015,7 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Returns the privilege keywords accepted by `apply_db_user_privileges`,
     /// split by scope, so the frontend renders the dialect's own catalog.
-    async fn get_db_privilege_catalog(
-        &self,
-    ) -> Result<crate::models::DbPrivilegeCatalog, String> {
+    async fn get_db_privilege_catalog(&self) -> Result<crate::models::DbPrivilegeCatalog, String> {
         Err("User management is not supported by this driver".into())
     }
 

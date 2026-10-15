@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { X, Loader2, BookOpen } from "lucide-react";
 import { useTabularisClient } from "../../hooks/useTabularisClient";
 import { useSettings } from "../../hooks/useSettings";
@@ -18,8 +19,10 @@ interface AiExplainModalProps {
 }
 
 export const AiExplainModal = ({ isOpen, onClose, query }: AiExplainModalProps) => {
+  const { i18n } = useTranslation();
   const { settings } = useSettings();
   const client = useTabularisClient();
+  const resolvedLanguage = i18n.resolvedLanguage ?? i18n.language;
   const editorTheme = useEditorTheme();
   const monacoRef = useRef<typeof MonacoTypes | null>(null);
   const [explanation, setExplanation] = useState("");
@@ -62,7 +65,7 @@ export const AiExplainModal = ({ isOpen, onClose, query }: AiExplainModalProps) 
           provider: settings.aiProvider,
           model: settings.aiModel || "",
           query,
-          language: getAiExplanationLanguage(settings.language),
+          language: getAiExplanationLanguage(settings.language, resolvedLanguage),
         }
       });
       setExplanation(result);

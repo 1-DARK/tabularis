@@ -32,6 +32,7 @@ export interface BlobInputProps {
   pkMap?: Record<string, unknown> | null;
   colName?: string | null;
   schema?: string | null;
+  database?: string | null;
 }
 
 function bytesToDataUrl(contents: Uint8Array, mimeType: string): Promise<string> {
@@ -65,6 +66,7 @@ export const BlobInput = ({
   pkMap,
   colName,
   schema,
+  database,
 }: BlobInputProps) => {
   const { t } = useTranslation();
   const platform = usePlatformCapabilities();
@@ -122,16 +124,17 @@ export const BlobInput = ({
   // Same approach as handleDownload but in-memory instead of writing to disk.
   const databaseBlobRequest = useMemo(
     () =>
-      isImage && canFetchFull && connectionId && tableName && colName && pkMap
+      canFetchFull && connectionId && tableName && colName && pkMap
         ? {
             connectionId,
             table: tableName,
             colName,
             pkMap,
             ...(schema ? { schema } : {}),
+            ...(database ? { database } : {}),
           }
         : null,
-    [isImage, canFetchFull, connectionId, tableName, colName, pkMap, schema],
+    [canFetchFull, connectionId, tableName, colName, pkMap, schema, database],
   );
   const databaseBlobKey = databaseBlobRequest
     ? JSON.stringify(databaseBlobRequest)
@@ -141,7 +144,7 @@ export const BlobInput = ({
     url: string | null;
   } | null>(null);
   useEffect(() => {
-    if (!databaseBlobRequest || !databaseBlobKey) return;
+    if (!isImage || !databaseBlobRequest || !databaseBlobKey) return;
     let cancelled = false;
     platform
       .fetchDatabaseBlob(databaseBlobRequest)
@@ -157,7 +160,7 @@ export const BlobInput = ({
     return () => {
       cancelled = true;
     };
-  }, [databaseBlobKey, databaseBlobRequest, platform]);
+  }, [databaseBlobKey, databaseBlobRequest, isImage, platform]);
   const dbPreviewUrl =
     databasePreview?.key === databaseBlobKey ? databasePreview.url : null;
 

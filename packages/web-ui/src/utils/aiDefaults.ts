@@ -6,7 +6,7 @@ export async function detectAiDefaults(
   client: TabularisClient,
   settings: Settings,
 ): Promise<Partial<Settings>> {
-  if (!settings.aiEnabled || (settings.aiProvider && settings.aiModel)) return {};
+  if (!settings.aiEnabled || settings.aiProvider === "chatgpt" || (settings.aiProvider && settings.aiModel)) return {};
   let provider = settings.aiProvider;
   if (!provider) {
     const providers = ["openai", "anthropic", "openrouter", "minimax"] as const;

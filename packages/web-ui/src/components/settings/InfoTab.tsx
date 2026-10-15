@@ -36,7 +36,11 @@ import {
 import { WhatsNewModal } from "../modals/WhatsNewModal";
 import { OpenSourceLibrariesModal } from "../modals/OpenSourceLibrariesModal";
 import { SocialLinks } from "../SocialLinks";
-import { TONE_SOFT_BG_CLASS, TONE_TEXT_CLASS, type Tone } from "../../utils/tones";
+import {
+  TONE_SOFT_BG_CLASS,
+  TONE_TEXT_CLASS,
+  type Tone,
+} from "../../utils/tones";
 
 export function InfoTab() {
   const platform = usePlatformCapabilities();
@@ -59,17 +63,26 @@ export function InfoTab() {
   } = useUpdate();
   const isServerManaged = updaterMode === "server-managed";
   // One status for the card: what the user should know about updates right now.
-  const updateStatus: { tone: Tone; Icon: typeof Download; line: string } = updateInfo
-    ? { tone: "update", Icon: ArrowUpCircle, line: t("update.updateAvailable", { version: updateInfo.latestVersion }) }
-    : updateError
-      ? { tone: "danger", Icon: AlertTriangle, line: "" }
-      : isUpToDate
-        ? { tone: "success", Icon: CheckCircle2, line: t("update.upToDate") }
-        : { tone: "neutral", Icon: Download, line: isChecking ? t("update.checkingForUpdates") : "" };
-  const {
-    entries: changelogEntries,
-    isLoading: isChangelogLoading,
-  } = useChangelog();
+  const updateStatus: { tone: Tone; Icon: typeof Download; line: string } =
+    updateInfo
+      ? {
+          tone: "update",
+          Icon: ArrowUpCircle,
+          line: t("update.updateAvailable", {
+            version: updateInfo.latestVersion,
+          }),
+        }
+      : updateError
+        ? { tone: "danger", Icon: AlertTriangle, line: "" }
+        : isUpToDate
+          ? { tone: "success", Icon: CheckCircle2, line: t("update.upToDate") }
+          : {
+              tone: "neutral",
+              Icon: Download,
+              line: isChecking ? t("update.checkingForUpdates") : "",
+            };
+  const { entries: changelogEntries, isLoading: isChangelogLoading } =
+    useChangelog();
   const [isWhatsNewOpen, setIsWhatsNewOpen] = useState(false);
   const [isOpenSourceLibrariesOpen, setIsOpenSourceLibrariesOpen] =
     useState(false);
@@ -84,7 +97,7 @@ export function InfoTab() {
 
         <div className="p-2">
           <img
-            src="/logo.png"
+            src="/logo.svg"
             alt="tabularis"
             className="w-16 h-16 rounded-2xl mx-auto mb-4 shadow-lg shadow-accent-primary/30"
             style={{
@@ -116,9 +129,7 @@ export function InfoTab() {
             <span className="text-xs font-bold uppercase tracking-wider">
               {t("settings.version")}
             </span>
-            <span className="font-mono font-bold">
-              {APP_VERSION} (Beta)
-            </span>
+            <span className="font-mono font-bold">{APP_VERSION} (Beta)</span>
           </div>
           <button
             onClick={() => setIsWhatsNewOpen(true)}
@@ -150,10 +161,16 @@ export function InfoTab() {
                   className={clsx(
                     "p-2.5 rounded-lg shrink-0",
                     TONE_SOFT_BG_CLASS[updateStatus.tone],
-                    updateStatus.tone === "neutral" ? "text-secondary" : TONE_TEXT_CLASS[updateStatus.tone],
+                    updateStatus.tone === "neutral"
+                      ? "text-secondary"
+                      : TONE_TEXT_CLASS[updateStatus.tone],
                   )}
                 >
-                  {isChecking ? <Loader2 size={16} className="animate-spin" /> : <updateStatus.Icon size={16} />}
+                  {isChecking ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <updateStatus.Icon size={16} />
+                  )}
                 </div>
                 <div className="min-w-0">
                   <div className="text-[11px] uppercase tracking-wide text-muted">
@@ -168,7 +185,9 @@ export function InfoTab() {
                     <div
                       className={clsx(
                         "text-xs mt-0.5",
-                        updateStatus.tone === "neutral" ? "text-muted" : TONE_TEXT_CLASS[updateStatus.tone],
+                        updateStatus.tone === "neutral"
+                          ? "text-muted"
+                          : TONE_TEXT_CLASS[updateStatus.tone],
                       )}
                     >
                       {updateStatus.line}
@@ -195,8 +214,13 @@ export function InfoTab() {
                     disabled={isChecking || isDownloading}
                     className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-default bg-base text-xs text-secondary hover:text-primary hover:border-strong disabled:opacity-50 transition-colors"
                   >
-                    <RefreshCw size={13} className={clsx(isChecking && "animate-spin")} />
-                    {isChecking ? t("settings.checking") : t("settings.checkNow")}
+                    <RefreshCw
+                      size={13}
+                      className={clsx(isChecking && "animate-spin")}
+                    />
+                    {isChecking
+                      ? t("settings.checking")
+                      : t("settings.checkNow")}
                   </button>
                   {updateInfo && (
                     <button
@@ -208,7 +232,8 @@ export function InfoTab() {
                       {isDownloading ? (
                         <>
                           <Loader2 size={13} className="animate-spin" />
-                          {t("update.downloading")} {Math.round(downloadProgress)}%
+                          {t("update.downloading")}{" "}
+                          {Math.round(downloadProgress)}%
                         </>
                       ) : (
                         <>

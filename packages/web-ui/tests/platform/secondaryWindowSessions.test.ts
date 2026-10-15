@@ -72,11 +72,12 @@ describe("secondary window routes", () => {
         connectionId: "connection 1",
         connectionName: "Local DB",
         databaseName: "main",
+        database: "reporting db",
         schema: "public data",
         focusTable: "users",
       }),
     ).toBe(
-      "/schema-diagram?connectionId=connection+1&connectionName=Local+DB&databaseName=main&schema=public+data&focusTable=users",
+      "/schema-diagram?connectionId=connection+1&connectionName=Local+DB&databaseName=main&database=reporting+db&schema=public+data&focusTable=users",
     );
     expect(buildVisualExplainRoute("connection 1", "select * from users")).toMatch(
       /^\/visual-explain\?connection=connection%201&query=/,

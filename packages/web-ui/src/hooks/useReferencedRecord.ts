@@ -17,6 +17,7 @@ export interface FetchReferencedRecordParams {
   value: unknown;
   driver?: DriverArg;
   schema?: string | null;
+  database?: string | null;
   sourceColumnType?: string;
 }
 
@@ -30,6 +31,7 @@ export async function fetchReferencedRecord(
     value,
     driver,
     schema,
+    database,
     sourceColumnType,
   }: FetchReferencedRecordParams,
   client: TypedCommandCaller,
@@ -53,6 +55,7 @@ export async function fetchReferencedRecord(
     limit: 100,
     page: 1,
     ...(schema ? { schema } : {}),
+    ...(database ? { database } : {}),
   });
 }
 
@@ -62,6 +65,7 @@ export interface UseReferencedRecordParams {
   value: unknown;
   driver?: DriverArg;
   schema?: string | null;
+  database?: string | null;
   sourceColumnType?: string;
 }
 
@@ -71,6 +75,7 @@ export function useReferencedRecord({
   value,
   driver,
   schema,
+  database,
   sourceColumnType,
 }: UseReferencedRecordParams) {
   const client = useTabularisClient();
@@ -96,6 +101,7 @@ export function useReferencedRecord({
           value,
           driver,
           schema,
+          database,
           sourceColumnType,
         },
         client,
@@ -108,7 +114,7 @@ export function useReferencedRecord({
     } finally {
       setIsLoading(false);
     }
-  }, [client, connectionId, fk, value, driver, schema, sourceColumnType]);
+  }, [client, connectionId, fk, value, driver, schema, database, sourceColumnType]);
 
   useEffect(() => {
     loadRecord();

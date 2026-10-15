@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { TableToolbar } from '../../../src/components/ui/TableToolbar';
 import { useDatabase } from '../../../src/hooks/useDatabase';
+import { renderWithSlotProbe } from '../../fixtures/pluginSlotProbe';
 
 vi.mock('../../../src/hooks/useDatabase', () => ({
   useDatabase: vi.fn(),
@@ -353,6 +354,57 @@ describe('TableToolbar', () => {
       expect(screen.queryByText('WHERE')).not.toBeInTheDocument();
     });
 
+    describe('value picker', () => {
+      const pickerProps = {
+        ...defaultProps,
+        columnMetadata: [
+          { name: 'status', data_type: 'varchar(20)', is_pk: false, is_nullable: true, is_auto_increment: false },
+          { name: 'qty', data_type: 'integer', is_pk: false, is_nullable: true, is_auto_increment: false },
+        ],
+        tableName: 'orders',
+        tableSchema: 'public',
+      };
+
+      beforeEach(() => {
+        vi.mocked(useDatabase).mockReturnValue({
+          activeDriver: 'postgres',
+          activeCapabilities: null,
+        } as unknown as ReturnType<typeof useDatabase>);
+      });
+
+      it('is not offered without a query runner', () => {
+        render(<TableToolbar {...pickerProps} />);
+        openPanel();
+        expect(screen.queryByRole('button', { name: 'toolbar.valuePicker.open' })).not.toBeInTheDocument();
+      });
+
+      it('counts values for the row column, narrowed by the other rows when matching all', async () => {
+        const onRunQuery = vi.fn().mockResolvedValue({ columns: ['status', 'count'], rows: [['open', 3]] });
+        render(<TableToolbar {...pickerProps} onRunQuery={onRunQuery} />);
+        openPanel();
+        // second row: qty > 5
+        fireEvent.click(screen.getByText('toolbar.addFilter'));
+        const selects = screen.getAllByRole('combobox');
+        fireEvent.change(selects[selects.length - 2], { target: { value: 'qty' } });
+        fireEvent.change(selects[selects.length - 1], { target: { value: '>' } });
+        const valueInputs = screen.getAllByPlaceholderText('toolbar.valuePlaceholder');
+        fireEvent.change(valueInputs[1], { target: { value: '5' } });
+
+        fireEvent.click(screen.getAllByRole('button', { name: 'toolbar.valuePicker.open' })[0]);
+        expect(await screen.findByRole('checkbox', { name: /open/ })).toBeInTheDocument();
+        expect(onRunQuery).toHaveBeenCalledWith(
+          'SELECT "status", COUNT(*) FROM "public"."orders" WHERE "status" IS NOT NULL AND ("qty" > 5) ' +
+            'GROUP BY "status" ORDER BY 2 DESC, 1 LIMIT 100'
+        );
+
+        fireEvent.click(screen.getByRole('checkbox', { name: /open/ }));
+        fireEvent.click(screen.getByRole('button', { name: /toolbar.valuePicker.use/ }));
+        expect(valueInputs[0]).toHaveValue('open');
+        // Picking fills the row but does not run the table query by itself.
+        expect(mockOnUpdate).not.toHaveBeenCalled();
+      });
+    });
+
     it('is closed when remounted with another key (table tab switch)', () => {
       const { rerender } = render(<TableToolbar key="customers" {...panelProps} />);
       openPanel();
@@ -416,5 +468,42 @@ describe('TableToolbar', () => {
 
       expect(mockOnUpdate.mock.calls[0][0]).toBe('id = 5');
     });
+  });
+});
+
+
+describe('TableToolbar plugin context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(useDatabase).mockReturnValue({
+      activeDriver: 'postgres', activeCapabilities: null,
+      activeConnectionId: 'pg-pane', activeSchema: 'public',
+    } as ReturnType<typeof useDatabase>);
+  });
+
+  const props = {
+    placeholderColumn: 'id', placeholderSort: 'id', defaultLimit: 100,
+    onUpdate: vi.fn(), tableName: 'users',
+  };
+
+  it('passes the table schema through the real plugin driver filter', async () => {
+    await renderWithSlotProbe(<TableToolbar {...props} tableSchema="tenant" />, ['data-grid.toolbar.actions']);
+    const probe = await screen.findByTestId('postgres-slot');
+    expect(JSON.parse(probe.textContent ?? '{}')).toMatchObject({
+      driver: 'postgres', connectionId: 'pg-pane', tableName: 'users', schema: 'tenant',
+    });
+    expect(screen.queryByTestId('mysql-slot')).not.toBeInTheDocument();
+  });
+
+  it('preserves an explicit schema-less table rather than borrowing the active schema', async () => {
+    await renderWithSlotProbe(<TableToolbar {...props} tableSchema={null} />, ['data-grid.toolbar.actions']);
+    const probe = await screen.findByTestId('postgres-slot');
+    expect(JSON.parse(probe.textContent ?? '{}').schema).toBeNull();
+  });
+
+  it('falls back to the active schema when no table schema is supplied', async () => {
+    await renderWithSlotProbe(<TableToolbar {...props} />, ['data-grid.toolbar.actions']);
+    const probe = await screen.findByTestId('postgres-slot');
+    expect(JSON.parse(probe.textContent ?? '{}').schema).toBe('public');
   });
 });

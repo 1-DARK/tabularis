@@ -3,12 +3,12 @@ import { useTranslation } from "react-i18next";
 import { FileJson, X, Loader2, RotateCcw } from "lucide-react";
 import type { OnMount } from "@monaco-editor/react";
 import { MonacoEditor } from "../ui/LazyMonaco";
-import { invoke } from "@tauri-apps/api/core";
 import { useEditorTheme } from "../../hooks/useEditorTheme";
 import { loadMonacoTheme } from "../../themes/themeUtils";
 import { getMonacoThemeId } from "../../themes/themeRuntime";
 import { Modal } from "../ui/Modal";
 import { ConfirmModal } from "./ConfirmModal";
+import { usePlatformCapabilities } from "../../hooks/usePlatformCapabilities";
 import { useTabularisClient } from "../../hooks/useTabularisClient";
 
 interface ConfigJsonModalProps {
@@ -19,6 +19,7 @@ interface ConfigJsonModalProps {
 export const ConfigJsonModal = ({ isOpen, onClose }: ConfigJsonModalProps) => {
   const { t } = useTranslation();
   const client = useTabularisClient();
+  const platform = usePlatformCapabilities();
   const editorTheme = useEditorTheme();
   const [jsonValue, setJsonValue] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -56,7 +57,7 @@ export const ConfigJsonModal = ({ isOpen, onClose }: ConfigJsonModalProps) => {
   };
 
   const handleRestartNow = () => {
-    invoke("relaunch_app");
+    void platform.restartApplication();
   };
 
   const handleRestartLater = () => {

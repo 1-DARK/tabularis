@@ -120,6 +120,7 @@ async fn pending_approvals_are_owned_by_an_authorized_web_session() {
         connection_name: "Fixture".to_string(),
         query: "DELETE FROM values".to_string(),
         query_kind: "write".to_string(),
+        database: None,
         client_hint: None,
         explain_plan: None,
         explain_error: None,

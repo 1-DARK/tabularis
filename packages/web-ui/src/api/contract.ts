@@ -1,3 +1,4 @@
+import type { ChatGptModel, ChatGptSession } from "../types/chatgpt";
 import type { TableQueryTemplateRequest } from "../utils/tableQueryTemplates";
 import type { DataTypeRegistry } from "../types/dataTypes";
 import type {
@@ -149,6 +150,7 @@ export type UiStateEntries = Readonly<Record<string, unknown>>;
 export interface ConnectionParameters {
   driver: string;
   database: string | string[];
+  default_database?: string;
   host?: string;
   port?: number;
   username?: string;
@@ -271,6 +273,7 @@ interface NotebookContentRequest extends NotebookTargetRequest {
 }
 
 interface MetadataRequest extends ConnectionIdRequest {
+  database?: string;
   schema?: string;
 }
 
@@ -361,6 +364,7 @@ export interface DbUserGrantSet {
 }
 
 interface RoutineTargetRequest extends MetadataRequest {
+  identityArgs?: string;
   routineName: string;
   routineType: string;
 }
@@ -471,8 +475,17 @@ export interface PersistedConfig extends Partial<Settings> {
 }
 
 export interface CommandMap {
+  // ChatGPT OAuth uses the desktop callback and browser opener. The browser UI
+  // does not expose these host-account commands.
+  get_chatgpt_session: CommandDefinition<undefined, ChatGptSession, "local-admin">;
+  get_chatgpt_models: CommandDefinition<undefined, ChatGptModel[], "local-admin">;
+  sign_in_chatgpt: CommandDefinition<{ profileId: string | null }, ChatGptSession, "local-admin">;
+  select_chatgpt_profile: CommandDefinition<{ profileId: string }, ChatGptSession, "local-admin">;
+  sign_out_chatgpt: CommandDefinition<{ profileId: string }, string | null, "local-admin">;
+  cancel_chatgpt_sign_in: CommandDefinition<undefined, void, "local-admin">;
+  open_chatgpt_usage: CommandDefinition<undefined, void, "local-admin">;
   get_table_query_template: CommandDefinition<
-    ConnectionIdRequest & { request: TableQueryTemplateRequest },
+    MetadataRequest & { request: TableQueryTemplateRequest },
     string | null,
     "database"
   >;
@@ -494,6 +507,7 @@ export interface CommandMap {
       connection_id: string;
       table_name: string;
       schema: string | null;
+      database?: string | null;
       columns: ColumnDefinition[];
       rows: Array<Array<string | null>>;
       create_table: boolean;
@@ -701,6 +715,8 @@ export interface CommandMap {
   >;
   disable_plugin: CommandDefinition<{ pluginId: string }, void, "local-admin">;
   enable_plugin: CommandDefinition<{ pluginId: string }, void, "local-admin">;
+  /** Desktop-only folder action; the browser UI hides this control. */
+  open_plugins_dir: CommandDefinition<undefined, void, "local-admin">;
   get_plugin_manifest: CommandDefinition<
     { pluginId: string },
     PluginManifest,
@@ -878,7 +894,7 @@ export interface CommandMap {
     string[],
     "database"
   >;
-  get_schemas: CommandDefinition<ConnectionIdRequest, string[], "database">;
+  get_schemas: CommandDefinition<MetadataRequest, string[], "database">;
   get_tables: CommandDefinition<MetadataRequest, TableInfo[], "database">;
   get_columns: CommandDefinition<TableMetadataRequest, TableColumn[], "database">;
   get_foreign_keys: CommandDefinition<TableMetadataRequest, ForeignKey[], "database">;
@@ -903,19 +919,19 @@ export interface CommandMap {
     TableSchema[],
     "database"
   >;
-  get_selected_schemas: CommandDefinition<ConnectionIdRequest, string[], "database">;
+  get_selected_schemas: CommandDefinition<MetadataRequest, string[], "database">;
   set_selected_schemas: CommandDefinition<
-    ConnectionIdRequest & { schemas: string[] },
+    MetadataRequest & { schemas: string[] },
     void,
     "database"
   >;
   get_schema_preference: CommandDefinition<
-    ConnectionIdRequest,
+    MetadataRequest,
     string | null,
     "database"
   >;
   set_schema_preference: CommandDefinition<
-    ConnectionIdRequest & { schema: string },
+    MetadataRequest & { schema: string },
     void,
     "database"
   >;
@@ -935,7 +951,7 @@ export interface CommandMap {
   refresh_materialized_view: CommandDefinition<ViewMetadataRequest, void, "database">;
 
   get_routine_parameters: CommandDefinition<
-    MetadataRequest & { routineName: string },
+    MetadataRequest & { routineName: string; identityArgs?: string },
     RoutineParameterInfo[],
     "database"
   >;
@@ -1198,7 +1214,7 @@ export interface CommandMap {
     "sensitive"
   >;
   get_ai_schema_context: CommandDefinition<
-    { connectionId: string; schema?: string },
+    MetadataRequest,
     string,
     "database"
   >;
