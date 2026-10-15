@@ -1,3 +1,4 @@
+import { toErrorMessage } from "../utils/errors";
 import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { hasPendingTableEdits, tableRefreshIdentity } from "../utils/autoRefresh";
@@ -1556,8 +1557,8 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             updateTab(targetTabId, (tab) =>
               backgroundRefresh && !canApplyRefresh(tab) ? {} : {
                 ...(backgroundRefresh
-                  ? { autoRefreshError: typeof err === "string" ? err : t("editor.queryFailed") }
-                  : { error: typeof err === "string" ? err : t("editor.queryFailed") }),
+                  ? { autoRefreshError: toErrorMessage(err) }
+                  : { error: toErrorMessage(err) }),
                 isLoading: false,
               });
 
@@ -1584,7 +1585,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               null,
               "error",
               null,
-              typeof err === "string" ? err : t("editor.queryFailed"),
+              toErrorMessage(err),
               historyDb,
             );
           }
@@ -1795,7 +1796,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             }),
           },
         });
-        const message = typeof err === "string" ? err : t("editor.queryFailed");
+        const message = toErrorMessage(err);
         entries.forEach((entry, idx) => {
           if (applied.has(idx)) return;
           if (shouldRecordHistory) {
@@ -2011,8 +2012,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         if (latestTab?.results) {
           updateTab(targetTabId, {
             results: updateResultEntry(latestTab.results, entryId, {
-              error:
-                typeof err === "string" ? err : t("editor.queryFailed"),
+              error: toErrorMessage(err),
               isLoading: false,
             }),
           });
@@ -2021,7 +2021,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         activeQueryRequestIdsRef.current.delete(queryRequestId);
       }
     },
-    [client, activeConnectionId, updateTab, settings.resultPageSize, activeSchema, t],
+    [client, activeConnectionId, updateTab, settings.resultPageSize, activeSchema],
   );
 
   const handlePageSizeChange = useCallback(

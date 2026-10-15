@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, useImperativeHandle, ty
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
+import { normalizeTabularisError } from "../../src/api/errors";
 import { Editor } from "../../src/pages/Editor";
 import { EditorContext, type EditorContextType } from "../../src/contexts/EditorContext";
 import { createAutoRefreshSchedule, type AutoRefreshSchedule } from "../../src/utils/autoRefresh";
@@ -133,6 +134,22 @@ describe("history recording on a plain (non-opted-in) PostgreSQL connection", ()
       command === "execute_query" ? Promise.resolve(queryResult) : Promise.resolve([]));
   });
   afterEach(() => vi.restoreAllMocks());
+
+  it("preserves a normalized transport error in the editor and query history", async () => {
+    const message = 'relation "missing_table" does not exist';
+    vi.mocked(invoke).mockImplementation((command) => command === "execute_query"
+      ? Promise.reject(normalizeTabularisError(message, "COMMAND_FAILED", "query-1"))
+      : Promise.resolve([]));
+    render(<Harness />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /^editor\.run/ }));
+    });
+
+    expect(context.activeTab?.error).toBe(message);
+    expect(mocks.addEntry).toHaveBeenCalledWith(
+      consoleTab().query, null, "error", null, message, undefined,
+    );
+  });
 
   it("records the history entry's database as undefined/null, never the schema", async () => {
     render(<Harness />);
