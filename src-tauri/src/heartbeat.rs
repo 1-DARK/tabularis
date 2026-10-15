@@ -7,13 +7,12 @@
 //! clear error instead of hanging until `mcp_approval_timeout_seconds`
 //! (default 120s) elapses.
 //!
-//! The owning runtime clears the file on graceful shutdown. Stale-by-mtime
-//! detection handles crashes and SIGKILL.
+//! Hosts share this file, so shutdown stops refreshing without deleting it.
+//! Stale-by-mtime detection handles the last host exiting or crashing.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::paths::get_app_config_dir;
@@ -96,34 +95,14 @@ pub fn is_alive() -> bool {
     is_alive_in(&get_app_config_dir())
 }
 
-/// Owns the approval host ticker and clears its heartbeat on shutdown.
+/// Owns the approval host ticker; dropping it stops refreshing the shared file.
 #[must_use = "Keep the heartbeat task alive for the lifetime of the approval host"]
-pub struct HeartbeatTask {
-    base: PathBuf,
-    active: Arc<Mutex<bool>>,
-    task: tauri::async_runtime::JoinHandle<()>,
-}
+pub struct HeartbeatTask(tauri::async_runtime::JoinHandle<()>);
 
 impl HeartbeatTask {
     pub fn stop(&self) {
-        let mut active = self
-            .active
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if !*active {
-            return;
-        }
-        *active = false;
-        self.task.abort();
-        let owned = fs::read(heartbeat_path_in(&self.base))
-            .ok()
-            .and_then(|content| serde_json::from_slice::<Heartbeat>(&content).ok())
-            .is_some_and(|heartbeat| heartbeat.pid == std::process::id());
-        if owned {
-            if let Err(error) = clear_in(&self.base) {
-                log::warn!("Failed to clear approval heartbeat: {}", error);
-            }
-        }
+        // Another host may still be running, even when this process wrote last.
+        self.0.abort();
     }
 }
 
@@ -138,27 +117,17 @@ pub fn spawn_in(base: PathBuf) -> HeartbeatTask {
     if let Err(error) = write_now_in(&base) {
         log::warn!("Failed to write initial heartbeat: {}", error);
     }
-    let active = Arc::new(Mutex::new(true));
-    let task_active = active.clone();
-    let task_base = base.clone();
     let task = tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(TICK_INTERVAL);
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            // Serialize shutdown with writes so a final tick cannot recreate the file.
-            let active = task_active
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            if !*active {
-                break;
-            }
-            if let Err(error) = write_now_in(&task_base) {
+            if let Err(error) = write_now_in(&base) {
                 log::warn!("Heartbeat refresh failed: {}", error);
             }
         }
     });
-    HeartbeatTask { base, active, task }
+    HeartbeatTask(task)
 }
 
 pub fn spawn() -> HeartbeatTask {

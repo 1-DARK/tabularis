@@ -311,11 +311,19 @@ fn approval_heartbeat_lives_only_for_its_runtime_lifecycle() {
     let heartbeat = super::lifecycle::start_approval_heartbeat(&context);
     assert!(crate::heartbeat::is_alive_in(root.path()));
     heartbeat.stop();
-    assert!(!crate::heartbeat::is_alive_in(root.path()));
+    assert!(crate::heartbeat::is_alive_in(root.path()));
     heartbeat.stop();
     let heartbeat = super::lifecycle::start_approval_heartbeat(&context);
     assert!(crate::heartbeat::is_alive_in(root.path()));
     drop(heartbeat);
+    assert!(crate::heartbeat::is_alive_in(root.path()));
+    let expired = std::time::SystemTime::now()
+        - crate::heartbeat::STALE_AFTER
+        - std::time::Duration::from_secs(1);
+    filetime::set_file_mtime(
+        crate::heartbeat::heartbeat_path_in(root.path()),
+        filetime::FileTime::from_system_time(expired),
+    ).unwrap();
     assert!(!crate::heartbeat::is_alive_in(root.path()));
 }
 
@@ -341,4 +349,14 @@ fn stopping_approval_heartbeat_preserves_another_process_heartbeat() {
     let saved: crate::heartbeat::Heartbeat =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(saved, replacement);
+}
+
+#[test]
+fn stopping_one_approval_host_preserves_liveness_for_another() {
+    let root = tempfile::tempdir().unwrap();
+    let desktop = crate::heartbeat::spawn_in(root.path().to_path_buf());
+    let web = crate::heartbeat::spawn_in(root.path().to_path_buf());
+    web.stop();
+    assert!(crate::heartbeat::is_alive_in(root.path()));
+    drop(desktop);
 }
