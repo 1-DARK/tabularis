@@ -331,3 +331,38 @@ fn browser_imports_never_accept_server_paths() {
     .expect("server paths must be rejected");
     assert!(error.contains("cannot reference server filesystem paths"));
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn imported_ssh_secrets_create_and_repair_private_file_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, runtime, _secrets) = fixture();
+    let mut payload = export_payload(&runtime, false, None).await.unwrap();
+    payload.ssh_connections = vec![serde_json::from_value(serde_json::json!({
+        "id": "ssh-import", "name": "Imported", "host": "localhost", "port": 22,
+        "user": "user", "auth_type": "password", "password": "imported-secret",
+        "save_in_keychain": false
+    }))
+    .unwrap()];
+    let path = ssh_path(&runtime);
+    for existing in [false, true] {
+        if existing {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        apply_export_payload(
+            &runtime,
+            &crate::connection_cache::ConnectionCache::default(),
+            &crate::credential_cache::CredentialCache::default(),
+            payload.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(fs::read_to_string(&path)
+            .unwrap()
+            .contains("imported-secret"));
+    }
+}

@@ -213,3 +213,27 @@ fn profile_validation_rejects_invalid_inputs() {
     .unwrap_err();
     assert_eq!(error, "Invalid Kubernetes connection profile");
 }
+
+#[cfg(unix)]
+#[test]
+fn ssh_profile_create_and_update_keep_plaintext_secrets_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_temp, runtime) = fixture();
+    let mut input = ssh_input();
+    input.save_in_keychain = Some(false);
+    let saved = save_ssh_connection(&runtime, "Private".into(), input.clone(), true).unwrap();
+    let path = ssh_path(&runtime);
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    update_ssh_connection(&runtime, saved.id, "Updated".into(), input, true).unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    assert!(fs::read_to_string(path)
+        .unwrap()
+        .contains("stored-password"));
+}

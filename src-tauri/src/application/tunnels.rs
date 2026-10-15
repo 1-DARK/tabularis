@@ -1027,7 +1027,7 @@ fn save_json(path: &Path, values: &[impl Serialize]) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     let content = serde_json::to_string_pretty(values).map_err(|error| error.to_string())?;
-    fs::write(path, content).map_err(|error| error.to_string())
+    crate::persistence::write_private_file(path, content)
 }
 
 fn json(value: impl Serialize) -> Result<Value, String> {

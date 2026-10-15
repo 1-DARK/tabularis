@@ -789,11 +789,10 @@ fn save_json(path: &Path, values: &[impl Serialize]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::write(
+    crate::persistence::write_private_file(
         path,
         serde_json::to_string_pretty(values).map_err(|error| error.to_string())?,
     )
-    .map_err(|error| error.to_string())
 }
 
 fn json(value: impl Serialize) -> Result<Value, String> {
