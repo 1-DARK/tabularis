@@ -76,7 +76,16 @@ fn is_declared_ui_module(manifest: &ConfigManifest, normalized_path: &Path) -> b
         .as_deref()
         .unwrap_or_default()
         .iter()
-        .filter_map(|entry| normalize_relative_path(&entry.module).ok())
+        .map(|entry| &entry.module)
+        .chain(
+            manifest
+                .explain_parsers
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|entry| &entry.module),
+        )
+        .filter_map(|module| normalize_relative_path(module).ok())
         .any(|module| module == normalized_path)
 }
 

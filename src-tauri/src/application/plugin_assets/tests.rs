@@ -66,3 +66,25 @@ fn rejects_symlinks_that_escape_the_plugin_directory() {
 
     assert!(read_plugin_asset(root.path(), "example-plugin", "ui/dist/index.js").is_err());
 }
+
+#[test]
+fn serves_declared_explain_parser_bundles_with_the_ui_asset_limits() {
+    let root = plugin_fixture();
+    let plugin = root.path().join("example-plugin");
+    let manifest_path = plugin.join(".tabularium");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
+    manifest["explain_parsers"] = serde_json::json!([
+        {"engine": "example", "format": "example-json", "module": "./ui/dist/parser.mjs"},
+        {"engine": "example", "format": "private", "module": "ui/dist/private.txt"},
+        {"engine": "example", "format": "escape", "module": "../outside.js"}
+    ]);
+    fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    fs::write(plugin.join("ui/dist/parser.mjs"), "window.parser = true;").unwrap();
+    let asset = read_plugin_asset(root.path(), "example-plugin", "ui/dist/parser.mjs").unwrap();
+    assert_eq!(asset.content_type, "text/javascript; charset=utf-8");
+    assert_eq!(asset.bytes, b"window.parser = true;");
+    assert!(read_plugin_asset(root.path(), "example-plugin", "ui/dist/private.txt").is_err());
+    assert!(read_plugin_asset(root.path(), "example-plugin", "../outside.js").is_err());
+    assert!(read_plugin_asset(root.path(), "example-plugin", "ui/dist/undeclared.js").is_err());
+}
