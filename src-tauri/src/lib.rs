@@ -202,6 +202,7 @@ pub fn run() {
                 std::sync::Arc::new(runtime::state::ApplicationState::default());
             let web_data_dir = application.context.paths.data_dir().to_path_buf();
             let web_plugins_dir = application.context.paths.plugins_dir();
+            let approval_heartbeat = runtime::lifecycle::start_approval_heartbeat(&application.context);
             let approval_watcher = ai_approval_watcher::spawn_headless(
                 application.context.clone(),
                 application_state.clone(),
@@ -230,6 +231,7 @@ pub fn run() {
                 .await;
 
             approval_watcher.abort();
+            drop(approval_heartbeat);
             runtime::lifecycle::shutdown_headless_runtime(&application_state).await;
             server_result.expect("Failed to run Tabularis Web server");
         });
@@ -374,6 +376,7 @@ pub fn run() {
                 ),
             )
             .map_err(std::io::Error::other)?;
+            app.manage(runtime::lifecycle::start_approval_heartbeat(&bootstrapped.context));
             app.manage(bootstrapped.context);
 
             // Ensure replacement plugins are installed for any built-in
@@ -448,7 +451,7 @@ pub fn run() {
                 }
             }
 
-            // Start desktop health checks, event watchers, backups, and heartbeat.
+            // Start desktop health checks, event watchers, and backups.
             let ping_interval = crate::config::load_config_internal(&app.handle())
                 .ping_interval
                 .unwrap_or(health_check::DEFAULT_PING_INTERVAL);
@@ -846,6 +849,7 @@ pub fn run() {
                 window_placement::persist_cached(app_handle);
             }
             if let tauri::RunEvent::Exit = event {
+                app_handle.state::<heartbeat::HeartbeatTask>().stop();
                 // Back up the freshest state before the process ends (no-op
                 // unless backups are enabled and due).
                 backup::run_exit_backup(app_handle);

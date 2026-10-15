@@ -296,3 +296,49 @@ async fn desktop_productivity_commands_use_the_managed_custom_config_directory()
         .join(format!("{connection}.json"))
         .exists());
 }
+
+#[test]
+fn approval_heartbeat_lives_only_for_its_runtime_lifecycle() {
+    let root = tempfile::tempdir().unwrap();
+    let context = RuntimeContext::new(
+        Arc::new(super::paths::FixedRuntimePaths::new(
+            root.path().into(),
+            root.path().into(),
+        )),
+        Arc::new(TestEvents::default()),
+        Arc::new(TestSecrets),
+    );
+    let heartbeat = super::lifecycle::start_approval_heartbeat(&context);
+    assert!(crate::heartbeat::is_alive_in(root.path()));
+    heartbeat.stop();
+    assert!(!crate::heartbeat::is_alive_in(root.path()));
+    heartbeat.stop();
+    let heartbeat = super::lifecycle::start_approval_heartbeat(&context);
+    assert!(crate::heartbeat::is_alive_in(root.path()));
+    drop(heartbeat);
+    assert!(!crate::heartbeat::is_alive_in(root.path()));
+}
+
+#[test]
+fn stopping_approval_heartbeat_preserves_another_process_heartbeat() {
+    let root = tempfile::tempdir().unwrap();
+    let context = RuntimeContext::new(
+        Arc::new(super::paths::FixedRuntimePaths::new(
+            root.path().into(),
+            root.path().into(),
+        )),
+        Arc::new(TestEvents::default()),
+        Arc::new(TestSecrets),
+    );
+    let heartbeat = super::lifecycle::start_approval_heartbeat(&context);
+    let replacement = crate::heartbeat::Heartbeat {
+        pid: std::process::id().wrapping_add(1),
+        updated_at: "2026-10-15T00:00:00Z".into(),
+    };
+    let path = crate::heartbeat::heartbeat_path_in(root.path());
+    std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+    heartbeat.stop();
+    let saved: crate::heartbeat::Heartbeat =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(saved, replacement);
+}

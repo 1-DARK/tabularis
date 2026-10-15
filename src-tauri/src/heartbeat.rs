@@ -1,25 +1,26 @@
-//! GUI heartbeat used by the MCP subprocess to detect whether the Tabularis
-//! desktop app is currently running.
+//! Approval-host heartbeat used by the MCP subprocess to detect whether a
+//! Tabularis desktop or web runtime is currently running.
 //!
-//! The GUI refreshes `<config_dir>/tabularis.alive` every `TICK_INTERVAL`.
+//! The approval host refreshes `<config_dir>/tabularis.alive` every `TICK_INTERVAL`.
 //! The MCP subprocess calls `is_alive()` before queueing approval requests
-//! so that — when the GUI is closed — write/DDL queries fail fast with a
+//! so that — when the approval host is closed — write/DDL queries fail fast with a
 //! clear error instead of hanging until `mcp_approval_timeout_seconds`
 //! (default 120s) elapses.
 //!
-//! The file is intentionally not removed on shutdown: stale-by-mtime is
-//! enough and survives crashes/SIGKILL transparently.
+//! The owning runtime clears the file on graceful shutdown. Stale-by-mtime
+//! detection handles crashes and SIGKILL.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use crate::paths::get_app_config_dir;
 
 const FILE_NAME: &str = "tabularis.alive";
 
-/// How often the GUI refreshes the heartbeat file.
+/// How often the approval host refreshes the heartbeat file.
 pub const TICK_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Heartbeats older than this are considered stale (3 missed ticks).
@@ -95,22 +96,71 @@ pub fn is_alive() -> bool {
     is_alive_in(&get_app_config_dir())
 }
 
-/// Spawn the periodic heartbeat ticker. Writes the initial file synchronously
-/// so `is_alive()` is true the moment the GUI finishes booting, then refreshes
-/// every `TICK_INTERVAL` from a tokio task.
-pub fn spawn() {
-    if let Err(e) = write_now() {
-        log::warn!("Failed to write initial heartbeat: {}", e);
+/// Owns the approval host ticker and clears its heartbeat on shutdown.
+#[must_use = "Keep the heartbeat task alive for the lifetime of the approval host"]
+pub struct HeartbeatTask {
+    base: PathBuf,
+    active: Arc<Mutex<bool>>,
+    task: tauri::async_runtime::JoinHandle<()>,
+}
+
+impl HeartbeatTask {
+    pub fn stop(&self) {
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !*active {
+            return;
+        }
+        *active = false;
+        self.task.abort();
+        let owned = fs::read(heartbeat_path_in(&self.base))
+            .ok()
+            .and_then(|content| serde_json::from_slice::<Heartbeat>(&content).ok())
+            .is_some_and(|heartbeat| heartbeat.pid == std::process::id());
+        if owned {
+            if let Err(error) = clear_in(&self.base) {
+                log::warn!("Failed to clear approval heartbeat: {}", error);
+            }
+        }
     }
-    tauri::async_runtime::spawn(async move {
+}
+
+impl Drop for HeartbeatTask {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Writes immediately, then refreshes until the owning runtime stops the task.
+pub fn spawn_in(base: PathBuf) -> HeartbeatTask {
+    if let Err(error) = write_now_in(&base) {
+        log::warn!("Failed to write initial heartbeat: {}", error);
+    }
+    let active = Arc::new(Mutex::new(true));
+    let task_active = active.clone();
+    let task_base = base.clone();
+    let task = tauri::async_runtime::spawn(async move {
         let mut ticker = tokio::time::interval(TICK_INTERVAL);
-        // The first tick fires immediately; we already wrote synchronously.
         ticker.tick().await;
         loop {
             ticker.tick().await;
-            if let Err(e) = write_now() {
-                log::warn!("Heartbeat refresh failed: {}", e);
+            // Serialize shutdown with writes so a final tick cannot recreate the file.
+            let active = task_active
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if !*active {
+                break;
+            }
+            if let Err(error) = write_now_in(&task_base) {
+                log::warn!("Heartbeat refresh failed: {}", error);
             }
         }
     });
+    HeartbeatTask { base, active, task }
+}
+
+pub fn spawn() -> HeartbeatTask {
+    spawn_in(get_app_config_dir())
 }

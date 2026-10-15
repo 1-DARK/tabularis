@@ -45,7 +45,6 @@ pub fn start_desktop_schedulers(app: tauri::AppHandle, ping_interval_secs: u64) 
     });
     crate::ai_approval_watcher::spawn(app.clone());
     crate::backup::spawn_scheduler(app);
-    crate::heartbeat::spawn();
 }
 
 pub async fn release_pinned_sessions() {
@@ -58,4 +57,10 @@ pub async fn release_pinned_sessions() {
     {
         log::warn!("Releasing pinned PostgreSQL sessions timed out on exit");
     }
+}
+
+pub fn start_approval_heartbeat(
+    context: &super::RuntimeContext,
+) -> crate::heartbeat::HeartbeatTask {
+    crate::heartbeat::spawn_in(context.paths.config_dir().to_path_buf())
 }
