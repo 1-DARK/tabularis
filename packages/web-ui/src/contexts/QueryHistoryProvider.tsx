@@ -73,7 +73,7 @@ export const QueryHistoryProvider = ({
       error: string | null,
       database?: string | null,
     ) => {
-      const connectionId = activeConnectionIdRef.current;
+      const connectionId = activeConnectionId;
       if (!connectionId) return;
       try {
         const entry = await client.call("add_query_history_entry", {
@@ -97,7 +97,7 @@ export const QueryHistoryProvider = ({
         console.error("Failed to add query history entry:", caught);
       }
     },
-    [client],
+    [activeConnectionId, client],
   );
 
   const deleteEntry = async (id: string) => {

@@ -81,6 +81,30 @@ describe("QueryHistoryProvider", () => {
     });
   });
 
+  it("records a late query under its captured connection without updating the current history", async () => {
+    mockClient.call.mockImplementation(async (command: string) =>
+      command === "get_query_history"
+        ? { entries: [], recoveredBackupPath: null }
+        : historyEntry,
+    );
+    const rendered = renderHook(() => useQueryHistory(), { wrapper });
+    await waitFor(() => expect(rendered.result.current.isLoading).toBe(false));
+    const recordQueryFromA = rendered.result.current.addEntry;
+
+    vi.mocked(useDatabase).mockReturnValue({
+      activeConnectionId: "connection-b",
+    } as ReturnType<typeof useDatabase>);
+    rendered.rerender();
+    await waitFor(() => expect(rendered.result.current.isLoading).toBe(false));
+    await act(() => recordQueryFromA("SELECT 1", 3000, "success", 1, null, "app"));
+
+    expect(mockClient.call).toHaveBeenCalledWith(
+      "add_query_history_entry",
+      expect.objectContaining({ connectionId: "connection-a" }),
+    );
+    expect(rendered.result.current.entries).toEqual([]);
+  });
+
   it("does not apply a late response from another connection", async () => {
     let resolveConnectionA: ((value: unknown) => void) | undefined;
     const connectionA = new Promise((resolve) => {
