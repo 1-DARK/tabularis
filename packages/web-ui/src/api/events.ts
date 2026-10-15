@@ -113,3 +113,27 @@ export interface EventSubscriber {
     handler: (payload: EventPayload<K>) => void,
   ): Promise<Unsubscribe>;
 }
+
+/** Runtime counterpart of the event contract, checked against every event's authorization. */
+export const EVENT_AUTHORIZATION = {
+  "session-transaction-state": "database",
+  "connection-test-progress": "database",
+  "connection-health-failed": "database",
+  "connections:active-changed": "database",
+  "database-dropped": "database",
+  "batch-statement-complete": "database",
+  "query-status": "database",
+  "query-cancelled": "database",
+  "dump_progress": "database",
+  "import_progress": "database",
+  "export_progress": "database",
+  "ssh-askpass://request": "sensitive",
+  "ssh-askpass://dismiss": "sensitive",
+  "ai://pending_approval": "sensitive",
+  "ai://activity": "sensitive",
+  "theme-catalog-changed": "session",
+  "ui-state://changed": "session",
+  "connection-metadata-invalidated": "database",
+  "tabularis://plugin-activated": "database",
+  "tabularis://plugin-installed": "session",
+} satisfies { [K in EventName]: EventAuthorization<K> };

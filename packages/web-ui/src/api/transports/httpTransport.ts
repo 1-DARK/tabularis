@@ -14,12 +14,18 @@ import {
   type TabularisError,
   type RequestId,
 } from "../errors";
-import type { EventName, EventPayload, Unsubscribe } from "../events";
+import {
+  EVENT_AUTHORIZATION,
+  type EventName,
+  type EventPayload,
+  type Unsubscribe,
+} from "../events";
 import type { FileTransferMetadata, FileUploadRequest } from "../fileTransfers";
 import type { SessionNegotiation } from "../session";
 
 const EXPECTED_API_VERSION = "v1";
 const OPEN = 1;
+const AUTHORIZATION_LEVELS = ["session", "database", "sensitive", "local-admin"];
 const DEFAULT_RECONNECT_DELAY_MS = 250;
 const DEFAULT_MAX_RECONNECT_DELAY_MS = 10_000;
 
@@ -62,6 +68,10 @@ export class HttpTransport implements TabularisTransport {
   private readonly maxReconnectDelayMs: number;
   private readonly startBrowserDownload: (url: string) => void;
   private readonly handlers: EventHandlers = {};
+  private readonly pendingSubscriptions = new Map<EventName, Array<{
+    resolve: () => void;
+    reject: (error: TabularisClientError) => void;
+  }>>();
   private session?: SessionNegotiation;
   private sessionPromise?: Promise<SessionNegotiation>;
   private socket: WebSocketLike | null = null;
@@ -447,20 +457,43 @@ export class HttpTransport implements TabularisTransport {
       );
     }
 
+    if (
+      AUTHORIZATION_LEVELS.indexOf(session.access.authorizationLevel) <
+      AUTHORIZATION_LEVELS.indexOf(EVENT_AUTHORIZATION[event])
+    ) {
+      throw clientError(
+        "EVENT_FORBIDDEN",
+        `The session is not authorized for event: ${event}`,
+      );
+    }
+
     const handlers = this.eventHandlers(event);
     const firstForEvent = handlers.size === 0;
     const wasConnected = this.socket?.readyState === OPEN;
     handlers.add(handler);
     this.intentionalClose = false;
+    const confirmation = firstForEvent || this.pendingSubscriptions.has(event)
+      ? new Promise<void>((resolve, reject) => {
+          const pending = this.pendingSubscriptions.get(event) ?? [];
+          pending.push({ resolve, reject });
+          this.pendingSubscriptions.set(event, pending);
+        })
+      : Promise.resolve();
 
     try {
-      await this.ensureConnected();
-      if (firstForEvent && wasConnected && this.socket?.readyState === OPEN) {
-        this.sendControl({ type: "subscribe", events: [event] });
-      }
+      await Promise.all([
+        this.ensureConnected().then(() => {
+          if (firstForEvent && wasConnected && this.socket?.readyState === OPEN) {
+            this.sendControl({ type: "subscribe", events: [event] });
+          }
+        }),
+        confirmation,
+      ]);
     } catch (error) {
+      const normalized = normalizeTabularisError(error, "EVENT_CONNECTION_FAILED");
+      this.rejectPendingSubscriptions(normalized);
       this.removeSubscription(event, handler);
-      throw normalizeTabularisError(error, "EVENT_CONNECTION_FAILED");
+      throw normalized;
     }
 
     return () => this.removeSubscription(event, handler);
@@ -642,6 +675,9 @@ export class HttpTransport implements TabularisTransport {
           );
         }
         if (this.socket === socket) this.socket = null;
+        this.rejectPendingSubscriptions(clientError(
+          "EVENT_CONNECTION_FAILED", "The WebSocket event connection closed",
+        ));
         this.scheduleReconnect();
       };
     });
@@ -687,11 +723,35 @@ export class HttpTransport implements TabularisTransport {
     } catch {
       return;
     }
+    if (isRecord(message) && message.type === "subscribed" && Array.isArray(message.events)) {
+      for (const event of message.events) {
+        if (typeof event !== "string" || !this.isSubscribedEvent(event)) continue;
+        this.pendingSubscriptions.get(event)?.forEach(({ resolve }) => resolve());
+        this.pendingSubscriptions.delete(event);
+      }
+      return;
+    }
+    if (isRecord(message) && message.type === "error" &&
+        typeof message.code === "string" && typeof message.message === "string") {
+      const error = clientError(message.code, message.message);
+      if (this.pendingSubscriptions.size === 0) {
+        console.error("WebSocket subscription failed:", error);
+      }
+      this.rejectPendingSubscriptions(error);
+      return;
+    }
     if (!isServerEventMessage(message)) return;
     if (message.sequence <= this.lastSequence) return;
     this.lastSequence = message.sequence;
     if (!this.isSubscribedEvent(message.event)) return;
     this.deliverEvent(message.event, message.payload);
+  }
+
+  private rejectPendingSubscriptions(error: TabularisClientError): void {
+    for (const pending of this.pendingSubscriptions.values()) {
+      pending.forEach(({ reject }) => reject(error));
+    }
+    this.pendingSubscriptions.clear();
   }
 
   private deliverEvent<K extends EventName>(event: K, payload: unknown): void {

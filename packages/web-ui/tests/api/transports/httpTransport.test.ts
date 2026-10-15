@@ -51,9 +51,14 @@ class FakeWebSocket implements WebSocketLike {
   onerror: ((event: Event) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   readonly sent: string[] = [];
+  acknowledgeSubscriptions = true;
 
   send(data: string): void {
     this.sent.push(data);
+    const message = JSON.parse(data) as { type: string; events: string[] };
+    if (this.acknowledgeSubscriptions && message.type === "subscribe") {
+      this.message({ type: "subscribed", events: message.events, replayed: 0 });
+    }
   }
 
   close(): void {
@@ -437,6 +442,121 @@ describe("HttpTransport", () => {
     expect(fetchRequest.mock.calls[1]?.[0]).toBe(
       "http://127.0.0.1:8080/api/v1/rpc/legacy_command",
     );
+  });
+
+  it("rejects restricted SSH and AI subscriptions individually while retaining database events across reconnect", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+        ...SESSION,
+        access: { remote: true, authorizationLevel: "database", highRiskCapabilities: false },
+      })),
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 100,
+    });
+    await transport.initialize();
+    const health = vi.fn();
+    const transaction = vi.fn();
+    const subscriptions = Promise.allSettled([
+      transport.subscribe("ssh-askpass://request", vi.fn()),
+      transport.subscribe("connection-health-failed", health),
+      transport.subscribe("ai://activity", vi.fn()),
+      transport.subscribe("session-transaction-state", transaction),
+    ]);
+    await Promise.resolve();
+    sockets[0].open();
+    const results = await subscriptions;
+    expect(results.map((result) => result.status)).toEqual([
+      "rejected", "fulfilled", "rejected", "fulfilled",
+    ]);
+    expect(results[0]).toMatchObject({ reason: { code: "EVENT_FORBIDDEN" } });
+    expect(JSON.parse(sockets[0].sent[0])).toEqual({
+      type: "subscribe", events: ["connection-health-failed", "session-transaction-state"],
+    });
+    sockets[0].message({ type: "event", event: "connection-health-failed", sequence: 1,
+      payload: { connectionId: "a", error: "offline" } });
+    expect(health).toHaveBeenCalledWith({ connectionId: "a", error: "offline" });
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(100);
+    sockets[1].open();
+    expect(JSON.parse(sockets[1].sent[0])).toEqual({
+      type: "subscribe", events: ["connection-health-failed", "session-transaction-state"], since: 1,
+    });
+    sockets[1].message({ type: "event", event: "session-transaction-state", sequence: 2,
+      payload: { session_id: "tab-a", in_transaction: true } });
+    expect(transaction).toHaveBeenCalledWith({ session_id: "tab-a", in_transaction: true });
+    results.forEach((result) => { if (result.status === "fulfilled") result.value(); });
+  });
+
+  it("rejects a subscription when the server sends a protocol error", async () => {
+    const socket = new FakeWebSocket();
+    socket.acknowledgeSubscriptions = false;
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      createWebSocket: () => socket,
+    });
+    await transport.initialize();
+    const subscription = transport.subscribe("query-status", vi.fn());
+    const rejected = expect(subscription).rejects.toMatchObject({
+      code: "EVENT_SUBSCRIPTION_FAILED", message: "Subscription denied",
+    });
+    await Promise.resolve();
+    socket.open();
+    socket.message({ type: "error", code: "EVENT_SUBSCRIPTION_FAILED", message: "Subscription denied" });
+    await rejected;
+    expect(socket.readyState).toBe(3);
+  });
+
+  it("keeps established subscriptions usable after a later subscription is rejected", async () => {
+    const socket = new FakeWebSocket();
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      createWebSocket: () => socket,
+    });
+    await transport.initialize();
+    const health = vi.fn();
+    const first = transport.subscribe("connection-health-failed", health);
+    await Promise.resolve();
+    socket.open();
+    const unsubscribe = await first;
+
+    socket.acknowledgeSubscriptions = false;
+    const second = transport.subscribe("query-status", vi.fn());
+    const rejected = expect(second).rejects.toMatchObject({ code: "EVENT_SUBSCRIPTION_FAILED" });
+    await Promise.resolve();
+    await Promise.resolve();
+    socket.message({ type: "error", code: "EVENT_SUBSCRIPTION_FAILED", message: "Denied" });
+    await rejected;
+    socket.message({ type: "event", event: "connection-health-failed", sequence: 1,
+      payload: { connectionId: "a", error: "offline" } });
+    expect(health).toHaveBeenCalledWith({ connectionId: "a", error: "offline" });
+    expect(socket.readyState).toBe(1);
+
+    socket.acknowledgeSubscriptions = true;
+    const retry = await transport.subscribe("query-status", vi.fn());
+    retry();
+    unsubscribe();
+  });
+
+  it("rejects pending subscriptions if the socket closes before acknowledgment", async () => {
+    const socket = new FakeWebSocket();
+    socket.acknowledgeSubscriptions = false;
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      createWebSocket: () => socket,
+    });
+    await transport.initialize();
+    const subscription = transport.subscribe("query-status", vi.fn());
+    const rejected = expect(subscription).rejects.toMatchObject({ code: "EVENT_CONNECTION_FAILED" });
+    await Promise.resolve();
+    socket.open();
+    socket.disconnect();
+    await rejected;
   });
 
   it("subscribes, dispatches typed events, and replays after reconnect", async () => {
