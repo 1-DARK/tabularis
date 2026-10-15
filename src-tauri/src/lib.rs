@@ -201,6 +201,7 @@ pub fn run() {
             let application_state =
                 std::sync::Arc::new(runtime::state::ApplicationState::default());
             let web_data_dir = application.context.paths.data_dir().to_path_buf();
+            let web_plugins_dir = application.context.paths.plugins_dir();
             let approval_watcher = ai_approval_watcher::spawn_headless(
                 application.context.clone(),
                 application_state.clone(),
@@ -216,6 +217,7 @@ pub fn run() {
                     port: web_args.port,
                     web_root,
                     data_dir: web_data_dir,
+                    plugins_dir: web_plugins_dir,
                     open_browser: !web_args.no_open,
                     auth: web_args.auth,
                     public_url: web_args.public_url.clone(),
@@ -354,10 +356,7 @@ pub fn run() {
             // to bridge askpass prompts to the frontend.
             askpass::set_app_handle(app.handle().clone());
 
-            let app_paths = runtime::paths::FixedRuntimePaths::new(
-                crate::paths::get_app_config_dir(),
-                crate::paths::get_app_data_dir(),
-            );
+            let app_paths = runtime::paths::FixedRuntimePaths::system();
             let runtime_context = runtime::RuntimeContext::new(
                 std::sync::Arc::new(app_paths),
                 std::sync::Arc::new(runtime::events::TauriRuntimeEvents::new(

@@ -54,6 +54,7 @@ pub struct WebServerOptions {
     pub port: u16,
     pub web_root: PathBuf,
     pub data_dir: PathBuf,
+    pub plugins_dir: PathBuf,
     pub open_browser: bool,
     pub auth: Option<WebAuthMode>,
     pub public_url: Option<String>,
@@ -71,6 +72,7 @@ struct WebServerState {
     events: WebEventBus,
     transfers: FileTransferStore,
     data_dir: PathBuf,
+    plugins_dir: PathBuf,
     mcp_host_configuration: bool,
     server_file_browser: bool,
 }
@@ -165,6 +167,7 @@ pub async fn run(options: WebServerOptions) -> Result<(), String> {
         listener,
         options.web_root,
         options.data_dir,
+        options.plugins_dir,
         security,
         options.application,
         options.events,
@@ -201,7 +204,8 @@ where
     serve_with_events(
         listener,
         web_root,
-        data_dir,
+        data_dir.clone(),
+        data_dir.join("plugins"),
         security,
         application,
         WebEventBus::default(),
@@ -215,6 +219,7 @@ pub(crate) async fn serve_with_events<F>(
     listener: TcpListener,
     web_root: PathBuf,
     data_dir: PathBuf,
+    plugins_dir: PathBuf,
     security: LocalSessionSecurity,
     application: Arc<dyn ApplicationApi>,
     events: WebEventBus,
@@ -227,6 +232,7 @@ where
     let (router, state) = router(
         web_root,
         data_dir,
+        plugins_dir,
         security,
         application,
         events,
@@ -255,6 +261,7 @@ async fn reclaim_expired_sessions(state: WebServerState) {
 fn router(
     web_root: PathBuf,
     data_dir: PathBuf,
+    plugins_dir: PathBuf,
     security: LocalSessionSecurity,
     application: Arc<dyn ApplicationApi>,
     events: WebEventBus,
@@ -278,6 +285,7 @@ fn router(
         events,
         transfers: FileTransferStore::new(&data_dir),
         data_dir,
+        plugins_dir,
         mcp_host_configuration,
         server_file_browser,
     };
@@ -685,9 +693,8 @@ async fn plugin_asset(
     State(state): State<WebServerState>,
     Path((plugin_id, asset_path)): Path<(String, String)>,
 ) -> Response {
-    let plugins_dir = state.data_dir.join("plugins");
     let asset = match crate::application::plugin_assets::read_plugin_asset(
-        &plugins_dir,
+        &state.plugins_dir,
         &plugin_id,
         &asset_path,
     ) {

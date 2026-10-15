@@ -544,6 +544,7 @@ async fn rejects_non_loopback_binding_without_explicit_remote_authentication() {
         port: 0,
         web_root: temp.path().to_path_buf(),
         data_dir: temp.path().to_path_buf(),
+        plugins_dir: temp.path().join("plugins"),
         open_browser: false,
         auth: None,
         public_url: None,
@@ -2543,6 +2544,7 @@ async fn authenticates_websockets_and_delivers_scoped_events_with_heartbeat() {
         listener,
         temp.path().to_path_buf(),
         temp.path().to_path_buf(),
+        temp.path().join("plugins"),
         security,
         test_application(temp.path()),
         events.clone(),
@@ -2685,6 +2687,7 @@ async fn assert_expired_session_cleanup(connect_websocket: bool) {
         listener,
         temp.path().to_path_buf(),
         temp.path().to_path_buf(),
+        temp.path().join("plugins"),
         security.clone(),
         test_application_with_state(temp.path(), application_state.clone()),
         events.clone(),
@@ -2882,4 +2885,44 @@ async fn rejects_rpc_body_delayed_until_after_session_cleanup() {
         .unwrap()
         .unwrap()
         .unwrap();
+}
+
+#[tokio::test]
+async fn serves_plugin_assets_from_the_local_plugin_directory_with_custom_data_storage() {
+    let temp = tempfile::tempdir().unwrap();
+    let data_dir = temp.path().join("custom-data");
+    let plugins_dir = temp.path().join("local-plugins");
+    let plugin = plugins_dir.join("example-plugin");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::create_dir_all(plugin.join("ui")).unwrap();
+    std::fs::write(data_dir.join("index.html"), "Tabularis").unwrap();
+    std::fs::write(plugin.join(".tabularium"), r#"{
+        "id":"example-plugin", "name":"Fixture", "version":"1.0.0",
+        "description":"Fixture", "ui_extensions":[{
+            "slot":"data-grid.toolbar.actions", "module":"ui/index.js"
+        }]
+    }"#).unwrap();
+    std::fs::write(plugin.join("ui/index.js"), "window.pluginLoaded = true;").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base_url = format!("http://{}", listener.local_addr().unwrap());
+    let (security, token) = LocalSessionSecurity::new(
+        base_url.clone(), LocalSessionSecurityConfig::default(),
+    ).unwrap();
+    let session = security.consume_bootstrap(token.expose()).unwrap();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(server::serve_with_events(
+        listener, data_dir.clone(), data_dir.clone(), plugins_dir, security,
+        test_application(&data_dir), WebEventBus::default(), Arc::default(),
+        async move { let _ = shutdown_rx.await; },
+    ));
+    let response = reqwest::Client::new()
+        .get(format!("{base_url}/api/v1/assets/plugins/example-plugin/ui/index.js"))
+        .header(COOKIE, format!("tabularis_session={}", session.cookie_value))
+        .send().await.unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    shutdown_tx.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    assert_eq!(status, reqwest::StatusCode::OK);
+    assert_eq!(body, "window.pluginLoaded = true;");
 }
