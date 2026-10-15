@@ -9,13 +9,11 @@ pub async fn get_saved_queries<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
 ) -> Result<Vec<SavedQuery>, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     from_value(
         productivity::execute(
-            &config_dir,
+            config_dir,
             ProductivityCommand::GetSavedQueries { connection_id },
         )
         .await?,
@@ -31,13 +29,11 @@ pub async fn save_query<R: Runtime>(
     sql: String,
     database: Option<String>,
 ) -> Result<SavedQuery, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     from_value(
         productivity::execute(
-            &config_dir,
+            config_dir,
             ProductivityCommand::SaveQuery {
                 connection_id,
                 name,
@@ -59,13 +55,11 @@ pub async fn update_saved_query<R: Runtime>(
     sql: String,
     database: Option<String>,
 ) -> Result<SavedQuery, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     from_value(
         productivity::execute(
-            &config_dir,
+            config_dir,
             ProductivityCommand::UpdateSavedQuery {
                 connection_id,
                 id,
@@ -85,12 +79,10 @@ pub async fn delete_saved_query<R: Runtime>(
     connection_id: Option<String>,
     id: String,
 ) -> Result<(), String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     productivity::execute(
-        &config_dir,
+        config_dir,
         ProductivityCommand::DeleteSavedQuery { connection_id, id },
     )
     .await?;
@@ -104,9 +96,7 @@ pub fn backfill_missing_database_for_connection<R: Runtime>(
     connection_id: &str,
     database: &str,
 ) -> Result<usize, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
-    productivity::backfill_saved_queries_for_connection(&config_dir, connection_id, database)
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
+    productivity::backfill_saved_queries_for_connection(config_dir, connection_id, database)
 }

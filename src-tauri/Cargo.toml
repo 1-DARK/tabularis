@@ -143,5 +143,6 @@ zbus = { version = "5.14", default-features = false, features = ["async-io"] }
 tauri-plugin-updater = "2"
 
 [dev-dependencies]
+tauri = { version = "2.10.2", features = ["test"] }
 filetime = "0.2"
 tokio-tungstenite = "0.24.0"

@@ -18,13 +18,11 @@ pub async fn get_query_history<R: Runtime>(
     _state: State<'_, QueryHistoryState>,
     connection_id: String,
 ) -> Result<QueryHistoryResponse, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     from_value(
         productivity::execute(
-            &config_dir,
+            config_dir,
             ProductivityCommand::GetQueryHistory { connection_id },
         )
         .await?,
@@ -46,13 +44,11 @@ pub async fn add_query_history_entry<R: Runtime>(
     error: Option<String>,
     database: Option<String>,
 ) -> Result<QueryHistoryEntry, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     from_value(
         productivity::execute(
-            &config_dir,
+            config_dir,
             ProductivityCommand::AddQueryHistoryEntry {
                 connection_id,
                 sql,
@@ -76,12 +72,10 @@ pub async fn delete_query_history_entry<R: Runtime>(
     connection_id: String,
     id: String,
 ) -> Result<(), String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     productivity::execute(
-        &config_dir,
+        config_dir,
         ProductivityCommand::DeleteQueryHistoryEntry { connection_id, id },
     )
     .await?;
@@ -94,12 +88,10 @@ pub async fn clear_query_history<R: Runtime>(
     _state: State<'_, QueryHistoryState>,
     connection_id: String,
 ) -> Result<(), String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
     productivity::execute(
-        &config_dir,
+        config_dir,
         ProductivityCommand::ClearQueryHistory { connection_id },
     )
     .await?;
@@ -111,20 +103,16 @@ pub async fn backfill_missing_database_for_connection<R: Runtime>(
     connection_id: &str,
     database: &str,
 ) -> Result<usize, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
-    productivity::backfill_query_history_for_connection(&config_dir, connection_id, database)
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
+    productivity::backfill_query_history_for_connection(config_dir, connection_id, database)
 }
 
 pub async fn remove_history_for_connection<R: Runtime>(
     app: &AppHandle<R>,
     connection_id: &str,
 ) -> Result<(), String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|error| error.to_string())?;
-    productivity::remove_query_history_for_connection(&config_dir, connection_id)
+    let runtime = app.state::<crate::runtime::RuntimeContext>();
+    let config_dir = runtime.paths.config_dir();
+    productivity::remove_query_history_for_connection(config_dir, connection_id)
 }
