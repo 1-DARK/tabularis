@@ -2627,8 +2627,13 @@ async fn authenticates_websockets_and_delivers_scoped_events_with_heartbeat() {
     assert_eq!(event["payload"]["connectionId"], "connection-1");
 
     websocket.close(None).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    assert_eq!(events.connection_count(event_scope), 0);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while events.connection_count(event_scope) != 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("closed WebSocket must be removed from the event bus");
 
     shutdown_tx.send(()).unwrap();
     server.await.unwrap().unwrap();
