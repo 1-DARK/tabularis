@@ -1645,6 +1645,14 @@ impl RpcDispatcher {
         body: &[u8],
         granted_authorization: AuthorizationLevel,
     ) -> Result<Value, InvocationError> {
+        connection_policy::authorize_saved_access(
+            self.application.as_ref(),
+            command,
+            &context,
+            body,
+            granted_authorization,
+        )
+        .await?;
         match command {
             RpcCommand::IsDebugMode => {
                 decode_empty_payload(body).map_err(InvocationError::InvalidPayload)?;
@@ -1757,6 +1765,13 @@ impl RpcDispatcher {
                     .map_err(InvocationError::InvalidPayload)?;
                 connection_policy::authorize(&command, granted_authorization)
                     .map_err(InvocationError::Forbidden)?;
+                connection_policy::authorize_saved_credentials(
+                    self.application.as_ref(),
+                    &context,
+                    &command,
+                    granted_authorization,
+                )
+                .await?;
                 self.application
                     .execute_connection_command(context, command)
                     .await

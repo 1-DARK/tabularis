@@ -62,6 +62,20 @@ pub trait ApplicationApi: Send + Sync {
         context: ApplicationRequestContext,
     ) -> Result<Vec<crate::models::SavedConnection>, ApplicationError>;
 
+    /// Redacted saved parameters used by transport authorization; never resolves secrets or tunnels.
+    async fn connection_params_for_authorization(
+        &self,
+        context: ApplicationRequestContext,
+        connection_id: &str,
+    ) -> Result<Option<crate::models::ConnectionParams>, ApplicationError> {
+        Ok(self
+            .get_connections(context)
+            .await?
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .map(|connection| connection.params))
+    }
+
     async fn cancel_query(
         &self,
         context: ApplicationRequestContext,

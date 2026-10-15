@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 struct FixtureApplication {
     delay: Duration,
+    saved_params: HashMap<String, ConnectionParams>,
     contexts: Arc<Mutex<Vec<ApplicationRequestContext>>>,
 }
 
@@ -14,6 +15,7 @@ impl FixtureApplication {
     fn new(delay: Duration) -> Self {
         Self {
             delay,
+            saved_params: HashMap::new(),
             contexts: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -45,6 +47,14 @@ impl ApplicationApi for FixtureApplication {
     ) -> Result<Vec<crate::models::SavedConnection>, ApplicationError> {
         self.record(context).await;
         Ok(Vec::new())
+    }
+
+    async fn connection_params_for_authorization(
+        &self,
+        _context: ApplicationRequestContext,
+        connection_id: &str,
+    ) -> Result<Option<ConnectionParams>, ApplicationError> {
+        Ok(self.saved_params.get(connection_id).cloned())
     }
 
     async fn cancel_query(
@@ -2682,4 +2692,312 @@ fn decodes_database_scope_and_routine_overload_for_web_commands() {
     assert!(
         matches!(command, DatabaseObjectCommand::GetRoutineParameters { database: Some(ref db), identity_args: Some(ref args), .. } if db == "secondary" && args == "integer")
     );
+}
+
+#[tokio::test]
+async fn connection_policy_blocks_file_drivers_in_inline_and_saved_requests() {
+    let plugin = "rpc-policy-file-plugin";
+    crate::drivers::registry::set_local_path_driver(plugin, true);
+    for driver in ["sqlite", plugin] {
+        let mut application = FixtureApplication::new(Duration::ZERO);
+        application.saved_params.insert(
+            "saved-db".into(),
+            ConnectionParams {
+                driver: driver.into(),
+                database: DatabaseSelection::Single("/outside/private.db".into()),
+                ..Default::default()
+            },
+        );
+        let application = Arc::new(application);
+        let dispatcher = RpcDispatcher::new(application.clone());
+        let mut requests = vec![
+            (
+                "execute_query",
+                serde_json::json!({"connectionId":"saved-db", "query":"ATTACH '/outside/other.db' AS other", "database":"/outside/override.db"}),
+            ),
+            (
+                "execute_query_batch",
+                serde_json::json!({"connectionId":"saved-db", "queries":["SELECT 1"]}),
+            ),
+            ("get_tables", serde_json::json!({"connectionId":"saved-db"})),
+            (
+                "get_ai_schema_context",
+                serde_json::json!({"connectionId":"saved-db"}),
+            ),
+            (
+                "get_table_query_template",
+                serde_json::json!({"connectionId":"saved-db", "request":{"table":"secret", "kind":"select"}}),
+            ),
+            (
+                "insert_record",
+                serde_json::json!({"connectionId":"saved-db", "table":"secret", "data":{"id":1}}),
+            ),
+            (
+                "fetch_blob",
+                serde_json::json!({"connectionId":"saved-db", "table":"secret", "pkMap":{"id":1}, "colName":"data"}),
+            ),
+            (
+                "export_query_to_file",
+                serde_json::json!({"connectionId":"saved-db", "query":"SELECT * FROM secret", "format":"csv"}),
+            ),
+            (
+                "dump_database",
+                serde_json::json!({"connectionId":"saved-db", "options":{"structure":true, "data":true, "tables":[]}}),
+            ),
+            (
+                "import_database",
+                serde_json::json!({"connectionId":"saved-db", "uploadToken":"upload"}),
+            ),
+            (
+                "get_available_databases",
+                serde_json::json!({"connectionId":"saved-db"}),
+            ),
+            (
+                "set_selected_databases",
+                serde_json::json!({"connectionId":"saved-db", "databases":["/outside/other.db"]}),
+            ),
+            ("duplicate_connection", serde_json::json!({"id":"saved-db"})),
+            (
+                "register_active_connection",
+                serde_json::json!({"connectionId":"saved-db"}),
+            ),
+            (
+                "execute_clipboard_import",
+                serde_json::json!({"req":{"connection_id":"saved-db", "table_name":"secret", "columns":[], "rows":[], "create_table":false, "if_exists":"append"}}),
+            ),
+        ];
+        for name in ["save_connection", "update_connection", "test_connection"] {
+            requests.push((
+                name,
+                connection_policy_payload(
+                    name,
+                    serde_json::json!({"driver":driver,"database":"/outside/private.db"}),
+                ),
+            ));
+        }
+        for (command, payload) in requests {
+            for authorization in [AuthorizationLevel::Database, AuthorizationLevel::Sensitive] {
+                let response = dispatch_json(
+                    &dispatcher,
+                    command,
+                    payload.clone(),
+                    Some(Uuid::new_v4()),
+                    authorization,
+                )
+                .await;
+                assert_eq!(
+                    response.status(),
+                    StatusCode::FORBIDDEN,
+                    "{command} / {driver}"
+                );
+                assert!(
+                    application.contexts.lock().unwrap().is_empty(),
+                    "denied request was dispatched"
+                );
+            }
+            let response = dispatch_json(
+                &dispatcher,
+                command,
+                payload,
+                Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "admin: {command} / {driver}"
+            );
+            application.contexts.lock().unwrap().clear();
+        }
+    }
+    crate::drivers::registry::set_local_path_driver(plugin, false);
+}
+
+#[tokio::test]
+async fn connection_policy_binds_stored_credentials_to_the_full_security_target() {
+    let params = serde_json::json!({"driver":"postgres", "host":"trusted", "port":5432, "username":"owner", "database":"db", "ssl_mode":"verify-full"});
+    let mut application = FixtureApplication::new(Duration::ZERO);
+    application.saved_params.insert(
+        "saved-db".into(),
+        serde_json::from_value(params.clone()).unwrap(),
+    );
+    let application = Arc::new(application);
+    let dispatcher = RpcDispatcher::new(application.clone());
+    for command in ["test_connection", "update_connection"] {
+        for (field, value) in [
+            ("host", serde_json::json!("attacker")),
+            ("port", serde_json::json!(9999)),
+            ("driver", serde_json::json!("mysql")),
+            ("username", serde_json::json!("attacker")),
+            ("ssl_mode", serde_json::json!("disable")),
+            ("database", serde_json::json!("other-db")),
+            (
+                "connection_uri",
+                serde_json::json!("postgres://attacker/db"),
+            ),
+            ("extra", serde_json::json!({"endpoint":"attacker"})),
+            ("ssh_connection_id", serde_json::json!("other-tunnel")),
+            ("enable_cleartext_plugin", serde_json::json!(true)),
+        ] {
+            let mut changed = params.clone();
+            changed[field] = value;
+            let payload = connection_policy_payload(command, changed);
+            let response = dispatch_json(
+                &dispatcher,
+                command,
+                payload.clone(),
+                Some(Uuid::new_v4()),
+                AuthorizationLevel::Database,
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::FORBIDDEN,
+                "{command}: {field}"
+            );
+            assert!(application.contexts.lock().unwrap().is_empty());
+            let response = dispatch_json(
+                &dispatcher,
+                command,
+                payload,
+                Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
+            )
+            .await;
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "admin: {command}: {field}"
+            );
+            application.contexts.lock().unwrap().clear();
+        }
+        let response = dispatch_json(
+            &dispatcher,
+            command,
+            connection_policy_payload(command, params.clone()),
+            Some(Uuid::new_v4()),
+            AuthorizationLevel::Database,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "same target: {command}");
+        application.contexts.lock().unwrap().clear();
+    }
+    let mut injected = params;
+    injected["connection_id"] = serde_json::json!("other-saved-db");
+    let response = dispatch_json(
+        &dispatcher,
+        "test_connection",
+        connection_policy_payload("test_connection", injected),
+        Some(Uuid::new_v4()),
+        AuthorizationLevel::Database,
+    )
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "runtime connection ID cannot select another credential"
+    );
+}
+
+#[tokio::test]
+async fn connection_policy_rejects_retargeting_even_when_supplied_password_can_leave_stale_secrets()
+{
+    let mut application = FixtureApplication::new(Duration::ZERO);
+    application.saved_params.insert(
+        "saved-db".into(),
+        ConnectionParams {
+            driver: "postgres".into(),
+            host: Some("trusted".into()),
+            save_in_keychain: Some(true),
+            ..Default::default()
+        },
+    );
+    let dispatcher = RpcDispatcher::new(Arc::new(application));
+    let response = dispatch_json(&dispatcher, "update_connection", connection_policy_payload("update_connection",
+        serde_json::json!({"driver":"postgres", "host":"attacker", "database":"", "password":"replacement", "save_in_keychain":false})),
+        Some(Uuid::new_v4()), AuthorizationLevel::Database).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn connection_policy_preserves_same_target_metadata_and_credentials_edits() {
+    let params = serde_json::json!({"driver":"postgres", "host":"trusted", "database":"db", "save_in_keychain":true, "connection_uri_in_keychain":true});
+    let mut application = FixtureApplication::new(Duration::ZERO);
+    application.saved_params.insert(
+        "saved-db".into(),
+        serde_json::from_value(params.clone()).unwrap(),
+    );
+    let dispatcher = RpcDispatcher::new(Arc::new(application));
+    for password in [
+        Value::Null,
+        serde_json::json!(""),
+        serde_json::json!("replacement"),
+    ] {
+        let mut params = params.clone();
+        params["password"] = password;
+        params["save_in_keychain"] = serde_json::json!(false);
+        let response = dispatch_json(&dispatcher, "update_connection",
+            serde_json::json!({"id":"saved-db", "name":"New display name", "environment":"production", "params":params}),
+            Some(Uuid::new_v4()), AuthorizationLevel::Database).await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+}
+
+#[tokio::test]
+async fn connection_policy_tests_the_primary_database_of_a_saved_multiple_selection() {
+    let mut application = FixtureApplication::new(Duration::ZERO);
+    application.saved_params.insert(
+        "saved-db".into(),
+        ConnectionParams {
+            driver: "postgres".into(),
+            host: Some("trusted".into()),
+            database: DatabaseSelection::Multiple(vec!["first".into(), "second".into()]),
+            ..Default::default()
+        },
+    );
+    let dispatcher = RpcDispatcher::new(Arc::new(application));
+    let response = dispatch_json(
+        &dispatcher,
+        "test_connection",
+        connection_policy_payload(
+            "test_connection",
+            serde_json::json!({"driver":"postgres", "host":"trusted", "database":"first"}),
+        ),
+        Some(Uuid::new_v4()),
+        AuthorizationLevel::Database,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn connection_policy_accepts_omitted_blank_ssl_mode_on_saved_connections() {
+    for mode in ["", " \t"] {
+        let mut application = FixtureApplication::new(Duration::ZERO);
+        application.saved_params.insert(
+            "saved-db".into(),
+            ConnectionParams {
+                driver: "postgres".into(),
+                host: Some("trusted".into()),
+                ssl_mode: Some(mode.into()),
+                ..Default::default()
+            },
+        );
+        let dispatcher = RpcDispatcher::new(Arc::new(application));
+        for command in ["test_connection", "update_connection"] {
+            let response = dispatch_json(
+                &dispatcher,
+                command,
+                connection_policy_payload(
+                    command,
+                    serde_json::json!({"driver":"postgres", "host":"trusted", "database":""}),
+                ),
+                Some(Uuid::new_v4()),
+                AuthorizationLevel::Database,
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK, "{command}: {mode:?}");
+        }
+    }
 }

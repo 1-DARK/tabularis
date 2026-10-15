@@ -85,6 +85,19 @@ Only add origins that are controlled by the same deployment owner. Browser sessi
 
 Remote sessions are restricted to the `database` authorization level by default. This permits core connection, metadata, query, data-editing, and notebook workflows while denying commands classified as `sensitive` or `local-admin`. Denied operations return HTTP 403 with the shared RPC error envelope.
 
+Database-only sessions may create network connections and use their existing targets.
+Changing a saved connection's driver, destination, or transport/authentication settings
+requires `local-admin`, including when a new password is supplied. This keeps stored
+credentials bound to the administrator-approved target; editing connection metadata
+or credentials for that same target remains available.
+
+File- and folder-based drivers (including SQLite) require `local-admin` for connection
+access. This applies to saved connections and per-request database overrides as well
+as new connections. A directory-browser allowlist alone cannot confine database SQL:
+for example, SQLite can open additional files through `ATTACH`. Use a dedicated
+service account and filesystem isolation when enabling these drivers remotely.
+
+
 The following groups require an explicit high-risk opt-in because they can disclose secrets, modify the host, start tunnels or subprocesses, install code, or alter server-wide state:
 
 - SSH and Kubernetes tunnel lifecycle and askpass responses;
