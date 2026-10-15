@@ -1421,6 +1421,8 @@
     "newRow": "New Row",
     "editing": "Editing: {{table}}",
     "rowsRetrieved": "{{count}} rows retrieved",
+    "columnsCount_one": "{{count}} column",
+    "columnsCount_other": "{{count}} columns",
     "timing": {
       "execution": "Execution",
       "fetch": "Fetch",

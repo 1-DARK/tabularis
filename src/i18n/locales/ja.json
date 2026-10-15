@@ -1403,6 +1403,8 @@
     "newRow": "新規行",
     "editing": "編集中: {{table}}",
     "rowsRetrieved": "{{count}} 行を取得しました",
+    "columnsCount_one": "{{count}} 列",
+    "columnsCount_other": "{{count}} 列",
     "timing": {
       "execution": "実行",
       "fetch": "取得",

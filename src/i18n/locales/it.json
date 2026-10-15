@@ -1412,6 +1412,8 @@
     "newRow": "Nuova riga",
     "editing": "Modifica: {{table}}",
     "rowsRetrieved": "{{count}} righe recuperate",
+    "columnsCount_one": "{{count}} colonna",
+    "columnsCount_other": "{{count}} colonne",
     "timing": {
       "execution": "Esecuzione",
       "fetch": "Recupero",

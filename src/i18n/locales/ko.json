@@ -1348,6 +1348,8 @@
     "newRow": "새 행",
     "editing": "편집 중: {{table}}",
     "rowsRetrieved": "{{count}}개 행 조회됨",
+    "columnsCount_one": "열 {{count}}개",
+    "columnsCount_other": "열 {{count}}개",
     "timing": {
       "execution": "실행",
       "fetch": "가져오기",

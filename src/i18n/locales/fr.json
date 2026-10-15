@@ -1413,6 +1413,8 @@
     "newRow": "Nouvelle ligne",
     "editing": "Modification : {{table}}",
     "rowsRetrieved": "{{count}} lignes récupérées",
+    "columnsCount_one": "{{count}} colonne",
+    "columnsCount_other": "{{count}} colonnes",
     "timing": {
       "execution": "Exécution",
       "fetch": "Transfert",

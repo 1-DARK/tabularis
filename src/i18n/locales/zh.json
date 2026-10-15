@@ -1366,6 +1366,8 @@
     "newRow": "新建行",
     "editing": "编辑中：{{table}}",
     "rowsRetrieved": "已检索 {{count}} 行",
+    "columnsCount_one": "{{count}} 列",
+    "columnsCount_other": "{{count}} 列",
     "timing": {
       "execution": "执行",
       "fetch": "获取",

@@ -1420,6 +1420,8 @@
     "newRow": "Nueva Fila",
     "editing": "Editando: {{table}}",
     "rowsRetrieved": "{{count}} filas obtenidas",
+    "columnsCount_one": "{{count}} columna",
+    "columnsCount_other": "{{count}} columnas",
     "timing": {
       "execution": "Ejecución",
       "fetch": "Transferencia",

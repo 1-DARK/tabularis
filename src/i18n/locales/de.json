@@ -1391,6 +1391,8 @@
     "newRow": "Neue Zeile",
     "editing": "Bearbeitung: {{table}}",
     "rowsRetrieved": "{{count}} Zeilen abgerufen",
+    "columnsCount_one": "{{count}} Spalte",
+    "columnsCount_other": "{{count}} Spalten",
     "timing": {
       "execution": "Ausführung",
       "fetch": "Abruf",

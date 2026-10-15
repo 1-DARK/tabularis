@@ -1404,6 +1404,8 @@
     "newRow": "Bagong Row",
     "editing": "Ine-edit: {{table}}",
     "rowsRetrieved": "{{count}} row ang nakuha",
+    "columnsCount_one": "{{count}} column",
+    "columnsCount_other": "{{count}} column",
     "timing": {
       "execution": "Pagpapatupad",
       "fetch": "Pagkuha",
