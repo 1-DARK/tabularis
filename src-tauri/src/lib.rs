@@ -97,6 +97,9 @@ pub mod sql_file_tests;
 pub mod saved_queries;
 #[cfg(test)]
 pub mod saved_queries_tests;
+pub mod saved_query_folders;
+#[cfg(test)]
+pub mod saved_query_folders_tests;
 pub mod ssh_tunnel;
 pub mod ssm_tunnel;
 pub mod sqlite_database;
@@ -620,6 +623,11 @@ pub fn run() {
             saved_queries::save_query,
             saved_queries::update_saved_query,
             saved_queries::delete_saved_query,
+            saved_queries::get_saved_query_folders,
+            saved_queries::create_saved_query_folder,
+            saved_queries::rename_saved_query_folder,
+            saved_queries::delete_saved_query_folder,
+            saved_queries::move_saved_query,
             query_history::get_query_history,
             query_history::add_query_history_entry,
             query_history::delete_query_history_entry,

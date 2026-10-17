@@ -40,6 +40,11 @@ import {
   Clipboard,
   BookOpen,
   UsersRound,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Pencil,
+  FolderInput,
 } from "lucide-react";
 import { ask, open } from "@tauri-apps/plugin-dialog";
 import { toErrorMessage } from "../../utils/errors";
@@ -52,13 +57,16 @@ import { useDatabase } from "../../hooks/useDatabase";
 import { useEditor } from "../../hooks/useEditor";
 import { useSavedQueries } from "../../hooks/useSavedQueries";
 import { useQueryHistory } from "../../hooks/useQueryHistory";
-import type { SavedQuery } from "../../contexts/SavedQueriesContext";
+import type { SavedQuery, SavedQueryFolder } from "../../contexts/SavedQueriesContext";
+import { groupQueriesByFolder, getQueryFolderName } from "../../utils/savedQueryFolders";
 import type { QueryHistoryEntry } from "../../types/queryHistory";
 import type { NotebookMetadata } from "../../types/notebook";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { SchemaModal } from "../modals/SchemaModal";
 import { CreateTableModal } from "../modals/CreateTableModal";
 import { QueryModal } from "../modals/QueryModal";
+import { SavedQueryFolderModal } from "../modals/SavedQueryFolderModal";
+import { MoveSavedQueryModal } from "../modals/MoveSavedQueryModal";
 import { ModifyColumnModal } from "../modals/ModifyColumnModal";
 import { CreateIndexModal } from "../modals/CreateIndexModal";
 import { CreateForeignKeyModal } from "../modals/CreateForeignKeyModal";
@@ -199,7 +207,7 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
     activeCapabilities?.schemas === true && schemas.length === 0 && activeConnectionId
       ? connectionDataMap[activeConnectionId]?.error
       : undefined;
-  const { queries, deleteQuery, updateQuery, saveQuery } = useSavedQueries();
+  const { queries, folders, deleteQuery, updateQuery, saveQuery, createFolder, renameFolder, deleteFolder, moveQuery } = useSavedQueries();
   const {
     entries: historyEntries,
     isLoading: isHistoryLoading,
@@ -266,6 +274,10 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
   const [historyDeleteConfirm, setHistoryDeleteConfirm] = useState<string | null>(null);
   const [historyClearConfirm, setHistoryClearConfirm] = useState(false);
   const [favoriteDeleteConfirm, setFavoriteDeleteConfirm] = useState<string | null>(null);
+  const [folderModal, setFolderModal] = useState<{ folder: SavedQueryFolder | null } | null>(null);
+  const [folderDeleteConfirm, setFolderDeleteConfirm] = useState<SavedQueryFolder | null>(null);
+  const [moveQueryTarget, setMoveQueryTarget] = useState<SavedQuery | null>(null);
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [tableFilter, setTableFilter] = useState("");
   const [favoritesFilter, setFavoritesFilter] = useState("");
   const [refreshingMatView, setRefreshingMatView] = useState<string | null>(null);
@@ -1035,16 +1047,123 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
             const filteredQueries = favoritesFilter.trim()
               ? sorted.filter((q) => q.name.toLowerCase().includes(favoritesFilter.toLowerCase()) || q.sql.toLowerCase().includes(favoritesFilter.toLowerCase()))
               : sorted;
-            const groupedFavorites = groupByDate(filteredQueries, (q) => q.updated_at ?? "1970-01-01", settings.displayTimezone);
+            const isSearching = favoritesFilter.trim() !== "";
+            const folderGroups = groupQueriesByFolder(filteredQueries, folders);
+            const groupedFavorites = groupByDate(isSearching ? filteredQueries : folderGroups.unfiled, (q) => q.updated_at ?? "1970-01-01", settings.displayTimezone);
+            const hasFolders = folders.length > 0;
 
-            return queries.length === 0 ? (
+            const renderQueryRow = (q: SavedQuery, showLocation: boolean, indented = false) => (
+              <button
+                type="button"
+                key={q.id}
+                aria-pressed={selectedFavoriteId === q.id}
+                onClick={() => setSelectedFavoriteId(q.id)}
+                onDoubleClick={() => runQuery(q.sql, q.name, false, undefined, q.database ?? undefined)}
+                onKeyDown={(e) => {
+                  // Enter runs the query like a double click; Space keeps selecting it.
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    setSelectedFavoriteId(q.id);
+                    runQuery(q.sql, q.name, false, undefined, q.database ?? undefined);
+                  }
+                }}
+                onContextMenu={(e) =>
+                  handleContextMenu(e, "query", q.id, q.name, q)
+                }
+                className={`block w-full text-left ${indented ? "pl-6" : "pl-3"} pr-3 py-1.5 cursor-pointer group transition-colors border-b border-default/30 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${
+                  selectedFavoriteId === q.id
+                    ? "bg-surface-secondary"
+                    : "hover:bg-surface-secondary"
+                }`}
+                title={q.database ? `[${q.database}] ${q.sql}` : q.sql}
+              >
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-[13px] font-semibold text-primary truncate tracking-tight">{q.name}</span>
+                  <div className="flex items-center gap-1.5 text-[10px] text-muted shrink-0">
+                    {showLocation && hasFolders && (
+                      <span className="flex items-center gap-0.5">
+                        <Folder size={9} className="shrink-0" />
+                        <span className="truncate max-w-[80px]">{getQueryFolderName(q, folders) ?? t("sidebar.unfiled")}</span>
+                      </span>
+                    )}
+                    {q.database && (
+                      <span className="flex items-center gap-0.5">
+                        <Database size={9} className="shrink-0" />
+                        <span className="truncate max-w-[80px]">{q.database}</span>
+                      </span>
+                    )}
+                    {q.updated_at && (
+                      <span>{formatHistoryTime(q.updated_at, settings.displayTimezone)}</span>
+                    )}
+                  </div>
+                </div>
+                <SqlHighlight sql={q.sql} />
+              </button>
+            );
+
+            const renderFolder = ({ folder, queries: folderQueries }: { folder: SavedQueryFolder; queries: SavedQuery[] }) => {
+              const isCollapsed = collapsedFolders.has(folder.id);
+              const FolderIcon = isCollapsed ? Folder : FolderOpen;
+              const actionClass = "p-1 rounded text-muted hover:text-primary hover:bg-surface-hover opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus";
+              return (
+                <div key={folder.id}>
+                  <div className="group/folder flex items-center hover:bg-surface-secondary border-b border-default/30">
+                    <button
+                      type="button"
+                      aria-expanded={!isCollapsed}
+                      onClick={() =>
+                        setCollapsedFolders((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(folder.id)) next.delete(folder.id);
+                          else next.add(folder.id);
+                          return next;
+                        })
+                      }
+                      className="flex flex-1 min-w-0 items-center gap-1.5 pl-3 py-1.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+                    >
+                      {isCollapsed ? <ChevronRight size={12} className="shrink-0 text-muted" /> : <ChevronDown size={12} className="shrink-0 text-muted" />}
+                      <FolderIcon size={13} className="shrink-0 text-accent" />
+                      <span className="text-[13px] font-semibold text-primary truncate">{folder.name}</span>
+                      <span className="text-[10px] text-muted shrink-0">{folderQueries.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      title={t("sidebar.renameFolder")}
+                      aria-label={`${t("sidebar.renameFolder")}: ${folder.name}`}
+                      onClick={() => setFolderModal({ folder })}
+                      className={actionClass}
+                    >
+                      <Pencil size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      title={t("sidebar.deleteFolder")}
+                      aria-label={`${t("sidebar.deleteFolder")}: ${folder.name}`}
+                      onClick={() => {
+                        if (folderQueries.length > 0) {
+                          showToast(t("sidebar.folderNotEmpty", { name: folder.name }), { kind: "error" });
+                        } else {
+                          setFolderDeleteConfirm(folder);
+                        }
+                      }}
+                      className={`${actionClass} mr-2`}
+                    >
+                      <Trash2 size={11} />
+                    </button>
+                  </div>
+                  {!isCollapsed && folderQueries.map((q) => renderQueryRow(q, false, true))}
+                </div>
+              );
+            };
+
+            return queries.length === 0 && !hasFolders ? (
               <div className="text-center p-4 text-xs text-muted italic">
                 {t("sidebar.noSavedQueries")}
               </div>
             ) : (
               <div>
-                <div className="px-2 pb-1.5">
-                  <div className="relative">
+                <div className="px-2 pb-1.5 flex items-center gap-1">
+                  <div className="relative flex-1">
                     <Search
                       size={12}
                       className="absolute left-2 top-1/2 -translate-y-1/2 text-muted"
@@ -1057,64 +1176,40 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                       className="w-full pl-6 pr-2 py-1 text-xs bg-surface-secondary border border-default rounded text-primary placeholder:text-muted focus:outline-none focus:border-focus/50"
                     />
                   </div>
+                  <button
+                    type="button"
+                    title={t("sidebar.newFolder")}
+                    aria-label={t("sidebar.newFolder")}
+                    onClick={() => setFolderModal({ folder: null })}
+                    className="p-1.5 rounded text-muted hover:text-primary hover:bg-surface-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
+                  >
+                    <FolderPlus size={14} />
+                  </button>
                 </div>
-                {favoritesFilter.trim() && (
+                {isSearching && (
                   <div className="px-3 pb-1 text-[10px] text-muted">
                     {filteredQueries.length} / {queries.length}
                   </div>
                 )}
-                {groupedFavorites.length === 0 ? (
-                  <div className="text-center p-2 text-xs text-muted italic">
-                    {t("sidebar.noFavoritesSearchResults")}
+                {!isSearching && folderGroups.folders.map(renderFolder)}
+                {!isSearching && hasFolders && folderGroups.unfiled.length > 0 && (
+                  <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted tracking-wider border-b border-default/30">
+                    {t("sidebar.unfiled")}
                   </div>
+                )}
+                {groupedFavorites.length === 0 ? (
+                  isSearching && (
+                    <div className="text-center p-2 text-xs text-muted italic">
+                      {t("sidebar.noFavoritesSearchResults")}
+                    </div>
+                  )
                 ) : (
                   groupedFavorites.map(([groupKey, items]) => (
                     <div key={groupKey}>
                       <div className="px-3 py-1 text-[10px] font-semibold uppercase text-muted tracking-wider">
                         {t(`sidebar.${groupKey}`)}
                       </div>
-                      {items.map((q) => (
-                        <button
-                          type="button"
-                          key={q.id}
-                          aria-pressed={selectedFavoriteId === q.id}
-                          onClick={() => setSelectedFavoriteId(q.id)}
-                          onDoubleClick={() => runQuery(q.sql, q.name, false, undefined, q.database ?? undefined)}
-                          onKeyDown={(e) => {
-                            // Enter runs the query like a double click; Space keeps selecting it.
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              setSelectedFavoriteId(q.id);
-                              runQuery(q.sql, q.name, false, undefined, q.database ?? undefined);
-                            }
-                          }}
-                          onContextMenu={(e) =>
-                            handleContextMenu(e, "query", q.id, q.name, q)
-                          }
-                          className={`block w-full text-left pl-3 pr-3 py-1.5 cursor-pointer group transition-colors border-b border-default/30 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${
-                            selectedFavoriteId === q.id
-                              ? "bg-surface-secondary"
-                              : "hover:bg-surface-secondary"
-                          }`}
-                          title={q.database ? `[${q.database}] ${q.sql}` : q.sql}
-                        >
-                          <div className="flex items-center justify-between gap-2 mb-1">
-                            <span className="text-[13px] font-semibold text-primary truncate tracking-tight">{q.name}</span>
-                            <div className="flex items-center gap-1.5 text-[10px] text-muted shrink-0">
-                              {q.database && (
-                                <span className="flex items-center gap-0.5">
-                                  <Database size={9} className="shrink-0" />
-                                  <span className="truncate max-w-[80px]">{q.database}</span>
-                                </span>
-                              )}
-                              {q.updated_at && (
-                                <span>{formatHistoryTime(q.updated_at, settings.displayTimezone)}</span>
-                              )}
-                            </div>
-                          </div>
-                          <SqlHighlight sql={q.sql} />
-                        </button>
-                      ))}
+                      {items.map((q) => renderQueryRow(q, isSearching))}
                     </div>
                   ))
                 )}
@@ -3025,6 +3120,15 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                                 },
                               },
                               {
+                                label: t("sidebar.moveToFolder"),
+                                icon: FolderInput,
+                                action: () => {
+                                  if (contextMenu.data && "sql" in contextMenu.data) {
+                                    setMoveQueryTarget(contextMenu.data as SavedQuery);
+                                  }
+                                },
+                              },
+                              {
                                 label: t("sidebar.delete"),
                                 icon: Trash2,
                                 danger: true,
@@ -3226,6 +3330,41 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
           }}
         />
       )}
+
+      <SavedQueryFolderModal
+        isOpen={folderModal !== null}
+        onClose={() => setFolderModal(null)}
+        folders={folders}
+        folder={folderModal?.folder ?? null}
+        onSubmit={(name) =>
+          folderModal?.folder ? renameFolder(folderModal.folder.id, name) : createFolder(name)
+        }
+      />
+
+      <MoveSavedQueryModal
+        isOpen={moveQueryTarget !== null}
+        onClose={() => setMoveQueryTarget(null)}
+        query={moveQueryTarget}
+        folders={folders}
+        onMove={moveQuery}
+      />
+
+      <ConfirmModal
+        isOpen={folderDeleteConfirm !== null}
+        onClose={() => setFolderDeleteConfirm(null)}
+        title={t("sidebar.confirmDeleteTitle")}
+        message={t("sidebar.confirmDeleteFolder", { name: folderDeleteConfirm?.name ?? "" })}
+        onConfirm={async () => {
+          const target = folderDeleteConfirm;
+          setFolderDeleteConfirm(null);
+          if (!target) return;
+          try {
+            await deleteFolder(target.id);
+          } catch (error) {
+            showToast(`${t("sidebar.folderActionFailed")}: ${toErrorMessage(error)}`, { kind: "error" });
+          }
+        }}
+      />
 
       {/* Delete favorite confirmation */}
       <ConfirmModal

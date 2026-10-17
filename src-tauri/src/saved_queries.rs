@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use tauri::{AppHandle, Runtime};
 use uuid::Uuid;
 
+use crate::query_history::atomic_write;
+use crate::saved_query_folders::{self, SavedQueryFolder};
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SavedQueryMeta {
     pub id: String,
@@ -17,6 +20,10 @@ pub struct SavedQueryMeta {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// `None` means Unfiled. Omitted from meta.json when unset so files from
+    /// before folders existed keep their exact shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -31,6 +38,8 @@ pub struct SavedQuery {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub folder_id: Option<String>,
 }
 
 fn get_queries_dir<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
@@ -59,7 +68,32 @@ fn read_meta<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SavedQueryMeta>, Stri
 fn write_meta<R: Runtime>(app: &AppHandle<R>, meta: &Vec<SavedQueryMeta>) -> Result<(), String> {
     let path = get_meta_path(app)?;
     let content = serde_json::to_string_pretty(meta).map_err(|e| e.to_string())?;
-    fs::write(path, content).map_err(|e| e.to_string())
+    atomic_write(&path, content.as_bytes())
+}
+
+fn get_folders_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    Ok(get_queries_dir(app)?.join("folders.json"))
+}
+
+/// Strict read, for commands that change folders: a corrupt file must not be
+/// silently overwritten.
+fn read_folders<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<SavedQueryFolder>, String> {
+    saved_query_folders::read_folders_file(&get_folders_path(app)?)
+}
+
+/// Lenient read, for commands that only display or return the folder.
+fn read_folders_or_empty<R: Runtime>(app: &AppHandle<R>) -> Vec<SavedQueryFolder> {
+    match get_folders_path(app) {
+        Ok(path) => saved_query_folders::read_folders_file_lenient(&path),
+        Err(_) => Vec::new(),
+    }
+}
+
+fn write_folders<R: Runtime>(
+    app: &AppHandle<R>,
+    folders: &[SavedQueryFolder],
+) -> Result<(), String> {
+    saved_query_folders::write_folders_file(&get_folders_path(app)?, folders)
 }
 
 #[tauri::command]
@@ -68,12 +102,14 @@ pub async fn get_saved_queries<R: Runtime>(
     connection_id: String,
 ) -> Result<Vec<SavedQuery>, String> {
     let meta_list = read_meta(&app)?;
+    let folders = read_folders_or_empty(&app);
     let dir = get_queries_dir(&app)?;
 
     let mut results = Vec::new();
 
     for meta in meta_list {
         if meta.connection_id == connection_id {
+            let folder_id = saved_query_folders::resolve_folder_id(&meta, &folders);
             let file_path = dir.join(&meta.filename);
             let sql = if file_path.exists() {
                 fs::read_to_string(file_path).unwrap_or_default()
@@ -89,6 +125,7 @@ pub async fn get_saved_queries<R: Runtime>(
                 database: meta.database,
                 created_at: meta.created_at,
                 updated_at: meta.updated_at,
+                folder_id,
             });
         }
     }
@@ -123,6 +160,7 @@ pub async fn save_query<R: Runtime>(
         database: database.clone(),
         created_at: Some(now.clone()),
         updated_at: Some(now.clone()),
+        folder_id: None,
     };
 
     meta_list.push(new_meta);
@@ -136,6 +174,7 @@ pub async fn save_query<R: Runtime>(
         database,
         created_at: Some(now.clone()),
         updated_at: Some(now),
+        folder_id: None,
     })
 }
 
@@ -148,6 +187,7 @@ pub async fn update_saved_query<R: Runtime>(
     database: Option<String>,
 ) -> Result<SavedQuery, String> {
     let mut meta_list = read_meta(&app)?;
+    let folders = read_folders_or_empty(&app);
     let dir = get_queries_dir(&app)?;
 
     let idx = meta_list
@@ -175,6 +215,7 @@ pub async fn update_saved_query<R: Runtime>(
         database,
         created_at: meta_list[idx].created_at.clone(),
         updated_at: Some(now),
+        folder_id: saved_query_folders::resolve_folder_id(&meta_list[idx], &folders),
     })
 }
 
@@ -230,4 +271,69 @@ pub async fn delete_saved_query<R: Runtime>(app: AppHandle<R>, id: String) -> Re
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_saved_query_folders<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+) -> Result<Vec<SavedQueryFolder>, String> {
+    Ok(read_folders(&app)?
+        .into_iter()
+        .filter(|f| f.connection_id == connection_id)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn create_saved_query_folder<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+    name: String,
+) -> Result<SavedQueryFolder, String> {
+    let mut folders = read_folders(&app)?;
+    let folder = saved_query_folders::create_folder(
+        &mut folders,
+        &connection_id,
+        &name,
+        &Utc::now().to_rfc3339(),
+    )?;
+    write_folders(&app, &folders)?;
+    Ok(folder)
+}
+
+#[tauri::command]
+pub async fn rename_saved_query_folder<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    name: String,
+) -> Result<SavedQueryFolder, String> {
+    let mut folders = read_folders(&app)?;
+    let folder = saved_query_folders::rename_folder(&mut folders, &id, &name)?;
+    write_folders(&app, &folders)?;
+    Ok(folder)
+}
+
+/// Only empty folders can be deleted; see `saved_query_folders::delete_folder`.
+#[tauri::command]
+pub async fn delete_saved_query_folder<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+) -> Result<(), String> {
+    let mut folders = read_folders(&app)?;
+    let metas = read_meta(&app)?;
+    saved_query_folders::delete_folder(&mut folders, &metas, &id)?;
+    write_folders(&app, &folders)
+}
+
+/// Moves a saved query into a folder, or to Unfiled when `folder_id` is null.
+#[tauri::command]
+pub async fn move_saved_query<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    folder_id: Option<String>,
+) -> Result<(), String> {
+    let mut metas = read_meta(&app)?;
+    let folders = read_folders(&app)?;
+    saved_query_folders::move_query(&mut metas, &folders, &id, folder_id.as_deref())?;
+    write_meta(&app, &metas)
 }
