@@ -852,6 +852,19 @@ describe('dataGrid utils', () => {
       expect(parsePasteMatrix('a\t\n\nb')).toEqual([['a', ''], [''], ['b']]);
     });
 
+    it('unquotes a tab-delimited field that the CSV copy quoted', () => {
+      // A cell `say "hi"` copied as CSV and pasted back with a tab delimiter.
+      expect(parsePasteMatrix('"say ""hi"""\tplain')).toEqual([['say "hi"', 'plain']]);
+    });
+
+    it('keeps a tab inside a quoted field', () => {
+      expect(parsePasteMatrix('"a\tb"\tc')).toEqual([['a\tb', 'c']]);
+    });
+
+    it('leaves a field that only starts with a quote as written', () => {
+      expect(parsePasteMatrix('He said "x"\tb')).toEqual([['He said "x"', 'b']]);
+    });
+
     it('returns an empty matrix for empty or whitespace-only text', () => {
       expect(parsePasteMatrix('')).toEqual([]);
       expect(parsePasteMatrix('\n')).toEqual([]);
@@ -895,6 +908,27 @@ describe('dataGrid utils', () => {
 
     it('keeps multi-line text without any delimiter as one column', () => {
       expect(parsePasteMatrix('alpha\nbeta')).toEqual([['alpha'], ['beta']]);
+    });
+
+    it('unquotes a one-column copy of a single quoted value', () => {
+      expect(parsePasteMatrix('"say ""hi"""')).toEqual([['say "hi"']]);
+    });
+
+    it('unquotes a one-column copy of a single value that contains the delimiter', () => {
+      expect(parsePasteMatrix('"Rome, Italy"')).toEqual([['Rome, Italy']]);
+      expect(parsePasteMatrix('"Rome, Italy"', ',')).toEqual([['Rome, Italy']]);
+    });
+
+    it('unquotes each line of a one-column copy with no delimiter', () => {
+      expect(parsePasteMatrix('"say ""hi"""\nplain')).toEqual([['say "hi"'], ['plain']]);
+    });
+
+    it('unquotes a one-column copy that starts with a header line', () => {
+      expect(parsePasteMatrix('note\n"say ""hi"""\n"Rome, Italy"', ',')).toEqual([
+        ['note'],
+        ['say "hi"'],
+        ['Rome, Italy'],
+      ]);
     });
 
     it('lets tabs win over commas', () => {
