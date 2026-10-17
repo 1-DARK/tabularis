@@ -6,7 +6,7 @@
 
 # Tabularis
 
-Tabularis è un workspace SQL desktop open source con 3 driver di database integrati e 21 plugin pubblicati, tra cui DuckDB, ClickHouse, Redis e Firestore. Il suo server MCP integrato permette a Claude, Cursor e Devin (ex Windsurf) di leggere il tuo schema ed eseguire query nella stessa app che usi già.
+Tabularis è un workspace SQL desktop open source con 3 driver di database integrati e 24 plugin pubblicati, tra cui DuckDB, ClickHouse, Redis e Firestore. Il suo server MCP integrato permette a Claude, Cursor e Devin (ex Windsurf) di leggere il tuo schema ed eseguire query nella stessa app che usi già.
 
 <p align="center">
   <b><a href="https://tabularis.dev">Sito web</a></b> ·
@@ -91,7 +91,7 @@ L’interfaccia dell’app è disponibile in inglese, italiano, spagnolo, cinese
 | Plugin in **qualsiasi linguaggio** (JSON-RPC su stdio)            |               ✅               |          Plugin Java/Eclipse           | Plugin JavaScript |              ❌              |
 | Text-to-SQL AI con **modelli locali** (Ollama)                    |               ✅               |     Assistente AI basato su cloud      |        ❌         |              ❌              |
 | Visual EXPLAIN con grafi interattivi del piano                    |               ✅               |                   ✅                   |        ❌         |              ❌              |
-| Database supportati nativamente                                   | 3 nativi + 21 plugin ufficiali |                  100+                  |        20+        |             ~10              |
+| Database supportati nativamente                                   | 3 nativi + 24 plugin ufficiali |                  100+                  |        20+        |             ~10              |
 
 > [!NOTE]
 > Confronto aggiornato a giugno 2026; le funzionalità degli altri strumenti potrebbero essere cambiate nel frattempo. Se ti servono decine di driver, usa DBeaver. Tabularis si concentra sul supportare bene pochi database.
@@ -114,15 +114,17 @@ PostgreSQL, MySQL/MariaDB e SQLite sono integrati nativamente. Il driver Postgre
 | Firestore                | [firestore-tabularis](https://codeberg.org/NewtTheWolf/firestore-tabularis)                     | CSV Folder     | [tabularis-csv-plugin](https://github.com/TabularisDB/tabularis-csv-plugin)                     |
 | IBM Db2                  | [tabularis-db2-plugin](https://github.com/TabularisDB/tabularis-db2-plugin)                     | Google Sheets  | [tabularis-google-sheets-plugin](https://github.com/TabularisDB/tabularis-google-sheets-plugin) |
 | IBM Informix             | [tabularis-informix-plugin](https://github.com/danielnuld/tabularis-informix-plugin)            | HackerNews     | [tabularis-hackernews-plugin](https://github.com/TabularisDB/tabularis-hackernews-plugin)       |
+| Cassandra / ScyllaDB     | [tabularis-cassandra-plugin](https://github.com/TabularisDB/tabularis-cassandra-plugin)         | Harper         | [tabularis-harper-plugin](https://github.com/HarperFast/tabularis-harper-plugin)                |
+| PostgreSQL               | [tabularis-postgresql-plugin](https://github.com/TabularisDB/tabularis-postgresql-plugin)       | Trino          | [tabularis-trino-plugin](https://github.com/TabularisDB/tabularis-trino-plugin)                 |
 
 **Sulla bacheca delle taglie**
 
 | Stato     | Database                                                                     |
 | --------- | ---------------------------------------------------------------------------- |
-| Assegnato | Google BigQuery, Meilisearch                                                 |
-| Definito  | Amazon Redshift, CockroachDB, TiDB                                           |
+| In corso  | Amazon Redshift, Google BigQuery, Meilisearch                                |
+| Definito  | CockroachDB, TiDB                                                            |
 | In arrivo | Snowflake                                                                    |
-| Aperto    | Cassandra, Etcd, Firebird, ScyllaDB, SQL Anywhere, SurrealDB, Trino / Presto |
+| Aperto    | Etcd, Firebird, SQL Anywhere, SurrealDB                                      |
 
 > [!NOTE]
 > I driver **disponibili** sono installabili dal [registro dei plugin](https://tabularis.dev/plugins). Tutto il resto è sulla [bacheca delle taglie](https://tabularis.dev/plugins/bounties): prendine una in carico, sponsorizzala o [richiedi un database](https://github.com/TabularisDB/tabularis/discussions).
