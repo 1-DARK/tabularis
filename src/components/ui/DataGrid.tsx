@@ -16,8 +16,10 @@ import {
   createColumnHelper,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 import { SlotAnchor } from "./SlotAnchor";
+import { ColumnStatsPopover } from "./ColumnStatsPopover";
 import {
   ArrowUp,
   ArrowDown,
@@ -41,6 +43,15 @@ import {
   EyeOff,
   Hash,
   ListChecks,
+  PencilLine,
+  ArrowDownToLine,
+  TextCursorInput,
+  Scissors,
+  CaseUpper,
+  CaseLower,
+  CaseSensitive,
+  Table,
+  ChartColumn,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -61,6 +72,7 @@ import {
   parsePasteMatrix,
   stripHeaderRow,
   computePasteTargets,
+  isOriginalCellValue,
   type PasteTarget,
   type ColumnDisplayInfo,
   type MergedRow,
@@ -74,7 +86,9 @@ import {
   createDataGridResultCommands,
   type RangeExtendKey,
 } from "../../utils/dataGrid";
-import { readText } from "@tauri-apps/plugin-clipboard-manager";
+import { isTypingTarget } from "../../utils/keyboardEvents";
+import { readText, writeHtml } from "@tauri-apps/plugin-clipboard-manager";
+import { getSortButtonAction } from "../../utils/tableToolbar";
 import { useSettings } from "../../hooks/useSettings";
 import { useJsonEditorActivity } from "../../hooks/useJsonEditorActivity";
 import { isGeometricType, formatGeometricValue } from "../../utils/geometry";
@@ -86,6 +100,13 @@ import {
 } from "../../utils/json";
 import { supportsEmptyString } from "../../utils/text";
 import {
+  planBulkEdit,
+  resolveEditSelection,
+  type BulkEdit,
+  type CellWrite,
+  type EditSelection,
+} from "../../utils/bulkCellEdit";
+import {
   pickPrimaryForeignKeyByColumn,
   getForeignKeyForPreview,
 } from "../../utils/foreignKeys";
@@ -93,6 +114,12 @@ import {
   getCellValueFilterOperators,
   type CellValueFilterOperator,
 } from "../../utils/cellValueFilter";
+import {
+  getColumnStatsSupport,
+  type ColumnStats,
+  type ColumnStatsSupport,
+} from "../../utils/columnStats";
+import { isLinkString } from "../../utils/jsonValueDecorators";
 import {
   getDateInputMode,
   parseDateTime,
@@ -108,6 +135,9 @@ import {
   getSelectedRows,
   projectColumns,
   copyTextToClipboard,
+  rowsToHtmlTable,
+  columnNamesAsLines,
+  columnNamesAsJson,
 } from "../../utils/clipboard";
 import {
   DEFAULT_MASKING_PATTERNS,
@@ -121,6 +151,7 @@ import type {
 import type { ResultCommands } from "../../types/commands";
 import { MemoRow, type RowCtx } from "./DataGridRow";
 import { JumpToColumnModal } from "../modals/JumpToColumnModal";
+import { SetCellsValueModal } from "../modals/SetCellsValueModal";
 import { KeybindingsContext } from "../../contexts/KeybindingsContext";
 
 export interface DataGridCommandTarget {
@@ -146,6 +177,16 @@ interface DataGridProps {
     value: unknown,
     columnType?: string,
   ) => void;
+  /**
+   * Loads a column's statistics for the header menu's "Column statistics"
+   * popover (issue #1001); the entry is hidden without it. Aborting `signal`
+   * cancels the query.
+   */
+  onLoadColumnStats?: (
+    column: string,
+    support: ColumnStatsSupport,
+    signal: AbortSignal,
+  ) => Promise<ColumnStats>;
   onForeignKeyShowPanel?: (fk: ForeignKey, value: unknown) => void;
   onForeignKeyHidePanel?: () => void;
   connectionId?: string | null;
@@ -231,10 +272,35 @@ const RANGE_EXTEND_KEYS = new Set([
   "ArrowRight",
 ]);
 
+// SQL tag shown in the chip next to each "Filter by this value" entry.
+const CELL_VALUE_FILTER_BADGES: Record<CellValueFilterOperator, string> = {
+  "=": "=",
+  "<>": "<>",
+  ">": ">",
+  ">=": ">=",
+  "<": "<",
+  "<=": "<=",
+  contains: "LIKE",
+  "IS NULL": "IS",
+  "IS NOT NULL": "IS NOT",
+};
+
+// Value shown next to the column name in the "Filter by this value" submenu.
+const formatCellValueFilterHint = (value: unknown): string => {
+  if (value === null || value === undefined) return "NULL";
+  const text = String(value).replace(/\s+/g, " ").trim();
+  return text === "" ? "''" : text.length > 80 ? `${text.slice(0, 80)}…` : text;
+};
+
 // i18n label per "Filter by this value" operator.
 const CELL_VALUE_FILTER_LABEL_KEYS: Record<CellValueFilterOperator, string> = {
   "=": "dataGrid.filterEquals",
   "<>": "dataGrid.filterNotEquals",
+  ">": "dataGrid.filterGreaterThan",
+  ">=": "dataGrid.filterGreaterOrEqual",
+  "<": "dataGrid.filterLessThan",
+  "<=": "dataGrid.filterLessOrEqual",
+  contains: "dataGrid.filterContains",
   "IS NULL": "dataGrid.filterIsNull",
   "IS NOT NULL": "dataGrid.filterIsNotNull",
 };
@@ -253,6 +319,7 @@ export const DataGrid = React.memo(
     foreignKeys,
     onForeignKeyNavigate,
     onFilterByValue,
+    onLoadColumnStats,
     onForeignKeyShowPanel,
     onForeignKeyHidePanel,
     connectionId,
@@ -299,6 +366,7 @@ export const DataGrid = React.memo(
     const colorByType = settings.resultColorByType ?? false;
     const stickyColumnHeaders = settings.stickyColumnHeaders ?? true;
     const zebraStripes = settings.resultZebraStripes ?? false;
+    const defaultSortDirection = settings.defaultSortDirection ?? "asc";
 
     // Sensitive-column masking (#485): display-only — copy/export keep the
     // real values; only the rendered grid masks them.
@@ -365,6 +433,14 @@ export const DataGrid = React.memo(
       colName: string;
       colIndex: number;
     } | null>(null);
+    const [columnStatsTarget, setColumnStatsTarget] = useState<{
+      x: number;
+      y: number;
+      colName: string;
+      colType: string;
+      support: ColumnStatsSupport;
+      masked: boolean;
+    } | null>(null);
     const [editingCell, setEditingCell] = useState<{
       rowIndex: number;
       colIndex: number;
@@ -411,6 +487,9 @@ export const DataGrid = React.memo(
       colIndex: number;
     } | null>(null);
     const [jumpToColumnOpen, setJumpToColumnOpen] = useState(false);
+    // The selection "Edit selection → Set to value…" is asking a value for.
+    const [valuePromptSelection, setValuePromptSelection] =
+      useState<EditSelection | null>(null);
     const editInputRef = useRef<HTMLInputElement>(null);
     const focusTriggerRef = useRef(0);
     // Mirror of editingCell so the commit/keydown callbacks can read the latest
@@ -1355,6 +1434,16 @@ export const DataGrid = React.memo(
               const sortState = getColumnSortState(colName, sortClause);
               const displaySortState: "none" | "asc" | "desc" =
                 sortState ?? "none";
+              const sortAction = getSortButtonAction(
+                displaySortState,
+                defaultSortDirection,
+              );
+              const sortButtonLabel =
+                sortAction === "asc"
+                  ? t("dataGrid.sortByAsc", { col: colName })
+                  : sortAction === "desc"
+                    ? t("dataGrid.sortByDesc", { col: colName })
+                    : t("dataGrid.clearSort");
               // Column data type for the DataGrip-style header hover tooltip.
               // Only populated when column metadata is present (i.e. table
               // browse), not for arbitrary query results.
@@ -1393,23 +1482,13 @@ export const DataGrid = React.memo(
                     <button
                       type="button"
                       className="flex flex-col items-center justify-center cursor-pointer"
-                      aria-label={
-                        displaySortState === "none"
-                          ? t("dataGrid.sortByAsc", { col: colName })
-                          : displaySortState === "asc"
-                            ? t("dataGrid.sortByDesc", { col: colName })
-                            : t("dataGrid.clearSort")
-                      }
+                      aria-label={sortButtonLabel}
                       title={
                         // Suppress the native sort-hint title while the type
                         // tooltip is shown, to avoid two overlapping tooltips.
                         hasMetadataTooltip
                           ? undefined
-                          : displaySortState === "none"
-                            ? t("dataGrid.sortByAsc", { col: colName })
-                            : displaySortState === "asc"
-                              ? t("dataGrid.sortByDesc", { col: colName })
-                              : t("dataGrid.clearSort")
+                          : sortButtonLabel
                       }
                       onClick={(e) => {
                         e.preventDefault();
@@ -1458,6 +1537,7 @@ export const DataGrid = React.memo(
         columnHelper,
         t,
         sortClause,
+        defaultSortDirection,
         onSort,
         columnTypeMap,
         columnCommentMap,
@@ -1857,10 +1937,11 @@ export const DataGrid = React.memo(
       showAlert,
     ]);
 
-    const copyToClipboard = useCallback(
-      async (text: string, toastMessage?: string) => {
+    // Runs a clipboard write, then shows the success toast or the error alert.
+    const writeToClipboard = useCallback(
+      async (write: () => Promise<void>, toastMessage?: string) => {
         try {
-          await copyTextToClipboard(text);
+          await write();
           if (toastMessage) {
             showToast(toastMessage, { kind: "success" });
           }
@@ -1875,6 +1956,12 @@ export const DataGrid = React.memo(
       [t, showAlert, showToast],
     );
 
+    const copyToClipboard = useCallback(
+      (text: string, toastMessage?: string) =>
+        writeToClipboard(() => copyTextToClipboard(text), toastMessage),
+      [writeToClipboard],
+    );
+
     const formatRows = useCallback(
       (rows: unknown[][], withHeaders = false) =>
         formatRowsForCopy(rows, columns, copyFormat ?? "csv", {
@@ -1886,27 +1973,99 @@ export const DataGrid = React.memo(
       [columns, copyFormat, csvDelimiter, csvIncludeHeaders, tableName],
     );
 
-    const copySelectedOrContextRow = useCallback(async () => {
-      if (!contextMenu) return;
+    // Rows the row context menu acts on: the selected rows (pending insertions
+    // included), or just the right-clicked row when nothing is selected.
+    const getContextRows = useCallback((): unknown[][] | null => {
+      if (!contextMenu) return null;
+      if (selectedRowIndices.size === 0) return [contextMenu.row];
+      return getSelectedRows(
+        mergedRows.map((row) => row.rowData),
+        selectedRowIndices,
+      );
+    }, [contextMenu, selectedRowIndices, mergedRows]);
 
-      const rowsWithInsertions = mergedRows.map((row) => row.rowData);
-      const rows =
-        selectedRowIndices.size > 0
-          ? getSelectedRows(rowsWithInsertions, selectedRowIndices)
-          : [contextMenu.row];
+    const copySelectedOrContextRow = useCallback(async () => {
+      const rows = getContextRows();
+      if (!rows) return;
 
       await copyToClipboard(
         formatRows(rows, true),
         rowsCopiedToast(rows.length),
       );
+    }, [getContextRows, formatRows, copyToClipboard, rowsCopiedToast]);
+
+    // Copies the selected rows (or the right-clicked row) as an HTML table, with
+    // the regular copy output as the plain-text flavor.
+    const copySelectedOrContextRowAsHtml = useCallback(async () => {
+      const rows = getContextRows();
+      if (!rows) return;
+
+      await writeToClipboard(
+        () =>
+          writeHtml(
+            rowsToHtmlTable(rows, columns, "null"),
+            formatRows(rows, true),
+          ),
+        rowsCopiedToast(rows.length),
+      );
+    }, [getContextRows, columns, formatRows, writeToClipboard, rowsCopiedToast]);
+
+    // "Column statistics" (issue #1001). Masked columns only get counts:
+    // min / max and top values would show the hidden values.
+    const openColumnStats = useCallback(() => {
+      if (!headerContextMenu) return;
+      const { x, y, colName, colIndex } = headerContextMenu;
+      const colType = columnTypeMap?.get(colName) ?? "";
+      const masked =
+        maskedColIndices.has(colIndex) && !revealedColIndices.has(colIndex);
+      setColumnStatsTarget({
+        x,
+        y,
+        colName,
+        colType,
+        masked,
+        support: getColumnStatsSupport(colType, {
+          characterMaximumLength: columnLengthMap?.get(colName),
+          masked,
+        }),
+      });
+      setHeaderContextMenu(null);
     }, [
-      contextMenu,
-      selectedRowIndices,
-      mergedRows,
-      formatRows,
-      copyToClipboard,
-      rowsCopiedToast,
+      headerContextMenu,
+      columnTypeMap,
+      columnLengthMap,
+      maskedColIndices,
+      revealedColIndices,
     ]);
+
+    const closeColumnStats = useCallback(() => setColumnStatsTarget(null), []);
+
+    const loadColumnStatsForTarget = useCallback(
+      (signal: AbortSignal) => {
+        if (!onLoadColumnStats || !columnStatsTarget) {
+          return Promise.reject(new Error("Column statistics are unavailable"));
+        }
+        return onLoadColumnStats(
+          columnStatsTarget.colName,
+          columnStatsTarget.support,
+          signal,
+        );
+      },
+      [onLoadColumnStats, columnStatsTarget],
+    );
+
+    const filterByTopValue = useCallback(
+      (value: string) => {
+        if (!onFilterByValue || !columnStatsTarget) return;
+        onFilterByValue(
+          columnStatsTarget.colName,
+          "=",
+          value,
+          columnStatsTarget.colType || undefined,
+        );
+      },
+      [onFilterByValue, columnStatsTarget],
+    );
 
     const copyHeaderName = useCallback(async () => {
       if (!headerContextMenu) return;
@@ -1926,6 +2085,22 @@ export const DataGrid = React.memo(
       await copyToClipboard(`${tName}${headerContextMenu.colName}`);
       setHeaderContextMenu(null);
     }, [headerContextMenu, tableName, copyToClipboard]);
+
+    const copyColumnNamesAsLines = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsLines(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
+
+    const copyColumnNamesAsJson = useCallback(async () => {
+      await copyToClipboard(
+        columnNamesAsJson(columns),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyToClipboard, t]);
 
     const copySelectedCells = useCallback(async () => {
       if (selectedRowIndices.size === 0) return;
@@ -2120,6 +2295,64 @@ export const DataGrid = React.memo(
       setContextMenu(null);
     }, [contextMenu, copyCellValue]);
 
+    // Stages cell writes from a paste or an "Edit selection" action and
+    // returns how many were staged. Existing rows can only be staged when the
+    // grid can identify them: without a usable key (raw query results,
+    // keyless tables) only pending-insertion rows take a value.
+    const stageCellWrites = useCallback(
+      (writes: CellWrite[]): number => {
+        const canEditExisting =
+          !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+        let applied = 0;
+        for (const { rowIndex, colIndex, value } of writes) {
+          const mergedRow = mergedRows[rowIndex];
+          if (!mergedRow) continue;
+          const colName = columns[colIndex];
+          // Same guard as inline editing: generated columns are computed by
+          // the database and never accept a value, and masked cells must be
+          // revealed before they take one.
+          if (generatedColumns?.has(colName.toLowerCase())) continue;
+          if (isCellMasked(rowIndex, colIndex)) continue;
+          if (mergedRow.type === "insertion") {
+            if (onPendingInsertionChange && mergedRow.tempId) {
+              onPendingInsertionChange(mergedRow.tempId, colName, value);
+              applied++;
+            }
+          } else if (canEditExisting) {
+            // Same guard as inline editing: aliases and computed result
+            // columns are not physical columns and must not be staged.
+            if (
+              physicalColumnSet &&
+              !physicalColumnSet.has(colName.toLowerCase())
+            ) {
+              continue;
+            }
+            const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
+            // Same convention as handleEditCommit: writing the original value
+            // back clears any pending change instead of staging a no-op.
+            const isUnchanged = isOriginalCellValue(
+              value,
+              mergedRow.rowData[colIndex],
+            );
+            onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
+            applied++;
+          }
+        }
+        return applied;
+      },
+      [
+        mergedRows,
+        columns,
+        physicalColumnSet,
+        generatedColumns,
+        isCellMasked,
+        onPendingChange,
+        onPendingInsertionChange,
+        pkColumns,
+        pkIndexMaps,
+      ],
+    );
+
     // Pastes clipboard text into the grid as staged edits. The paste target,
     // in priority order: the cell range's top-left, the given cell (context
     // menu), the top of the row selection, or the focused cell. A single
@@ -2146,8 +2379,14 @@ export const DataGrid = React.memo(
         }
         if (!text) return;
 
+        // Cells that land in a JSON column keep quotes that are part of the
+        // value (a pasted JSON string), see parsePasteMatrix.
+        const isJsonPasteColumn = (offset: number) => {
+          const colType = columnTypeMap?.get(columns[anchor.colIndex + offset]);
+          return !!colType && isJsonColumn(colType);
+        };
         const matrix = stripHeaderRow(
-          parsePasteMatrix(text, csvDelimiter),
+          parsePasteMatrix(text, csvDelimiter, isJsonPasteColumn),
           columns,
           anchor.colIndex,
         );
@@ -2184,44 +2423,7 @@ export const DataGrid = React.memo(
         }
         if (targets.length === 0) return;
 
-        // Existing rows can only be staged when the grid can identify them —
-        // without a usable key (raw query results, keyless tables) only
-        // pending-insertion rows accept a paste.
-        const canEditExisting =
-          !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
-        let applied = 0;
-        for (const { rowIndex, colIndex, value } of targets) {
-          const mergedRow = mergedRows[rowIndex];
-          if (!mergedRow) continue;
-          const colName = columns[colIndex];
-          // Same guard as inline editing: generated columns are computed by
-          // the database and never accept a value, and masked cells must be
-          // revealed before they take one.
-          if (generatedColumns?.has(colName.toLowerCase())) continue;
-          if (isCellMasked(rowIndex, colIndex)) continue;
-          if (mergedRow.type === "insertion") {
-            if (onPendingInsertionChange && mergedRow.tempId) {
-              onPendingInsertionChange(mergedRow.tempId, colName, value);
-              applied++;
-            }
-          } else if (canEditExisting) {
-            // Same guard as inline editing: aliases and computed result
-            // columns are not physical columns and must not be staged.
-            if (
-              physicalColumnSet &&
-              !physicalColumnSet.has(colName.toLowerCase())
-            ) {
-              continue;
-            }
-            const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
-            // Same convention as handleEditCommit: pasting the original value
-            // back clears any pending change instead of staging a no-op.
-            const isUnchanged =
-              String(value) === String(mergedRow.rowData[colIndex]);
-            onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
-            applied++;
-          }
-        }
+        const applied = stageCellWrites(targets);
         if (applied > 0) {
           showToast(t("dataGrid.pastedCells", { count: applied }), {
             kind: "success",
@@ -2237,18 +2439,52 @@ export const DataGrid = React.memo(
         selectedRowIndices,
         mergedRows,
         columns,
-        physicalColumnSet,
-        generatedColumns,
+        columnTypeMap,
         pkColumnSet,
-        isCellMasked,
         csvDelimiter,
-        onPendingChange,
-        onPendingInsertionChange,
-        pkColumns,
-        pkIndexMaps,
+        stageCellWrites,
         showToast,
         t,
       ],
+    );
+
+    // Applies an "Edit selection" action: plans the writes against the values
+    // the grid shows (pending edits included) and stages them like a paste.
+    const applyBulkEdit = useCallback(
+      (edit: BulkEdit, selection: EditSelection) => {
+        const rowValues = new Map<number, Record<string, unknown>>();
+        const valueAt = (rowIndex: number, colIndex: number) => {
+          let row = rowValues.get(rowIndex);
+          if (!row) {
+            const mergedRow = mergedRows[rowIndex];
+            row = mergedRow
+              ? buildRowDataWithPending(
+                  mergedRow.rowData,
+                  mergedRow.type === "insertion",
+                )
+              : {};
+            rowValues.set(rowIndex, row);
+          }
+          return row[columns[colIndex]];
+        };
+        const writes = planBulkEdit(edit, selection, valueAt);
+        const applied = writes.length > 0 ? stageCellWrites(writes) : 0;
+        if (applied > 0) {
+          showToast(t("dataGrid.editedCells", { count: applied }), {
+            kind: "success",
+          });
+        } else {
+          showToast(
+            t(
+              writes.length > 0
+                ? "dataGrid.pasteNotEditable"
+                : "dataGrid.editSelectionNoChange",
+            ),
+            { kind: "info" },
+          );
+        }
+      },
+      [mergedRows, columns, buildRowDataWithPending, stageCellWrites, showToast, t],
     );
 
     // Track the last-interacted grid so document-level shortcuts don't fire in
@@ -2325,8 +2561,8 @@ export const DataGrid = React.memo(
         // sortable column headers) — Enter must still activate those.
         const target = e.target as HTMLElement;
         if (
-          target.isContentEditable ||
-          target.closest("input, textarea, select, button, [role='button']")
+          isTypingTarget(target) ||
+          Boolean(target.closest?.("button, [role='button']"))
         ) {
           return;
         }
@@ -2585,11 +2821,7 @@ export const DataGrid = React.memo(
     useEffect(() => {
       const handleKeyDown = (e: KeyboardEvent) => {
         const keyTarget = e.target as HTMLElement | null;
-        const isEditableTarget =
-          keyTarget instanceof HTMLInputElement ||
-          keyTarget instanceof HTMLTextAreaElement ||
-          keyTarget instanceof HTMLSelectElement ||
-          keyTarget?.isContentEditable === true;
+        const isEditableTarget = isTypingTarget(keyTarget);
 
         // CMD/CTRL + C
         if ((e.metaKey || e.ctrlKey) && e.key === "c") {
@@ -2780,6 +3012,20 @@ export const DataGrid = React.memo(
             columns={columnChoices}
             onSelect={jumpToColumn}
             onClose={closeJumpToColumn}
+          />
+        )}
+        {valuePromptSelection && (
+          <SetCellsValueModal
+            isOpen
+            cellCount={
+              valuePromptSelection.rows.length *
+              valuePromptSelection.cols.length
+            }
+            onApply={(value) => {
+              applyBulkEdit({ kind: "setValue", value }, valuePromptSelection);
+              setValuePromptSelection(null);
+            }}
+            onClose={() => setValuePromptSelection(null)}
           />
         )}
         {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- focus host for the spreadsheet keyboard model (arrows, ranges, copy); a full ARIA grid needs per-cell roles and activedescendant */}
@@ -3029,11 +3275,36 @@ export const DataGrid = React.memo(
                 });
               }
 
+              // "Open link": only for a plain http(s) URL or mailto address, so
+              // other schemes (file:, javascript:, ...) never reach the opener.
+              // A masked cell shows dots, so it never offers its real value.
+              if (
+                isLinkString(contextCellValue) &&
+                !isCellMasked(contextMenu.rowIndex, contextMenu.colIndex)
+              ) {
+                const link = contextCellValue.trim();
+                menuItems.push({
+                  label: t("contextMenu.openLink"),
+                  icon: ExternalLink,
+                  action: () => {
+                    setContextMenu(null);
+                    openUrl(link).catch((e: unknown) => {
+                      console.error("Failed to open link:", e);
+                      showToast(
+                        t("contextMenu.openLinkFailed", { error: String(e) }),
+                        { kind: "error" },
+                      );
+                    });
+                  },
+                });
+              }
+
               // "Filter by this value": hidden for blobs/JSON (their wire
               // formats don't survive a WHERE comparison) and for insertion
               // rows, which have no stored value to filter on yet. Masking is
               // display-only, so a masked cell only gets IS NULL / IS NOT NULL
-              // and its real value never reaches the WHERE input.
+              // and its real value never reaches the WHERE input. The
+              // operators are grouped in a submenu so the menu stays short.
               if (onFilterByValue && tableName && !isInsertion) {
                 const isContextCellMasked = isCellMasked(
                   contextMenu.rowIndex,
@@ -3046,26 +3317,37 @@ export const DataGrid = React.memo(
                   !isBlobCell &&
                   !isJsonCellTarget(colDataType, contextCellValue)
                 ) {
-                  for (const op of getCellValueFilterOperators(
-                    contextCellValue,
-                    { masked: isContextCellMasked },
-                  )) {
-                    menuItems.push({
-                      label: t(CELL_VALUE_FILTER_LABEL_KEYS[op], {
-                        column: colName,
-                      }),
-                      icon: Filter,
-                      action: () => {
-                        onFilterByValue(
-                          colName,
-                          op,
-                          isContextCellMasked ? null : contextCellValue,
-                          colDataType || undefined,
-                        );
-                        setContextMenu(null);
+                  menuItems.push({
+                    label: t("dataGrid.filterByValue"),
+                    icon: Filter,
+                    submenu: [
+                      {
+                        label: colName,
+                        header: true,
+                        mono: true,
+                        // A masked cell never shows its real value here.
+                        hint: isContextCellMasked
+                          ? undefined
+                          : formatCellValueFilterHint(contextCellValue),
                       },
-                    });
-                  }
+                      ...getCellValueFilterOperators(contextCellValue, {
+                        masked: isContextCellMasked,
+                        columnType: colDataType,
+                      }).map((op) => ({
+                        label: t(CELL_VALUE_FILTER_LABEL_KEYS[op]),
+                        badge: CELL_VALUE_FILTER_BADGES[op],
+                        action: () => {
+                          onFilterByValue(
+                            colName,
+                            op,
+                            isContextCellMasked ? null : contextCellValue,
+                            colDataType || undefined,
+                          );
+                          setContextMenu(null);
+                        },
+                      })),
+                    ],
+                  });
                 }
               }
 
@@ -3148,6 +3430,12 @@ export const DataGrid = React.memo(
                 action: copySelectedOrContextRow,
               });
 
+              menuItems.push({
+                label: t("dataGrid.copyAsHtmlTable"),
+                icon: Table,
+                action: copySelectedOrContextRowAsHtml,
+              });
+
               // Direct one-click path to copy the entire result set when the
               // page is only part of it — kept next to "Copy Selected" so the
               // two copy scopes read as a pair (count explicit when known).
@@ -3194,6 +3482,116 @@ export const DataGrid = React.memo(
                       colIndex: contextMenu.colIndex,
                     });
                   },
+                });
+              }
+
+              // "Edit selection": bulk edits over the range, selected columns
+              // or selected rows the right-clicked cell belongs to. Shown
+              // disabled, with the reason, where the grid cannot stage edits.
+              const editSelection = resolveEditSelection(
+                { rowIndex: contextMenu.rowIndex, colIndex: contextMenu.colIndex },
+                {
+                  cellRange,
+                  selectedColIndices,
+                  selectedRowIndices,
+                  rowCount: mergedRows.length,
+                  columnCount: columns.length,
+                  excludedRowSelectionCols: new Set(
+                    columns.flatMap((col, idx) =>
+                      pkColumnSet.has(col.toLowerCase()) ? [idx] : [],
+                    ),
+                  ),
+                },
+              );
+              const canStageExistingRows =
+                !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+              const editSelectionBlocker = !tableName
+                ? "dataGrid.editSelectionNoTable"
+                : readonlyProp
+                  ? "dataGrid.editSelectionReadOnly"
+                  : !canStageExistingRows &&
+                      editSelection.rows.every(
+                        (rowIndex) => mergedRows[rowIndex]?.type !== "insertion",
+                      )
+                    ? "dataGrid.editSelectionNoKey"
+                    : null;
+              if (editSelectionBlocker) {
+                menuItems.push({
+                  label: t("dataGrid.editSelectionUnavailable", {
+                    reason: t(editSelectionBlocker),
+                  }),
+                  icon: PencilLine,
+                  disabled: true,
+                });
+              } else {
+                const runBulkEdit =
+                  (edit: BulkEdit, selection: EditSelection = editSelection) =>
+                  () => {
+                    applyBulkEdit(edit, selection);
+                    setContextMenu(null);
+                  };
+                const nullableCols = editSelection.cols.filter((colIndex) =>
+                  nullableColumns?.includes(columns[colIndex]),
+                );
+                menuItems.push({
+                  label: t("dataGrid.editSelection"),
+                  icon: PencilLine,
+                  submenu: [
+                    {
+                      label: t("dataGrid.editSelectionCells", {
+                        count:
+                          editSelection.rows.length * editSelection.cols.length,
+                      }),
+                      header: true,
+                    },
+                    {
+                      label: t("dataGrid.fillDown"),
+                      icon: ArrowDownToLine,
+                      disabled: editSelection.rows.length < 2,
+                      action: runBulkEdit({ kind: "fillDown" }),
+                    },
+                    {
+                      label: t("dataGrid.setToValue"),
+                      icon: TextCursorInput,
+                      action: () => {
+                        setValuePromptSelection(editSelection);
+                        setContextMenu(null);
+                      },
+                    },
+                    ...(nullableCols.length > 0
+                      ? [
+                          {
+                            label: t("dataGrid.setNull"),
+                            icon: Ban,
+                            action: runBulkEdit(
+                              { kind: "setValue", value: null },
+                              { rows: editSelection.rows, cols: nullableCols },
+                            ),
+                          },
+                        ]
+                      : []),
+                    { separator: true },
+                    {
+                      label: t("dataGrid.trimWhitespace"),
+                      icon: Scissors,
+                      action: runBulkEdit({ kind: "trim" }),
+                    },
+                    {
+                      label: t("dataGrid.upperCase"),
+                      icon: CaseUpper,
+                      action: runBulkEdit({ kind: "changeCase", mode: "upper" }),
+                    },
+                    {
+                      label: t("dataGrid.lowerCase"),
+                      icon: CaseLower,
+                      action: runBulkEdit({ kind: "changeCase", mode: "lower" }),
+                    },
+                    {
+                      label: t("dataGrid.titleCase"),
+                      icon: CaseSensitive,
+                      action: runBulkEdit({ kind: "changeCase", mode: "title" }),
+                    },
+                  ],
                 });
               }
 
@@ -3329,6 +3727,22 @@ export const DataGrid = React.memo(
                   action: copyHeaderNameTable,
                 },
                 {
+                  label: t("dataGrid.copyColumnNames"),
+                  icon: Copy,
+                  submenu: [
+                    {
+                      label: t("dataGrid.copyColumnNamesLines"),
+                      icon: Copy,
+                      action: copyColumnNamesAsLines,
+                    },
+                    {
+                      label: t("dataGrid.copyColumnNamesJson"),
+                      icon: Copy,
+                      action: copyColumnNamesAsJson,
+                    },
+                  ],
+                },
+                {
                   label: t("dataGrid.copyColumnValues"),
                   icon: Copy,
                   action: async () => {
@@ -3348,7 +3762,31 @@ export const DataGrid = React.memo(
                     setHeaderContextMenu(null);
                   },
                 },
+                ...(onLoadColumnStats && tableName
+                  ? [
+                      { separator: true } as ContextMenuItem,
+                      {
+                        label: t("dataGrid.columnStatistics"),
+                        icon: ChartColumn,
+                        action: openColumnStats,
+                      },
+                    ]
+                  : []),
               ]}
+            />
+          )}
+
+          {columnStatsTarget && (
+            <ColumnStatsPopover
+              key={columnStatsTarget.colName}
+              x={columnStatsTarget.x}
+              y={columnStatsTarget.y}
+              column={columnStatsTarget.colName}
+              support={columnStatsTarget.support}
+              masked={columnStatsTarget.masked}
+              load={loadColumnStatsForTarget}
+              onFilterByValue={onFilterByValue ? filterByTopValue : undefined}
+              onClose={closeColumnStats}
             />
           )}
 

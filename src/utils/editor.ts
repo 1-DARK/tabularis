@@ -151,6 +151,26 @@ export function getTabDisplayTitle(tab: Tab, tabs: Tab[]): string {
   return sameTableOtherSchema ? `${tab.schema}.${tab.title}` : tab.title;
 }
 
+/**
+ * Untruncated tab name for the tab strip's tooltip and accessible name, so
+ * tabs whose titles share a long prefix can still be told apart. Table tabs
+ * are qualified with their database and schema; a console shows the database
+ * it runs against when one is given (multi-database layouts).
+ */
+export function getTabFullTitle(
+  tab: Tab,
+  tabs: Tab[],
+  consoleDatabase?: string,
+): string {
+  if (tab.type === "table" && tab.activeTable && tab.title === tab.activeTable) {
+    return [tab.database, tab.schema, tab.activeTable].filter(Boolean).join(".");
+  }
+  const title = getTabDisplayTitle(tab, tabs);
+  return tab.type === "console" && consoleDatabase
+    ? `${title} (${consoleDatabase})`
+    : title;
+}
+
 export function findExistingTableTab(
   tabs: Tab[],
   connectionId: string,
@@ -175,6 +195,18 @@ export const DUPLICATE_TAB_TITLE_SUFFIX = " (copy)";
 /** Console and table tabs can be duplicated. Notebooks cannot. */
 export function canDuplicateTab(type: Tab["type"] | undefined): boolean {
   return type === "console" || type === "table";
+}
+
+/**
+ * Notebooks and consoles that are not linked to a `.sql` file can be renamed.
+ * File-backed consoles keep the file name, and other tab types cannot.
+ */
+export function canRenameTab(
+  tab: Pick<Tab, "type" | "sourceFilePath"> | null | undefined,
+): boolean {
+  if (!tab) return false;
+  if (tab.type === "notebook") return true;
+  return tab.type === "console" && !tab.sourceFilePath;
 }
 
 /**
@@ -405,7 +437,7 @@ export interface ReconstructQueryOptions {
  * as `status = 'x'` that the OS rewrote to `status = ‘x’` fails to parse
  * ("unterminated quoted string").
  */
-function normalizeSmartQuotes(s: string): string {
+export function normalizeSmartQuotes(s: string): string {
   return s.replace(/[‘’‚‛]/g, "'").replace(/[“”„‟]/g, '"');
 }
 

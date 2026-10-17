@@ -6,7 +6,7 @@
 
 # Tabularis
 
-Tabularis is an open-source desktop SQL workspace with 3 built-in database drivers and 21 shipped plugins, including DuckDB, ClickHouse, Redis and Firestore. Its built-in MCP server lets Claude, Cursor and Devin (formerly Windsurf) read your schema and run queries in the same app you already use.
+Tabularis is an open-source desktop SQL workspace with 3 built-in database drivers and 24 shipped plugins, including DuckDB, ClickHouse, Redis and Firestore. Its built-in MCP server lets Claude, Cursor and Devin (formerly Windsurf) read your schema and run queries in the same app you already use.
 
 <p align="center">
   <b><a href="https://tabularis.dev">Website</a></b> ·
@@ -124,7 +124,7 @@ The app UI is available in English, Italian, Spanish, Chinese (Simplified), Fren
 | Plugins in **any language** (JSON-RPC over stdio)                  |                ✅                |      Java/Eclipse plugins      | JavaScript plugins |          ❌           |
 | AI text-to-SQL with **local models** (Ollama)                      |                ✅                |    Cloud-based AI assistant    |         ❌         |          ❌           |
 | Visual EXPLAIN with interactive plan graphs                        |                ✅                |               ✅               |         ❌         |          ❌           |
-| Databases out of the box                                           | 3 built-in + 21 official plugins |              100+              |        20+         |          ~10          |
+| Databases out of the box                                           | 3 built-in + 24 official plugins |              100+              |        20+         |          ~10          |
 
 > [!NOTE]
 > Comparison as of June 2026; features in other tools may have changed since. If you need dozens of drivers, use DBeaver. Tabularis focuses on doing a few databases well.
@@ -147,15 +147,17 @@ PostgreSQL, MySQL/MariaDB and SQLite ship built in. Everything else is a plugin.
 | Firestore                | [firestore-tabularis](https://codeberg.org/NewtTheWolf/firestore-tabularis)                     | CSV Folder     | [tabularis-csv-plugin](https://github.com/TabularisDB/tabularis-csv-plugin)                     |
 | IBM Db2                  | [tabularis-db2-plugin](https://github.com/TabularisDB/tabularis-db2-plugin)                     | Google Sheets  | [tabularis-google-sheets-plugin](https://github.com/TabularisDB/tabularis-google-sheets-plugin) |
 | IBM Informix             | [tabularis-informix-plugin](https://github.com/danielnuld/tabularis-informix-plugin)            | HackerNews     | [tabularis-hackernews-plugin](https://github.com/TabularisDB/tabularis-hackernews-plugin)       |
+| Cassandra / ScyllaDB     | [tabularis-cassandra-plugin](https://github.com/TabularisDB/tabularis-cassandra-plugin)         | Harper         | [tabularis-harper-plugin](https://github.com/HarperFast/tabularis-harper-plugin)                |
+| PostgreSQL               | [tabularis-postgresql-plugin](https://github.com/TabularisDB/tabularis-postgresql-plugin)       | Trino          | [tabularis-trino-plugin](https://github.com/TabularisDB/tabularis-trino-plugin)                 |
 
 **On the bounty board**
 
 | Status      | Databases                                                                    |
 | ----------- | ---------------------------------------------------------------------------- |
-| Claimed     | Google BigQuery, Meilisearch                                                 |
-| Scoped      | Amazon Redshift, CockroachDB, TiDB                                           |
+| In progress | Amazon Redshift, Google BigQuery, Meilisearch                                |
+| Scoped      | CockroachDB, TiDB                                                            |
 | Coming soon | Snowflake                                                                    |
-| Open        | Cassandra, Etcd, Firebird, ScyllaDB, SQL Anywhere, SurrealDB, Trino / Presto |
+| Open        | Etcd, Firebird, SQL Anywhere, SurrealDB                                      |
 
 > [!NOTE]
 > **Shipped** drivers are installable from the [plugin registry](https://tabularis.dev/plugins). Everything else is on the [bounty board](https://tabularis.dev/plugins/bounties): claim one, sponsor one, or [request a database](https://github.com/TabularisDB/tabularis/discussions).
@@ -369,7 +371,7 @@ Portal command reads reuse one cached D-Bus connection, while the live watcher k
 
 <sub>[Full reference on tabularis.dev →](https://tabularis.dev/wiki/ai-assistant)</sub>
 
-Optional Text-to-SQL and query explanation powered by **OpenAI**, **Anthropic**, **MiniMax**, **OpenRouter**, **Ollama** (local models, no API key, full privacy), and any **OpenAI-compatible API** (Groq, Perplexity, Azure OpenAI, LocalAI, ...). Model lists are fetched from your provider and cached locally; custom models can be configured per provider.
+Optional Text-to-SQL and query explanation powered by **OpenAI**, **Anthropic**, **MiniMax**, **OpenRouter**, **Requesty**, **Ollama** (local models, no API key, full privacy), and any **OpenAI-compatible API** (Groq, Perplexity, Azure OpenAI, LocalAI, ...). Model lists are fetched from your provider and cached locally; custom models can be configured per provider.
 
 ### MCP Server: AI Agent Integration
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useMemo, useId } from "react";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import { hasPendingTableEdits, tableRefreshIdentity } from "../utils/autoRefresh";
 import { useLocation, useNavigate } from "react-router-dom";
@@ -6,13 +6,16 @@ import { useTranslation } from "react-i18next";
 import {
   buildDuplicatedTab,
   canDuplicateTab,
+  canRenameTab,
   getTabDisplayTitle,
+  getTabFullTitle,
+  normalizeSmartQuotes,
   reconstructTableQuery,
   resolveTabPageSize,
 } from "../utils/editor";
 import { shouldShowStatementSuccess } from "../utils/resultPresentation";
 import { formatRowsForCopy, copyTextToClipboard } from "../utils/clipboard";
-import { onActivationKey } from "../utils/keyboardEvents";
+import { onActivationKey, isTypingTarget } from "../utils/keyboardEvents";
 import {
   formatResultForExport,
   getLoadedRowsExportLimit,
@@ -28,6 +31,9 @@ import {
   isMultiDatabaseCapable,
   usesMultiDatabaseLayout,
   resolveHistoryDatabase,
+  resolveFlatMultiDbTabDatabase,
+  selectFlatMultiDbTabDatabase,
+  toFlatMultiDbTabTarget,
 } from "../utils/database";
 import { isReadonly, supportsExplain } from "../utils/driverCapabilities";
 import { useClickOutside } from "../hooks/useClickOutside";
@@ -191,7 +197,12 @@ import {
   combineFilterClauses,
   type CellValueFilterOperator,
 } from "../utils/cellValueFilter";
-import { formatSqlIdentifier } from "../utils/identifiers";
+import {
+  loadColumnStats,
+  type ColumnStats,
+  type ColumnStatsSupport,
+} from "../utils/columnStats";
+import { getNextSortClause } from "../utils/tableToolbar";
 import {
   createSqlFileTab,
   getSqlFileName,
@@ -206,6 +217,7 @@ import {
   isFocusedPane,
 } from "../utils/tabScroll";
 import { computeAutoScrollSpeed } from "../utils/notebookDnd";
+import { buildExportFileName } from "../utils/exportFileName";
 import clsx from "clsx";
 
 interface ExportProgress {
@@ -385,7 +397,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
 
   const startTabRename = useCallback((tabId: string) => {
     const tab = tabsRef.current.find((t) => t.id === tabId);
-    if (!tab) return;
+    if (!tab || !canRenameTab(tab)) return;
     setEditingTabId(tabId);
     setEditingTabTitle(tab.title);
   }, []);
@@ -580,6 +592,16 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   // Users tabs render full-height like notebooks: no SQL toolbar, no results panel.
   const isUsersTab = activeTab?.type === "users";
   const isMultiDb = usesMultiDatabaseLayout(activeCapabilities, selectedDatabases);
+  const tabStripId = useId();
+  // Full name behind a truncated tab title (tooltip and accessible name).
+  const tabFullTitle = (tab: Tab) =>
+    getTabFullTitle(
+      tab,
+      tabs,
+      tab.type === "console" && isMultiDb
+        ? tab.schema || selectedDatabases[0]
+        : undefined,
+    );
 
   const handleOpenSqlFile = useCallback(async () => {
     try {
@@ -665,6 +687,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   const canExportActiveResult =
     !!activeExportResult && activeExportResult.rows.length > 0;
 
+  const activeTabFlatDatabase = isMultiDb
+    ? resolveFlatMultiDbTabDatabase(activeTab, selectedDatabases)
+    : undefined;
+
   // Update window title when the active tab changes
   useEffect(() => {
     const updateTitle = async () => {
@@ -677,8 +703,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               : "";
           let dbDisplay: string;
           if (isMultiDb) {
-            dbDisplay =
-              activeTab?.schema ?? selectedDatabases[0] ?? activeDatabaseName;
+            dbDisplay = activeTabFlatDatabase ?? activeDatabaseName;
           } else {
             dbDisplay = activeDatabaseName;
           }
@@ -692,13 +717,12 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     updateTitle();
   }, [
     activeTabId,
-    activeTab?.schema,
+    activeTabFlatDatabase,
     activeConnectionName,
     activeDatabaseName,
     activeSchema,
     activeCapabilities,
     isMultiDb,
-    selectedDatabases,
   ]);
 
   // Define updateActiveTab first to be used in handleQueryChange
@@ -1873,7 +1897,9 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         return;
       }
 
-      const tabId = addTab(intent.addTabInput);
+      const tabId = addTab(
+        toFlatMultiDbTabTarget(intent.addTabInput, isMultiDb),
+      );
       if (!tabId) return;
 
       if (intent.execution.patchReadOnlyOnDuplicate) {
@@ -1889,7 +1915,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         delete pendingExecutionsRef.current[tabId];
       }
     },
-    [activeConnectionId, addTab, runAutoQuery, updateTab],
+    [activeConnectionId, addTab, isMultiDb, runAutoQuery, updateTab],
   );
 
   const openEditorInScope = useCallback(
@@ -2721,6 +2747,8 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!focused) return;
 
+      const isTyping = isTypingTarget(e.target);
+
       if (matchesShortcut(e, "close_tab")) {
         e.preventDefault();
         const currentTabId = activeTabIdRef.current;
@@ -2741,6 +2769,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       }
 
       if (matchesShortcut(e, "next_page")) {
+        if (isTyping) return;
         const tab = tabsRef.current.find(
           (t) => t.id === activeTabIdRef.current,
         );
@@ -2752,6 +2781,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       }
 
       if (matchesShortcut(e, "prev_page")) {
+        if (isTyping) return;
         const tab = tabsRef.current.find(
           (t) => t.id === activeTabIdRef.current,
         );
@@ -2845,10 +2875,14 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     [updateTab, runQuery],
   );
 
-  // Read-only helper for the filter value picker (issue #869): runs on the
-  // tab's own session so it sees the same rows as the grid.
+  // Read-only helper for the filter value picker (issue #869) and the column
+  // statistics popover (issue #1001): runs on the tab's own session so it sees
+  // the same rows as the grid. Aborting `signal` skips a query that is still
+  // queued behind the tab's other work. A query already running is left to
+  // finish and its result is dropped by the caller: `cancel_query` stops
+  // everything on the connection, which could include another tab's query.
   const runToolbarQuery = useCallback(
-    async (sql: string): Promise<QueryResult> => {
+    async (sql: string, signal?: AbortSignal): Promise<QueryResult> => {
       const tabId = activeTabIdRef.current;
       const currentTab = tabsRef.current.find((tb) => tb.id === tabId);
       if (!currentTab || currentTab.connectionId !== activeConnectionIdRef.current) {
@@ -2865,10 +2899,12 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           (targetTab.schema ?? activeSchema) !== schema) {
           throw new Error("The table changed before the values query could run");
         }
+        if (signal?.aborted) throw new Error("The values query was cancelled");
         return invoke<QueryResult>("execute_query", {
           connectionId,
           query: sql,
           sessionId: currentTab.id,
+          ...(currentTab.database ? { database: currentTab.database } : {}),
           ...(schema ? { schema } : {}),
         });
       });
@@ -2991,32 +3027,50 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     [activeDriver, activeCapabilities, handleToolbarUpdate],
   );
 
+  // Column statistics popover (issue #1001): counts the rows matching the
+  // tab's current filter, like the row count does (sort and LIMIT ignored).
+  const handleLoadColumnStats = useCallback(
+    (
+      column: string,
+      support: ColumnStatsSupport,
+      signal: AbortSignal,
+    ): Promise<ColumnStats> => {
+      const currentTab = tabsRef.current.find(
+        (tb) => tb.id === activeTabIdRef.current,
+      );
+      if (!currentTab?.activeTable) {
+        return Promise.reject(new Error("No active table"));
+      }
+      const filter = currentTab.filterClause?.trim();
+      return loadColumnStats(
+        runToolbarQuery,
+        {
+          table: currentTab.activeTable,
+          schema:
+            activeCapabilities?.schemas === true ? currentTab.schema : undefined,
+          column,
+          driver: activeCapabilities ?? activeDriver ?? null,
+          where: filter ? normalizeSmartQuotes(filter) : undefined,
+          support,
+        },
+        signal,
+      );
+    },
+    [activeCapabilities, activeDriver, runToolbarQuery],
+  );
+
   const handleSort = useCallback(
     (colName: string) => {
       if (!activeTab) return;
 
       const currentSort = activeTab.sortClause || "";
-      const parts = currentSort.trim().split(/\s+/);
-
-      let newSort = "";
-
-      const sortCol = parts[0]?.replace(/^["`]|["`]$/g, "") ?? "";
-
-      // Check if we are currently sorting by this column
-      if (sortCol === colName && parts.length <= 2) {
-        const currentDir = parts[1]?.toUpperCase();
-
-        if (!currentDir || currentDir === "ASC") {
-          // ASC -> DESC
-          newSort = `${formatSqlIdentifier(colName, activeCapabilities ?? activeDriver)} DESC`;
-        } else {
-          // DESC -> None (Clear)
-          newSort = "";
-        }
-      } else {
-        // New column -> ASC
-        newSort = `${formatSqlIdentifier(colName, activeCapabilities ?? activeDriver)} ASC`;
-      }
+      const defaultDir = settings.defaultSortDirection ?? "asc";
+      const newSort = getNextSortClause(
+        currentSort,
+        colName,
+        defaultDir,
+        activeCapabilities ?? activeDriver,
+      );
 
       handleToolbarUpdate(
         activeTab.filterClause || "",
@@ -3024,7 +3078,13 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         activeTab.limitClause,
       );
     },
-    [activeTab, activeDriver, activeCapabilities, handleToolbarUpdate],
+    [
+      activeTab,
+      settings.defaultSortDirection,
+      activeDriver,
+      activeCapabilities,
+      handleToolbarUpdate,
+    ],
   );
 
   const handlePendingChange = useCallback(
@@ -4165,7 +4225,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               extensions: [extension],
             },
           ],
-          defaultPath: `result_${Date.now()}.${extension}`,
+          defaultPath: buildExportFileName({
+            tableName: activeTab.type === "table" ? activeTab.activeTable : null,
+            extension,
+          }),
         });
 
         if (!filePath) return;
@@ -4217,7 +4280,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             extensions: [extension],
           },
         ],
-        defaultPath: `result_${Date.now()}.${extension}`,
+        defaultPath: buildExportFileName({
+          tableName: activeTab.type === "table" ? activeTab.activeTable : null,
+          extension,
+        }),
       });
 
       if (!filePath) return;
@@ -4405,6 +4471,18 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               onDragOver={handleTabDragOver(index)}
               role="button"
               tabIndex={0}
+              title={tabFullTitle(tab)}
+              aria-label={tabFullTitle(tab)}
+              aria-describedby={
+                [
+                  tab.sourceFileDirty ? `${tabStripId}-dirty-${tab.id}` : null,
+                  transactionTabIds.has(tab.id)
+                    ? `${tabStripId}-transaction-${tab.id}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
               aria-current={activeTabId === tab.id ? "true" : undefined}
               onClick={() => setActiveTabId(tab.id)}
               onKeyDown={onActivationKey(() => setActiveTabId(tab.id))}
@@ -4479,6 +4557,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                   autoFocus
                   onClick={(e) => e.stopPropagation()}
                   onChange={(e) => setEditingTabTitle(e.target.value)}
+                  aria-label={t("editor.renameTab")}
                   onBlur={commitTabRename}
                   onKeyDown={(e) => {
                     e.stopPropagation();
@@ -4492,7 +4571,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                 <span
                   className="truncate flex-1 flex items-center gap-1"
                   onDoubleClick={
-                    tab.type === "notebook"
+                    canRenameTab(tab)
                       ? (e) => {
                           e.stopPropagation();
                           startTabRename(tab.id);
@@ -4502,17 +4581,30 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                 >
                   <span className="truncate" title={tab.sourceFilePath}>
                     {getTabDisplayTitle(tab, tabs)}
-                    {tab.sourceFileDirty ? " •" : ""}
+                    {tab.sourceFileDirty && (
+                      // The tab's aria-label replaces its text, so the marker
+                      // reaches screen readers as a description instead.
+                      <>
+                        <span aria-hidden="true"> •</span>
+                        <span
+                          id={`${tabStripId}-dirty-${tab.id}`}
+                          className="sr-only"
+                        >
+                          {t("editor.sqlFileUnsavedChanges")}
+                        </span>
+                      </>
+                    )}
                   </span>
                   {tab.type === "console" && isMultiDb && (
                     <span className="text-muted shrink-0">
-                      ({tab.schema || selectedDatabases[0]})
+                      ({resolveFlatMultiDbTabDatabase(tab, selectedDatabases)})
                     </span>
                   )}
                   {transactionTabIds.has(tab.id) && (
                     // This tab is holding a pooled connection open, and its
                     // uncommitted changes are invisible to every other tab.
                     <span
+                      id={`${tabStripId}-transaction-${tab.id}`}
                       className={`shrink-0 px-1 rounded text-[9px] font-semibold uppercase tracking-wide ${TONE_SOFT_BG_CLASS.warning} ${TONE_TEXT_CLASS.warning}`}
                       title={t("editor.transactionOpenHint")}
                       aria-label={t("editor.transactionOpenHint")}
@@ -4912,7 +5004,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             >
               <Database size={12} className="text-muted shrink-0" />
               <span className="max-w-[72px] @[640px]:max-w-[120px] truncate">
-                {activeTab.schema || selectedDatabases[0]}
+                {resolveFlatMultiDbTabDatabase(activeTab, selectedDatabases)}
               </span>
               <ChevronDown size={12} className="text-muted shrink-0" />
             </button>
@@ -4922,12 +5014,15 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                   <button
                     key={db}
                     onClick={() => {
-                      updateActiveTab({ schema: db });
+                      updateActiveTab(selectFlatMultiDbTabDatabase(db));
                       setIsDbDropdownOpen(false);
                     }}
                     className={clsx(
                       "text-left px-3 py-1.5 text-xs hover:bg-surface transition-colors flex items-center gap-2",
-                      (activeTab.schema || selectedDatabases[0]) === db
+                      resolveFlatMultiDbTabDatabase(
+                        activeTab,
+                        selectedDatabases,
+                      ) === db
                         ? "text-primary font-medium"
                         : "text-secondary",
                     )}
@@ -5317,7 +5412,15 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                       <span className="truncate whitespace-nowrap">
                         {t("editor.rowsRetrieved", {
                           count: activeTab.result.rows.length,
-                        })}{" "}
+                        })}
+                        {activeTab.result.columns.length > 0 && (
+                          <span className="hidden @[400px]:inline text-muted">
+                            {" · "}
+                            {t("editor.columnsCount", {
+                              count: activeTab.result.columns.length,
+                            })}
+                          </span>
+                        )}{" "}
                         {activeTab.executionTime !== null && (
                           <span
                             className="hidden @[400px]:inline text-muted ml-2 font-mono"
@@ -5688,6 +5791,11 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                           ? handleFilterByValue
                           : undefined
                       }
+                      onLoadColumnStats={
+                        activeTab.type === "table"
+                          ? handleLoadColumnStats
+                          : undefined
+                      }
                       connectionId={activeConnectionId}
                       schema={activeTab.schema ?? activeSchema}
                       database={activeTab.database}
@@ -5825,9 +5933,24 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
             setSaveQueryModal({ ...saveQueryModal, isOpen: false })
           }
           initialSql={saveQueryModal.sql}
-          initialDatabase={activeTab?.schema ?? activeSchema ?? activeDatabaseName}
+          initialDatabase={
+            activeTabFlatDatabase ??
+            activeTab?.schema ??
+            activeSchema ??
+            activeDatabaseName
+          }
           databases={isMultiDb ? selectedDatabases : undefined}
-          onSave={async (name, sql, database) => await saveQuery(name, sql, database ?? activeTab?.schema ?? activeSchema ?? activeDatabaseName)}
+          onSave={async (name, sql, database) =>
+            await saveQuery(
+              name,
+              sql,
+              database ??
+                activeTabFlatDatabase ??
+                activeTab?.schema ??
+                activeSchema ??
+                activeDatabaseName,
+            )
+          }
           title={t("editor.saveQuery")}
         />
       )}
@@ -5836,6 +5959,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         onClose={() => setIsAiModalOpen(false)}
         connectionId={activeConnectionId ?? undefined}
         schema={activeTab?.schema ?? activeSchema ?? undefined}
+        database={activeTab?.database}
         onInsert={(q) => {
           updateActiveTab({ query: q });
           // AI-generated SQL uses the same production-first safety pipeline.
@@ -5891,10 +6015,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                   { separator: true },
                 ]
               : []),
-            ...(contextTab?.type === "notebook"
+            ...(canRenameTab(contextTab)
               ? [
                   {
-                    label: t("sidebar.notebooks.rename"),
+                    label: t("editor.renameTab"),
                     icon: Pencil,
                     action: () => startTabRename(tabContextMenu.tabId),
                   },

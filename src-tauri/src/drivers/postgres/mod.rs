@@ -1295,6 +1295,15 @@ pub async fn execute_batch_in_session(
         Some(id) => Some(session::lock(id).await),
         None => None,
     };
+    // A pinned connection belongs to one transaction, and a transaction is
+    // scoped to one database. If the tab has switched databases since opening
+    // the transaction, keeping running on the pinned connection would silently
+    // execute on the old database. Reject before taking the client so the
+    // pinned session (and its open transaction) is left intact.
+    let requested_db = params.database.primary();
+    if let Some(slot) = slot.as_ref() {
+        session::check_pinned_database(slot.database(), requested_db, "run")?;
+    }
     let pinned = slot.as_mut().and_then(|s| s.take());
     // A pinned connection only exists because its transaction is still open.
     let mut in_transaction = pinned.is_some();
@@ -1320,7 +1329,7 @@ pub async fn execute_batch_in_session(
     let client = in_flight.0.take().expect("set above");
     match slot.as_mut() {
         Some(slot) if in_transaction => {
-            slot.pin(client);
+            slot.pin(client, requested_db.to_string());
             Ok((results, true))
         }
         _ => {

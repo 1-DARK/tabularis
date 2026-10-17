@@ -70,8 +70,11 @@ pub struct AppConfig {
     pub sticky_column_headers: Option<bool>,
     /// Alternate the background of data grid rows. Default: false.
     pub result_zebra_stripes: Option<bool>,
+    /// Default sort direction on data grid header click: `"asc"` or `"desc"`.
+    pub default_sort_direction: Option<String>,
     /// Keep the row editor sidebar in sync with the selected grid row. Default: true.
     pub row_editor_follow_selection: Option<bool>,
+    pub group_sidebar_connections_by_folder: Option<bool>,
     /// What double-clicking a grid cell does: `"inline"` (default), `"sidebar"`
     /// or `"both"`.
     pub cell_double_click_action: Option<String>,
@@ -460,8 +463,15 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
         if config.result_zebra_stripes.is_some() {
             existing_config.result_zebra_stripes = config.result_zebra_stripes;
         }
+        if config.default_sort_direction.is_some() {
+            existing_config.default_sort_direction = config.default_sort_direction;
+        }
         if config.row_editor_follow_selection.is_some() {
             existing_config.row_editor_follow_selection = config.row_editor_follow_selection;
+        }
+        if config.group_sidebar_connections_by_folder.is_some() {
+            existing_config.group_sidebar_connections_by_folder =
+                config.group_sidebar_connections_by_folder;
         }
         if config.cell_double_click_action.is_some() {
             existing_config.cell_double_click_action = config.cell_double_click_action;
@@ -945,6 +955,7 @@ pub fn get_ai_api_key(app: &AppHandle, provider: &str) -> Result<String, String>
         "openai" => "OPENAI_API_KEY",
         "anthropic" => "ANTHROPIC_API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
+        "requesty" => "REQUESTY_API_KEY",
         "custom-openai" => "CUSTOM_OPENAI_API_KEY",
         "minimax" => "MINIMAX_API_KEY",
         _ => "",
@@ -981,6 +992,7 @@ pub fn get_ai_api_key_status(app: &AppHandle, provider: &str) -> AiKeyStatus {
         "openai" => "OPENAI_API_KEY",
         "anthropic" => "ANTHROPIC_API_KEY",
         "openrouter" => "OPENROUTER_API_KEY",
+        "requesty" => "REQUESTY_API_KEY",
         "custom-openai" => "CUSTOM_OPENAI_API_KEY",
         "minimax" => "MINIMAX_API_KEY",
         _ => "",
@@ -1521,6 +1533,17 @@ mod tests {
     }
 
     #[test]
+    fn default_sort_direction_serializes_with_camel_case_and_round_trips() {
+        let mut config = AppConfig::default();
+        assert!(config.default_sort_direction.is_none());
+        config.default_sort_direction = Some("desc".into());
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(json.contains("defaultSortDirection"));
+        let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.default_sort_direction.as_deref(), Some("desc"));
+    }
+
+    #[test]
     fn is_connection_readonly_default_false_no_override_returns_false() {
         let config = AppConfig::default();
         assert!(!is_connection_readonly(&config, "c1"));
@@ -1586,6 +1609,7 @@ mod tests {
         // Payload shape sent by the frontend's `save_config` call.
         let json = r#"{
             "rowEditorFollowSelection": false,
+            "groupSidebarConnectionsByFolder": true,
             "cellDoubleClickAction": "sidebar",
             "columnMaskingEnabled": false,
             "columnMaskingPatterns": ["password", "ssn"],
@@ -1601,6 +1625,7 @@ mod tests {
         let reloaded = parse_config_file(Ok(saved.clone())).0;
 
         assert_eq!(reloaded.row_editor_follow_selection, Some(false));
+        assert_eq!(reloaded.group_sidebar_connections_by_folder, Some(true));
         assert_eq!(
             reloaded.cell_double_click_action.as_deref(),
             Some("sidebar")
@@ -1629,6 +1654,7 @@ mod tests {
         // Keys are written in camelCase, matching `SettingsContext.ts`.
         for key in [
             "rowEditorFollowSelection",
+            "groupSidebarConnectionsByFolder",
             "cellDoubleClickAction",
             "columnMaskingEnabled",
             "columnMaskingPatterns",
@@ -1643,6 +1669,7 @@ mod tests {
         let (config, trusted) = parse_config_file(Ok(r#"{"theme":"dracula"}"#.to_string()));
         assert!(trusted);
         assert!(config.row_editor_follow_selection.is_none());
+        assert!(config.group_sidebar_connections_by_folder.is_none());
         assert!(config.cell_double_click_action.is_none());
         assert!(config.column_masking_enabled.is_none());
         assert!(config.column_masking_patterns.is_none());

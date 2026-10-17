@@ -2,12 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   rowToCSV,
   rowsToCSV,
+  rowsToCSVWithHeaders,
   rowToJSON,
   rowsToJSON,
   columnValuesForCopy,
   columnValuesToInClause,
   getSelectedRows,
-  copyTextToClipboard
+  copyTextToClipboard,
+  rowsToHtmlTable,
+  columnNamesAsLines,
+  columnNamesAsJson,
 } from '../../src/utils/clipboard';
 
 describe('clipboard utils', () => {
@@ -39,7 +43,8 @@ describe('clipboard utils', () => {
 
     it('should handle objects by converting to JSON', () => {
       const row = [1, { name: 'test' }, 'value'];
-      expect(rowToCSV(row)).toBe('1,{"name":"test"},value');
+      // The JSON text has quotes, so the CSV field is quoted with them doubled.
+      expect(rowToCSV(row)).toBe('1,"{""name"":""test""}",value');
     });
 
     it('should handle boolean values', () => {
@@ -181,6 +186,107 @@ describe('clipboard utils', () => {
       ];
       const columns = ['id', 'name'];
       expect(rowsToJSON(rows, columns)).toBe('[{"id":1,"name":null},{"id":2,"name":"value"}]');
+    });
+  });
+
+  describe('rowsToHtmlTable', () => {
+    it('should build a table with a header row and one row per record', () => {
+      const rows = [
+        [1, 'Alice'],
+        [2, 'Bob'],
+      ];
+      expect(rowsToHtmlTable(rows, ['id', 'name'])).toBe(
+        '<table><thead><tr><th>id</th><th>name</th></tr></thead>' +
+          '<tbody><tr><td>1</td><td>Alice</td></tr><tr><td>2</td><td>Bob</td></tr></tbody></table>'
+      );
+    });
+
+    it('should escape HTML special characters in values and headers', () => {
+      const rows = [['<b>Tom & "Jerry"</b>', "it's"]];
+      expect(rowsToHtmlTable(rows, ['a<b', 'c&d'])).toBe(
+        '<table><thead><tr><th>a&lt;b</th><th>c&amp;d</th></tr></thead>' +
+          '<tbody><tr><td>&lt;b&gt;Tom &amp; &quot;Jerry&quot;&lt;/b&gt;</td><td>it&#39;s</td></tr></tbody></table>'
+      );
+    });
+
+    it('should use the given NULL label for null and undefined values', () => {
+      expect(rowsToHtmlTable([[null, undefined]], ['a', 'b'], 'NULL')).toBe(
+        '<table><thead><tr><th>a</th><th>b</th></tr></thead>' +
+          '<tbody><tr><td>NULL</td><td>NULL</td></tr></tbody></table>'
+      );
+    });
+
+    it('should default the NULL label to "null"', () => {
+      expect(rowsToHtmlTable([[null]], ['a'])).toContain('<td>null</td>');
+    });
+
+    it('should format booleans and objects like the other copy formats', () => {
+      expect(rowsToHtmlTable([[true, { k: 1 }]], ['flag', 'data'])).toContain(
+        '<td>true</td><td>{&quot;k&quot;:1}</td>'
+      );
+    });
+
+    it('should keep line breaks inside a cell', () => {
+      expect(rowsToHtmlTable([['line1\nline2\r\nline3']], ['text'])).toContain(
+        '<td>line1<br>line2<br>line3</td>'
+      );
+    });
+
+    it('should return only the header row when there are no rows', () => {
+      expect(rowsToHtmlTable([], ['id'])).toBe(
+        '<table><thead><tr><th>id</th></tr></thead><tbody></tbody></table>'
+      );
+    });
+  });
+
+  describe('columnNamesAsLines', () => {
+    it('should format multiple column names in grid order', () => {
+      const columns = ['id', 'name', 'email'];
+      expect(columnNamesAsLines(columns)).toBe('id\nname\nemail');
+    });
+
+    it('should handle single column name', () => {
+      expect(columnNamesAsLines(['id'])).toBe('id');
+    });
+
+    it('should return empty string for empty array', () => {
+      expect(columnNamesAsLines([])).toBe('');
+    });
+
+    it('should handle columns with empty names', () => {
+      const columns = ['id', '', 'email'];
+      expect(columnNamesAsLines(columns)).toBe('id\n\nemail');
+    });
+  });
+
+  describe('columnNamesAsJson', () => {
+    it('should format multiple columns in grid order as JSON array', () => {
+      const columns = ['id', 'name', 'email'];
+      expect(columnNamesAsJson(columns)).toBe('["id","name","email"]');
+    });
+
+    it('should handle single column name', () => {
+      expect(columnNamesAsJson(['id'])).toBe('["id"]');
+    });
+
+    it('should return empty array string for empty columns array', () => {
+      expect(columnNamesAsJson([])).toBe('[]');
+    });
+
+    it('should handle columns with empty names', () => {
+      const columns = ['id', '', 'email'];
+      expect(columnNamesAsJson(columns)).toBe('["id","","email"]');
+    });
+
+    it('should escape quotes and backslashes in column names', () => {
+      const columns = ['col"name', 'col\\name'];
+      expect(columnNamesAsJson(columns)).toBe('["col\\"name","col\\\\name"]');
+    });
+
+    it('should produce valid JSON parseable back to the original array', () => {
+      const columns = ['id', 'user"name', 'path\\to\\field', '', 'email'];
+      const jsonStr = columnNamesAsJson(columns);
+      expect(JSON.parse(jsonStr)).toEqual(columns);
     });
   });
 
@@ -361,5 +467,31 @@ describe('clipboard utils', () => {
 
       expect(mockWriteText).toHaveBeenCalledWith('');
     });
+  });
+});
+
+describe('CSV clipboard quoting', () => {
+  it('quotes a value that contains the delimiter', () => {
+    expect(rowToCSV(['Rome, Italy', 3])).toBe('"Rome, Italy",3');
+  });
+
+  it('quotes a value with a double quote and doubles the quote', () => {
+    expect(rowToCSV(['say "hi"'])).toBe('"say ""hi"""');
+  });
+
+  it('quotes a value with a lone carriage return, as the file export does', () => {
+    expect(rowsToCSV([['hello\rworld', 'x']])).toBe('"hello\rworld",x');
+  });
+
+  it('quotes a value with a line break', () => {
+    expect(rowsToCSV([['line1\nline2', 'x']])).toBe('"line1\nline2",x');
+  });
+
+  it('leaves plain values unquoted', () => {
+    expect(rowsToCSV([['a', 1, null]])).toBe('a,1,null');
+  });
+
+  it('quotes header names the same way as the body', () => {
+    expect(rowsToCSVWithHeaders([['Rome, Italy']], ['city, name'])).toBe('"city, name"\n"Rome, Italy"');
   });
 });

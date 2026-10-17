@@ -9,10 +9,13 @@ import type {
 
 export type { AppLanguage };
 export type CopyFormat = "csv" | "json" | "sql-insert" | "markdown";
+export type DefaultSortDirection = "asc" | "desc";
 export type AiProvider =
+  | "chatgpt"
   | "openai"
   | "anthropic"
   | "openrouter"
+  | "requesty"
   | "ollama"
   | "custom-openai"
   | "minimax";
@@ -65,6 +68,8 @@ export interface Settings {
   stickyColumnHeaders?: boolean;
   /** Shade every other result grid row for easier scanning. Default: false. */
   resultZebraStripes?: boolean;
+  /** Default sort direction on the first column header click in the data grid: "asc" (default) or "desc". */
+  defaultSortDirection?: DefaultSortDirection;
   /** Font used for query result cells. A font name from AVAILABLE_FONTS, a custom family, or RESULT_FONT_INHERIT to follow the interface font. Default: "JetBrains Mono". */
   resultFontFamily?: string;
   aiEnabled: boolean;
@@ -87,6 +92,7 @@ export interface Settings {
   csvIncludeHeaders?: boolean;
   /** Whether the row editor sidebar follows row selection. Default: true. */
   rowEditorFollowSelection?: boolean;
+  groupSidebarConnectionsByFolder?: boolean;
   /** What happens on double-click of a data cell: "inline" (edit in place), "sidebar" (open in row editor), "both" (inline + update sidebar). Default: "inline". */
   cellDoubleClickAction?: "inline" | "sidebar" | "both";
   activeExternalDrivers?: string[];
@@ -236,6 +242,7 @@ export const DEFAULT_SETTINGS: Settings = {
   resultTypeColors: {},
   stickyColumnHeaders: true,
   resultZebraStripes: false,
+  defaultSortDirection: "asc",
   resultFontFamily: "JetBrains Mono",
   aiEnabled: false,
   aiProvider: null,

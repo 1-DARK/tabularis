@@ -20,6 +20,8 @@ interface BuiltInCommandLabels {
   editorCategory: string;
   tableCategory: string;
   resultCategory: string;
+  toggleWordWrapEnable: string;
+  toggleWordWrapDisable: string;
   copySelectedCells: (count: number) => string;
   copySelectedRows: (count: number) => string;
   copySelectedColumns: (count: number) => string;
@@ -33,14 +35,23 @@ interface BuiltInCommandModals {
   generateSql: (target: TableTarget) => void;
 }
 
+/** Editor-scoped commands that depend on live editor state. */
+interface BuiltInCommandEditorActions {
+  wordWrapEnabled: boolean;
+  toggleWordWrap: () => void;
+}
+
 export function createBuiltInCommandItems(
   scope: CommandScope,
   labels: BuiltInCommandLabels,
   modals: BuiltInCommandModals,
+  getShortcut: (shortcutId: string) => string | undefined,
+  editorActions?: BuiltInCommandEditorActions,
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     {
       id: "app.open-settings",
+      shortcut: getShortcut("open_settings"),
       title: labels.openSettings,
       group: labels.navigationCategory,
       keywords: ["preferences", "configuration"],
@@ -53,6 +64,7 @@ export function createBuiltInCommandItems(
     },
     {
       id: "app.open-connections",
+      shortcut: getShortcut("open_connections"),
       title: labels.openConnections,
       group: labels.navigationCategory,
       keywords: ["connection", "manager", "database"],
@@ -69,6 +81,7 @@ export function createBuiltInCommandItems(
     const connectionId = scope.connectionId;
     items.push({
       id: "connection.new-console",
+      shortcut: scope.getEditorCommands ? getShortcut("new_tab") : undefined,
       title: labels.newConsole,
       group: labels.editorCategory,
       keywords: ["sql", "query", "console", "editor"],
@@ -86,6 +99,24 @@ export function createBuiltInCommandItems(
               : {}),
             targetConnectionId: connectionId,
           }),
+      },
+    });
+  }
+
+  if (editorActions) {
+    const label = editorActions.wordWrapEnabled
+      ? labels.toggleWordWrapDisable
+      : labels.toggleWordWrapEnable;
+    items.push({
+      id: "editor.toggle-word-wrap",
+      title: label,
+      group: labels.editorCategory,
+      keywords: ["wrap", "line", "editor"],
+      icon: "command",
+      primaryAction: {
+        id: "editor.toggle-word-wrap",
+        label,
+        execute: editorActions.toggleWordWrap,
       },
     });
   }
@@ -178,10 +209,12 @@ export function createBuiltInCommandItems(
     id: string,
     command: { label: string; execute: () => void | Promise<void> },
     keywords: string[],
+    shortcutId?: string,
   ) => {
     items.push({
       id,
       title: command.label,
+      shortcut: shortcutId ? getShortcut(shortcutId) : undefined,
       group: labels.editorCategory,
       keywords,
       icon: "command",
@@ -199,6 +232,7 @@ export function createBuiltInCommandItems(
       "editor.run",
       editorCommands.run,
       ["run", "execute", "query", "selection", "statement"],
+      "run_query_editor",
     );
   }
   if (editorCommands?.runAll) {
@@ -206,6 +240,7 @@ export function createBuiltInCommandItems(
       "editor.run-all",
       editorCommands.runAll,
       ["run", "execute", "query", "all", "statements"],
+      "run_all_editor",
     );
   }
   if (editorCommands?.saveSqlFile) {
@@ -220,6 +255,7 @@ export function createBuiltInCommandItems(
       "tab.close-active",
       editorCommands.closeTab,
       ["close", "tab", "editor"],
+      "close_tab",
     );
   }
 
@@ -229,11 +265,13 @@ export function createBuiltInCommandItems(
     title: string,
     execute: () => void | Promise<void>,
     description?: string,
+    shortcutId?: string,
   ) => {
     items.push({
       id,
       title,
       description,
+      shortcut: shortcutId ? getShortcut(shortcutId) : undefined,
       group: labels.resultCategory,
       keywords: ["copy", "clipboard", "result", "selection"],
       icon: "copy",
@@ -248,6 +286,8 @@ export function createBuiltInCommandItems(
       "result.copy-selected-cells",
       labels.copySelectedCells(command.count),
       command.execute,
+      undefined,
+      "copy_selection",
     );
   }
   if (resultCommands?.copySelectedRows) {

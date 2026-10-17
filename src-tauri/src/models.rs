@@ -52,7 +52,7 @@ pub fn collect_group_ancestors<'a>(
     kept
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum DatabaseSelection {
     Single(String),
@@ -115,7 +115,7 @@ impl Default for DatabaseSelection {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct SshConnection {
     pub id: String,
     pub name: String,
@@ -178,7 +178,7 @@ pub struct SshTestParams {
     pub progress_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default, PartialEq, Eq)]
 pub struct ConnectionParams {
     pub driver: String,
     pub host: Option<String>,
@@ -277,6 +277,17 @@ pub struct ConnectionParams {
     /// pool hands out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_script: Option<String>,
+    /// Connection pooler mode, set by the user when connecting through PgBouncer
+    /// or another transaction-mode pooler. Forwarded verbatim to the driver
+    /// plugin as part of `params` (the host does not interpret it). The
+    /// postgresql-plugin is expected to use it to avoid its own named-statement
+    /// `prepare()` calls and to surface actionable error messages for
+    /// tokio-postgres's internal `typeinfo_statement` (which requires
+    /// `max_prepared_statements > 0` on the pooler side for custom types);
+    /// see companion issue tabularis-postgresql-plugin#157. None for direct
+    /// connections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pooler_mode: Option<String>, // "transaction" | "session" | None
     /// Opaque, plugin-specific connection fields. The host does not interpret
     /// these — they are persisted verbatim and forwarded to the driver plugin
     /// as part of `params`, so plugins can carry custom connection settings
@@ -297,7 +308,7 @@ pub struct ConnectionParams {
     pub connection_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum IconOverride {
     Pack { id: String },
@@ -305,7 +316,7 @@ pub enum IconOverride {
     Image { path: String },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionAppearance {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -372,7 +383,7 @@ pub struct ConnectionsFile {
     pub tags: Vec<ConnectionTag>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
 pub struct K8sConnection {
     pub id: String,
     pub name: String,

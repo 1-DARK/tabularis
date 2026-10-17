@@ -4,7 +4,7 @@ import { connectionIndexFromShortcut } from "../utils/keybindings";
 import { useCommandPaletteDispatch } from "./useCommandPalette";
 import { useConnectionManager } from "./useConnectionManager";
 import { useKeybindings } from "./useKeybindings";
-import { isTextCompositionKeyEvent } from "../utils/keyboardEvents";
+import { isTextCompositionKeyEvent, isTypingTarget } from "../utils/keyboardEvents";
 
 /** Shortcuts that must still fire while the user is typing in a field. */
 const TYPING_SAFE_SHORTCUTS = [
@@ -14,6 +14,10 @@ const TYPING_SAFE_SHORTCUTS = [
   "focus_table_filter",
   "open_settings",
   "close_tab",
+  "toggle_sidebar",
+  "toggle_right_sidebar",
+  "open_connections",
+  "new_connection",
 ];
 
 /**
@@ -40,10 +44,6 @@ export function useGlobalShortcuts() {
       if (isTextCompositionKeyEvent(e)) return;
 
       const target = e.target as HTMLElement;
-      const isTypingTarget =
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable;
       const isMonacoTarget =
         target instanceof Element &&
         target.closest(".monaco-editor") !== null;
@@ -54,8 +54,9 @@ export function useGlobalShortcuts() {
         !e.altKey &&
         e.ctrlKey !== e.metaKey;
       if (
-        isTypingTarget &&
-        !TYPING_SAFE_SHORTCUTS.some((id) => matchesShortcut(e, id))
+        isTypingTarget(e.target) &&
+        !TYPING_SAFE_SHORTCUTS.some((id) => matchesShortcut(e, id)) &&
+        connectionIndexFromShortcut(e, isMac) === null
       ) {
         return;
       }

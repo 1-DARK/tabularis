@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  approvalConnectionLabel,
   buildVisualExplainDeepLink,
   defaultExportFilename,
+  eventConnectionLabel,
   eventsToCsvLines,
   formatDurationMs,
   formatLocalTime,
@@ -220,6 +222,12 @@ describe("eventsToCsvLines", () => {
     expect(lines[1].split(",").length).toBeGreaterThanOrEqual(10);
   });
 
+  it("includes the target database column", () => {
+    const lines = eventsToCsvLines([baseEvent({ database: "analytics" })]);
+    expect(lines[0]).toContain("connection_name,database,query_kind");
+    expect(lines[1]).toContain(",analytics,");
+  });
+
   it("emits empty cell for null fields", () => {
     const lines = eventsToCsvLines([baseEvent({ rows: null, error: null, connectionName: null })]);
     expect(lines[1]).toContain(",,");
@@ -372,6 +380,48 @@ describe("isDestructiveApproval", () => {
 
   it("does not flag select", () => {
     expect(isDestructiveApproval({ ...base, queryKind: "select" })).toBe(false);
+  });
+});
+
+describe("approvalConnectionLabel", () => {
+  const base: PendingApproval = {
+    id: "x",
+    createdAt: "2026-04-24T10:00:00Z",
+    sessionId: "s",
+    connectionId: "c",
+    connectionName: "dev",
+    query: "UPDATE t",
+    queryKind: "write",
+    clientHint: null,
+    explainPlan: null,
+    explainError: null,
+  };
+
+  it("shows the connection alone when no database was picked", () => {
+    expect(approvalConnectionLabel(base)).toBe("dev");
+    expect(approvalConnectionLabel({ ...base, database: null })).toBe("dev");
+  });
+
+  it("appends the database the MCP caller picked", () => {
+    expect(approvalConnectionLabel({ ...base, database: "analytics" })).toBe(
+      "dev / analytics",
+    );
+  });
+});
+
+describe("eventConnectionLabel", () => {
+  it("shows the connection alone when no database was picked", () => {
+    expect(eventConnectionLabel(baseEvent())).toBe("dev");
+  });
+
+  it("appends the database the MCP caller picked", () => {
+    expect(eventConnectionLabel(baseEvent({ database: "analytics" }))).toBe(
+      "dev / analytics",
+    );
+  });
+
+  it("returns null when the event has no connection", () => {
+    expect(eventConnectionLabel(baseEvent({ connectionName: null }))).toBeNull();
   });
 });
 

@@ -26,6 +26,8 @@ export interface AiActivityEvent {
   tool: AiToolName;
   connectionId: string | null;
   connectionName: string | null;
+  /** Database picked by the MCP caller, when not the connection's default. */
+  database?: string | null;
   query: string | null;
   queryKind: AiQueryKind | null;
   durationMs: number;
@@ -62,6 +64,8 @@ export interface PendingApproval {
   sessionId: string;
   connectionId: string;
   connectionName: string;
+  /** Database picked by the MCP caller, when not the connection's default. */
+  database?: string | null;
   query: string;
   queryKind: AiQueryKind;
   clientHint: string | null;

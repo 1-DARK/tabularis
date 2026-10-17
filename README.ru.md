@@ -6,7 +6,7 @@
 
 # Tabularis
 
-Tabularis представляет собой настольную среду для работы с SQL с открытым исходным кодом, с 3 встроенными драйверами баз данных и 21 выпущенным плагином, включая DuckDB, ClickHouse, Redis и Firestore. Встроенный MCP-сервер позволяет Claude, Cursor и Devin (ранее Windsurf) читать вашу схему и выполнять запросы прямо в том приложении, которым вы уже пользуетесь.
+Tabularis представляет собой настольную среду для работы с SQL с открытым исходным кодом, с 3 встроенными драйверами баз данных и 24 выпущенными плагинами, включая DuckDB, ClickHouse, Redis и Firestore. Встроенный MCP-сервер позволяет Claude, Cursor и Devin (ранее Windsurf) читать вашу схему и выполнять запросы прямо в том приложении, которым вы уже пользуетесь.
 
 <p align="center">
   <b><a href="https://tabularis.dev">Сайт</a></b> ·
@@ -91,7 +91,7 @@ sudo snap install tabularis       # Linux
 | Плагины на **любом языке** (JSON-RPC через stdio)                         |                  ✅                  |        Плагины Java/Eclipse         | Плагины JavaScript |            ❌            |
 | AI text-to-SQL с **локальными моделями** (Ollama)                         |                  ✅                  |        Облачный AI-ассистент        |         ❌         |            ❌            |
 | Visual EXPLAIN с интерактивными графами планов                            |                  ✅                  |                 ✅                  |         ❌         |            ❌            |
-| Баз данных «из коробки»                                                   | 3 встроенных + 21 официальный плагин |                100+                 |        20+         |           ~10            |
+| Баз данных «из коробки»                                                   | 3 встроенных + 24 официальных плагина |                100+                 |        20+         |           ~10            |
 
 > [!NOTE]
 > Сравнение по состоянию на июнь 2026 года; возможности других инструментов с тех пор могли измениться. Если вам нужны десятки драйверов, используйте DBeaver. Tabularis сосредоточен на том, чтобы хорошо поддерживать несколько баз данных.
@@ -114,15 +114,17 @@ PostgreSQL, MySQL/MariaDB и SQLite встроены изначально. Вс�
 | Firestore                | [firestore-tabularis](https://codeberg.org/NewtTheWolf/firestore-tabularis)                     | CSV Folder     | [tabularis-csv-plugin](https://github.com/TabularisDB/tabularis-csv-plugin)                     |
 | IBM Db2                  | [tabularis-db2-plugin](https://github.com/TabularisDB/tabularis-db2-plugin)                     | Google Sheets  | [tabularis-google-sheets-plugin](https://github.com/TabularisDB/tabularis-google-sheets-plugin) |
 | IBM Informix             | [tabularis-informix-plugin](https://github.com/danielnuld/tabularis-informix-plugin)            | HackerNews     | [tabularis-hackernews-plugin](https://github.com/TabularisDB/tabularis-hackernews-plugin)       |
+| Cassandra / ScyllaDB     | [tabularis-cassandra-plugin](https://github.com/TabularisDB/tabularis-cassandra-plugin)         | Harper         | [tabularis-harper-plugin](https://github.com/HarperFast/tabularis-harper-plugin)                |
+| PostgreSQL               | [tabularis-postgresql-plugin](https://github.com/TabularisDB/tabularis-postgresql-plugin)       | Trino          | [tabularis-trino-plugin](https://github.com/TabularisDB/tabularis-trino-plugin)                 |
 
 **На доске задач**
 
 | Статус        | Базы данных                                                                  |
 | ------------- | ---------------------------------------------------------------------------- |
-| Закреплено    | Google BigQuery, Meilisearch                                                 |
-| Запланировано | Amazon Redshift, CockroachDB, TiDB                                           |
+| В разработке  | Amazon Redshift, Google BigQuery, Meilisearch                                |
+| Запланировано | CockroachDB, TiDB                                                            |
 | Скоро         | Snowflake                                                                    |
-| Открыто       | Cassandra, Etcd, Firebird, ScyllaDB, SQL Anywhere, SurrealDB, Trino / Presto |
+| Открыто       | Etcd, Firebird, SQL Anywhere, SurrealDB                                      |
 
 > [!NOTE]
 > Драйверы со статусом **Выпущено** можно установить из [реестра плагинов](https://tabularis.dev/plugins). Всё остальное находится на [доске задач](https://tabularis.dev/plugins/bounties): возьмите задачу, спонсируйте её или [запросите базу данных](https://github.com/TabularisDB/tabularis/discussions).
@@ -314,6 +316,7 @@ yay -S tabularis-bin
 - Anthropic
 - MiniMax
 - OpenRouter
+- Requesty
 - Ollama
 - OpenAI-совместимые API
 

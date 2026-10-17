@@ -1,5 +1,6 @@
 import { act, render, fireEvent, screen, waitFor } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { createRef, useState, type ComponentProps } from "react";
 import { vi } from "vitest";
 import {
@@ -35,6 +36,7 @@ const {
   scrollToOffsetMock,
   virtualizerRenderControl,
   sidebarState,
+  writeHtmlMock,
 } = vi.hoisted(() => ({
   showToastMock: vi.fn(),
   openRowEditorMock: vi.fn(),
@@ -45,6 +47,14 @@ const {
   // where it has no virtual items yet.
   virtualizerRenderControl: { forceEmpty: false },
   sidebarState: { isOpen: false, activePanel: null as string | null },
+  writeHtmlMock: vi.fn(),
+}));
+
+vi.mock("@tauri-apps/plugin-clipboard-manager", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@tauri-apps/plugin-clipboard-manager")
+  >()),
+  writeHtml: writeHtmlMock,
 }));
 
 vi.mock("../../../src/hooks/useToast", () => ({
@@ -952,6 +962,58 @@ describe("DataGrid select all", () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledOnce());
     expect(writeText.mock.calls[0][0]).toContain("Alice");
     expect(writeText.mock.calls[0][0]).toContain("Pending");
+  });
+
+  it("copies the selected rows as an HTML table with a plain-text fallback", async () => {
+    writeHtmlMock.mockReset().mockResolvedValue(undefined);
+    const { container } = render(
+      <DataGrid
+        columns={columns}
+        data={data}
+        selectedRows={new Set([0, 1])}
+        onSelectionChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.contextMenu(
+      container.querySelector('td[data-col-index="0"]')!,
+    );
+    fireEvent.click(await screen.findByText("dataGrid.copyAsHtmlTable"));
+
+    await waitFor(() => expect(writeHtmlMock).toHaveBeenCalledOnce());
+    const [html, plainText] = writeHtmlMock.mock.calls[0];
+    expect(html).toContain("<table>");
+    expect(html).toContain("<th>name</th>");
+    expect(html).toContain("<td>Alice</td>");
+    expect(html).toContain("<td>Bob</td>");
+    expect(plainText).toContain("Alice");
+    expect(plainText).toContain("Bob");
+    expect(writeText).not.toHaveBeenCalled();
+    expect(showToastMock).toHaveBeenCalledWith(expect.anything(), {
+      kind: "success",
+    });
+  });
+
+  it("copies only the right-clicked row as HTML when nothing is selected", async () => {
+    writeHtmlMock.mockReset().mockResolvedValue(undefined);
+    const { container } = render(
+      <DataGrid
+        columns={columns}
+        data={data}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+      />,
+    );
+
+    fireEvent.contextMenu(
+      container.querySelectorAll('td[data-col-index="1"]')[1]!,
+    );
+    fireEvent.click(await screen.findByText("dataGrid.copyAsHtmlTable"));
+
+    await waitFor(() => expect(writeHtmlMock).toHaveBeenCalledOnce());
+    const [html] = writeHtmlMock.mock.calls[0];
+    expect(html).toContain("<td>Bob</td>");
+    expect(html).not.toContain("Alice");
   });
 
   it("selects all loaded rows with Cmd/Ctrl+A without copying", () => {
@@ -1876,10 +1938,16 @@ describe("DataGrid filter-by-value context menu", () => {
     return { ...utils, onFilterByValue };
   };
 
+  // The operators live in a "Filter by this value" flyout opened on hover.
+  const openFilterSubmenu = async () => {
+    fireEvent.mouseEnter(await screen.findByText("dataGrid.filterByValue"));
+  };
+
   it("offers = / <> on a regular cell and passes the cell value", async () => {
     const { container, onFilterByValue } = renderUsersGrid();
 
     fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openFilterSubmenu();
     fireEvent.click(await screen.findByText("dataGrid.filterEquals"));
 
     expect(screen.queryByText("dataGrid.filterIsNull")).toBeNull();
@@ -1897,11 +1965,13 @@ describe("DataGrid filter-by-value context menu", () => {
     // "email" is masked by DEFAULT_MASKING_PATTERNS (settings mock is `{}`).
     expect(cellAt(container, 0, 2)).toHaveTextContent("••••••");
     fireEvent.contextMenu(cellAt(container, 0, 2));
+    await openFilterSubmenu();
 
     expect(await screen.findByText("dataGrid.filterIsNull")).toBeInTheDocument();
     expect(screen.getByText("dataGrid.filterIsNotNull")).toBeInTheDocument();
     expect(screen.queryByText("dataGrid.filterEquals")).toBeNull();
     expect(screen.queryByText("dataGrid.filterNotEquals")).toBeNull();
+    expect(screen.queryByText("dataGrid.filterContains")).toBeNull();
 
     fireEvent.click(screen.getByText("dataGrid.filterIsNotNull"));
     expect(onFilterByValue).toHaveBeenCalledWith(
@@ -1924,9 +1994,47 @@ describe("DataGrid filter-by-value context menu", () => {
       )!,
     );
     fireEvent.contextMenu(cellAt(container, 0, 2));
+    await openFilterSubmenu();
 
     expect(await screen.findByText("dataGrid.filterEquals")).toBeInTheDocument();
     expect(screen.queryByText("dataGrid.filterIsNull")).toBeNull();
+  });
+
+  it("offers comparison operators on a numeric cell", async () => {
+    const { container, onFilterByValue } = renderUsersGrid();
+
+    fireEvent.contextMenu(cellAt(container, 0, 0));
+    await openFilterSubmenu();
+
+    for (const key of [
+      "dataGrid.filterEquals",
+      "dataGrid.filterNotEquals",
+      "dataGrid.filterGreaterThan",
+      "dataGrid.filterGreaterOrEqual",
+      "dataGrid.filterLessThan",
+    ]) {
+      expect(await screen.findByText(key)).toBeInTheDocument();
+    }
+    expect(screen.queryByText("dataGrid.filterContains")).toBeNull();
+
+    fireEvent.click(screen.getByText("dataGrid.filterLessOrEqual"));
+    expect(onFilterByValue).toHaveBeenCalledWith("id", "<=", 1, "integer");
+  });
+
+  it("offers contains on a text cell", async () => {
+    const { container, onFilterByValue } = renderUsersGrid();
+
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openFilterSubmenu();
+
+    expect(screen.queryByText("dataGrid.filterGreaterThan")).toBeNull();
+    fireEvent.click(await screen.findByText("dataGrid.filterContains"));
+    expect(onFilterByValue).toHaveBeenCalledWith(
+      "name",
+      "contains",
+      "Alice",
+      "character varying(255)",
+    );
   });
 
   it("hides the items on BLOB and JSON cells", async () => {
@@ -1935,14 +2043,12 @@ describe("DataGrid filter-by-value context menu", () => {
     fireEvent.contextMenu(cellAt(container, 0, 3));
     // Wait for the menu itself, then check the filter items are absent.
     await screen.findByText("dataGrid.copyCell");
-    expect(screen.queryByText("dataGrid.filterEquals")).toBeNull();
-    expect(screen.queryByText("dataGrid.filterIsNull")).toBeNull();
+    expect(screen.queryByText("dataGrid.filterByValue")).toBeNull();
     fireEvent.keyDown(document, { key: "Escape" });
 
     fireEvent.contextMenu(cellAt(container, 0, 4));
     await screen.findByText("contextMenu.openJsonEditor");
-    expect(screen.queryByText("dataGrid.filterEquals")).toBeNull();
-    expect(screen.queryByText("dataGrid.filterIsNull")).toBeNull();
+    expect(screen.queryByText("dataGrid.filterByValue")).toBeNull();
   });
 
   it("hides the items on pending insertion rows", async () => {
@@ -1958,8 +2064,7 @@ describe("DataGrid filter-by-value context menu", () => {
 
     fireEvent.contextMenu(cellAt(container, 1, 1));
     await screen.findByText("dataGrid.copyCell");
-    expect(screen.queryByText("dataGrid.filterEquals")).toBeNull();
-    expect(screen.queryByText("dataGrid.filterIsNull")).toBeNull();
+    expect(screen.queryByText("dataGrid.filterByValue")).toBeNull();
   });
 
   it("hides the items when there is no table (query results)", async () => {
@@ -1967,7 +2072,240 @@ describe("DataGrid filter-by-value context menu", () => {
 
     fireEvent.contextMenu(cellAt(container, 0, 1));
     await screen.findByText("dataGrid.copyCell");
-    expect(screen.queryByText("dataGrid.filterEquals")).toBeNull();
+    expect(screen.queryByText("dataGrid.filterByValue")).toBeNull();
+  });
+});
+
+describe("DataGrid column statistics (#1001)", () => {
+  const metadata = [
+    { name: "id", data_type: "integer", is_pk: true, is_nullable: false, is_auto_increment: false },
+    { name: "status", data_type: "varchar(20)", is_pk: false, is_nullable: true, is_auto_increment: false },
+    // "email" matches the default masking patterns.
+    { name: "email", data_type: "varchar(255)", is_pk: false, is_nullable: true, is_auto_increment: false },
+    { name: "settings", data_type: "jsonb", is_pk: false, is_nullable: true, is_auto_increment: false },
+  ];
+
+  const stats = {
+    rowCount: 3,
+    nullCount: 0,
+    distinctCount: 2,
+    min: null,
+    max: null,
+    topValues: [
+      { value: "open", count: 2 },
+      { value: "closed", count: 1 },
+    ],
+    filtered: false,
+  };
+
+  const renderStatsGrid = (
+    overrides: Partial<ComponentProps<typeof DataGrid>> = {},
+  ) => {
+    const onFilterByValue = vi.fn();
+    const onLoadColumnStats = vi.fn().mockResolvedValue(stats);
+    const utils = render(
+      <DataGrid
+        columns={["id", "status", "email", "settings"]}
+        data={[[1, "open", "a@example.com", { a: 1 }]]}
+        tableName="orders"
+        columnMetadata={metadata}
+        onFilterByValue={onFilterByValue}
+        onLoadColumnStats={onLoadColumnStats}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        readonly
+        {...overrides}
+      />,
+    );
+    const header = (index: number) =>
+      utils.container.querySelectorAll("th")[index + 1];
+    return { ...utils, header, onFilterByValue, onLoadColumnStats };
+  };
+
+  it("opens the popover from the header menu and loads the stats only then", async () => {
+    const { header, onLoadColumnStats } = renderStatsGrid();
+    expect(onLoadColumnStats).not.toHaveBeenCalled();
+
+    fireEvent.contextMenu(header(1));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent("status");
+    expect(onLoadColumnStats).toHaveBeenCalledTimes(1);
+    expect(onLoadColumnStats).toHaveBeenCalledWith(
+      "status",
+      { distinct: true, minMax: false, topValues: true },
+      expect.any(AbortSignal),
+    );
+    expect(screen.queryByText("dataGrid.copyColumnName")).toBeNull();
+  });
+
+  it("computes min / max for numeric columns", async () => {
+    const { header, onLoadColumnStats } = renderStatsGrid();
+    fireEvent.contextMenu(header(0));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+    await screen.findByRole("dialog");
+    expect(onLoadColumnStats).toHaveBeenCalledWith(
+      "id",
+      { distinct: true, minMax: true, topValues: true },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("only counts rows and NULLs for JSON columns", async () => {
+    const { header, onLoadColumnStats } = renderStatsGrid();
+    fireEvent.contextMenu(header(3));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+    await screen.findByRole("dialog");
+    expect(onLoadColumnStats).toHaveBeenCalledWith(
+      "settings",
+      { distinct: false, minMax: false, topValues: false },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("never asks a masked column for its values", async () => {
+    const { header, onLoadColumnStats } = renderStatsGrid();
+    fireEvent.contextMenu(header(2));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+    await screen.findByRole("dialog");
+    expect(onLoadColumnStats).toHaveBeenCalledWith(
+      "email",
+      { distinct: true, minMax: false, topValues: false },
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("filters the table with = when a top value is clicked", async () => {
+    const { header, onFilterByValue } = renderStatsGrid();
+    fireEvent.contextMenu(header(1));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+
+    const values = await screen.findAllByTitle("dataGrid.columnStats.filterBy");
+    fireEvent.click(values[1]);
+
+    expect(onFilterByValue).toHaveBeenCalledWith("status", "=", "closed", "varchar(20)");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("aborts the load when the popover closes", async () => {
+    let signal: AbortSignal | undefined;
+    const onLoadColumnStats = vi.fn((_c: string, _s: unknown, sig: AbortSignal) => {
+      signal = sig;
+      return new Promise<never>(() => {});
+    });
+    const { header } = renderStatsGrid({ onLoadColumnStats });
+    fireEvent.contextMenu(header(1));
+    fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+    fireEvent.click(await screen.findByRole("button", { name: "common.cancel" }));
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it.each([
+    ["without a loader", { onLoadColumnStats: undefined }],
+    ["for query results (no table)", { tableName: null }],
+  ])("hides the entry %s", async (_label, overrides) => {
+    const { header } = renderStatsGrid(overrides);
+    fireEvent.contextMenu(header(1));
+    await screen.findByText("dataGrid.copyColumnName");
+    expect(screen.queryByText("dataGrid.columnStatistics")).toBeNull();
+  });
+});
+
+describe("DataGrid open link context menu", () => {
+  const cellAt = (container: HTMLElement, rowIndex: number, colIndex: number) =>
+    container.querySelector(
+      `tr[data-row-index="${rowIndex}"] td[data-col-index="${colIndex}"]`,
+    )!;
+
+  // "email" is masked by DEFAULT_MASKING_PATTERNS (settings mock is `{}`).
+  const renderLinksGrid = () =>
+    render(
+      <DataGrid
+        columns={["id", "website", "contact", "email", "notes"]}
+        data={[
+          [
+            1,
+            "  https://example.com/profile  ",
+            "mailto:alice@example.com",
+            "mailto:alice@example.com",
+            "plain text",
+          ],
+          [2, "file:///etc/passwd", "javascript:alert(1)", null, "ftp://host/x"],
+        ]}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        readonly
+      />,
+    );
+
+  beforeEach(() => {
+    vi.mocked(openUrl).mockReset();
+    vi.mocked(openUrl).mockResolvedValue(undefined);
+    showToastMock.mockClear();
+  });
+
+  it("opens the trimmed URL of an http(s) cell", async () => {
+    const { container } = renderLinksGrid();
+
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    fireEvent.click(await screen.findByText("contextMenu.openLink"));
+
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("https://example.com/profile");
+  });
+
+  it("opens a mailto address", async () => {
+    const { container } = renderLinksGrid();
+
+    fireEvent.contextMenu(cellAt(container, 0, 2));
+    fireEvent.click(await screen.findByText("contextMenu.openLink"));
+
+    expect(openUrl).toHaveBeenCalledExactlyOnceWith("mailto:alice@example.com");
+  });
+
+  it("never offers the entry for other schemes or plain text", async () => {
+    const { container } = renderLinksGrid();
+
+    for (const [row, col] of [
+      [0, 4],
+      [1, 1],
+      [1, 2],
+      [1, 4],
+    ] as const) {
+      fireEvent.contextMenu(cellAt(container, row, col));
+      await screen.findByText("dataGrid.copyCell");
+      expect(screen.queryByText("contextMenu.openLink")).toBeNull();
+      fireEvent.keyDown(document, { key: "Escape" });
+    }
+  });
+
+  it("never offers the entry for a masked cell", async () => {
+    const { container } = renderLinksGrid();
+
+    expect(cellAt(container, 0, 3)).toHaveTextContent("••••••");
+    fireEvent.contextMenu(cellAt(container, 0, 3));
+    await screen.findByText("dataGrid.copyCell");
+    expect(screen.queryByText("contextMenu.openLink")).toBeNull();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("logs a failure to open the link and reports it with an error toast", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(openUrl).mockRejectedValue("no handler");
+    const { container } = renderLinksGrid();
+
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    fireEvent.click(await screen.findByText("contextMenu.openLink"));
+
+    await waitFor(() =>
+      expect(showToastMock).toHaveBeenCalledWith(
+        expect.stringContaining("contextMenu.openLinkFailed"),
+        { kind: "error" },
+      ),
+    );
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 });
 
@@ -2136,5 +2474,216 @@ describe("DataGrid vertical scroll position across tab switches (#823)", () => {
     } finally {
       virtualizerRenderControl.forceEmpty = false;
     }
+  });
+});
+
+describe("DataGrid Edit selection context menu (#1000)", () => {
+  const columns = ["id", "name", "city"];
+  const metadata = [
+    { name: "id", data_type: "integer", is_pk: true, is_nullable: false, is_auto_increment: false },
+    { name: "name", data_type: "varchar(50)", is_pk: false, is_nullable: false, is_auto_increment: false },
+    { name: "city", data_type: "varchar(50)", is_pk: false, is_nullable: true, is_auto_increment: false },
+  ];
+  const data: unknown[][] = [
+    [1, " alice ", "Portland"],
+    [2, "Bob", null],
+    [3, "cara", "denver"],
+  ];
+  const cellAt = (container: HTMLElement, rowIndex: number, colIndex: number) =>
+    container.querySelector(
+      `tr[data-row-index="${rowIndex}"] td[data-col-index="${colIndex}"]`,
+    )!;
+
+  const renderGrid = (overrides: Partial<ComponentProps<typeof DataGrid>> = {}) => {
+    const onPendingChange = vi.fn();
+    const utils = render(
+      <DataGrid
+        columns={columns}
+        data={data}
+        tableName="people"
+        pkColumns={["id"]}
+        columnMetadata={metadata}
+        nullableColumns={["city"]}
+        onPendingChange={onPendingChange}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        {...overrides}
+      />,
+    );
+    return { ...utils, onPendingChange };
+  };
+
+  // Header text also appears in the column tooltip, so select by the header's own button.
+  const selectColumn = (colIndex: number) =>
+    fireEvent.click(screen.getAllByLabelText("dataGrid.selectColumn")[colIndex], {
+      metaKey: true,
+    });
+
+  const openEditSelection = async () => {
+    fireEvent.mouseEnter(await screen.findByText("dataGrid.editSelection"));
+  };
+
+  beforeEach(() => {
+    showToastMock.mockClear();
+    translationMock.mockClear();
+  });
+
+  it("changes the case of every cell in the range, not only the clicked one", async () => {
+    const { container, onPendingChange } = renderGrid();
+
+    fireEvent.click(cellAt(container, 0, 1));
+    fireEvent.click(cellAt(container, 2, 2), { shiftKey: true });
+    fireEvent.contextMenu(cellAt(container, 1, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.upperCase"));
+
+    expect(onPendingChange.mock.calls).toEqual([
+      [{ id: 1 }, "name", " ALICE "],
+      [{ id: 2 }, "name", "BOB"],
+      [{ id: 3 }, "name", "CARA"],
+      [{ id: 1 }, "city", "PORTLAND"],
+      [{ id: 3 }, "city", "DENVER"],
+    ]);
+    expect(showToastMock).toHaveBeenCalledWith("dataGrid.editedCells", {
+      kind: "success",
+    });
+  });
+
+  it("fills a selected column down from its first cell", async () => {
+    const { container, onPendingChange } = renderGrid();
+
+    selectColumn(2);
+    fireEvent.contextMenu(cellAt(container, 2, 2));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.fillDown"));
+
+    expect(onPendingChange.mock.calls).toEqual([
+      [{ id: 2 }, "city", "Portland"],
+      [{ id: 3 }, "city", "Portland"],
+    ]);
+  });
+
+  it("transforms the pending value the grid shows, not the stored one", async () => {
+    const { container, onPendingChange } = renderGrid({
+      pendingChanges: {
+        [serializePkKey({ id: 2 })]: {
+          pkOriginalValue: { id: 2 },
+          changes: { name: "  Robert " },
+        },
+      },
+    });
+
+    selectColumn(1);
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.trimWhitespace"));
+
+    expect(onPendingChange.mock.calls).toEqual([
+      [{ id: 1 }, "name", "alice"],
+      [{ id: 2 }, "name", "Robert"],
+    ]);
+  });
+
+  it("stages nothing and says so when the edit changes no cell", async () => {
+    const { container, onPendingChange } = renderGrid();
+
+    fireEvent.contextMenu(cellAt(container, 1, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.titleCase"));
+
+    expect(onPendingChange).not.toHaveBeenCalled();
+    expect(showToastMock).toHaveBeenCalledWith("dataGrid.editSelectionNoChange", {
+      kind: "info",
+    });
+  });
+
+  it("disables fill down for a single row and offers Set NULL only on nullable columns", async () => {
+    const { container, onPendingChange } = renderGrid();
+
+    fireEvent.click(cellAt(container, 0, 1));
+    fireEvent.click(cellAt(container, 1, 2), { shiftKey: true });
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.setNull"));
+
+    expect(onPendingChange.mock.calls).toEqual([[{ id: 1 }, "city", null]]);
+
+    fireEvent.click(cellAt(container, 0, 1));
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openEditSelection();
+    expect(
+      (await screen.findByText("dataGrid.fillDown")).closest("button"),
+    ).toBeDisabled();
+    expect(screen.queryByText("dataGrid.setNull")).toBeNull();
+  });
+
+  it("sets every selected cell to the value typed in the dialog", async () => {
+    const { container, onPendingChange } = renderGrid();
+
+    fireEvent.click(cellAt(container, 1, 1));
+    fireEvent.click(cellAt(container, 2, 2), { shiftKey: true });
+    fireEvent.contextMenu(cellAt(container, 2, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.setToValue"));
+
+    fireEvent.change(screen.getByLabelText("dataGrid.setToValueLabel"), {
+      target: { value: "n/a" },
+    });
+    fireEvent.click(screen.getByText("dataGrid.setToValueApply"));
+
+    expect(onPendingChange.mock.calls).toEqual([
+      [{ id: 2 }, "name", "n/a"],
+      [{ id: 3 }, "name", "n/a"],
+      [{ id: 2 }, "city", "n/a"],
+      [{ id: 3 }, "city", "n/a"],
+    ]);
+    expect(screen.queryByLabelText("dataGrid.setToValueLabel")).toBeNull();
+  });
+
+  it("stages NULL over the text \"null\" and JSON values copied by fill down", async () => {
+    const { container, onPendingChange } = renderGrid({
+      columns: ["id", "name", "city", "settings"],
+      columnMetadata: [
+        ...metadata,
+        { name: "settings", data_type: "jsonb", is_pk: false, is_nullable: true, is_auto_increment: false },
+      ],
+      data: [
+        [1, "a", "null", { theme: "dark" }],
+        [2, "b", "Oslo", { theme: "light" }],
+      ],
+    });
+
+    fireEvent.contextMenu(cellAt(container, 0, 2));
+    await openEditSelection();
+    // The single-cell Set NULL is in the main menu too; the submenu's comes last.
+    fireEvent.click((await screen.findAllByText("dataGrid.setNull")).at(-1)!);
+    expect(onPendingChange.mock.calls).toEqual([[{ id: 1 }, "city", null]]);
+
+    onPendingChange.mockClear();
+    selectColumn(3);
+    fireEvent.contextMenu(cellAt(container, 1, 3));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.fillDown"));
+    expect(onPendingChange.mock.calls).toEqual([
+      [{ id: 2 }, "settings", { theme: "dark" }],
+    ]);
+  });
+
+  it.each([
+    ["a read-only grid", { readonly: true }, "dataGrid.editSelectionReadOnly"],
+    ["a result without a source table", { tableName: null }, "dataGrid.editSelectionNoTable"],
+    ["a table without a primary key", { pkColumns: null }, "dataGrid.editSelectionNoKey"],
+  ])("shows the submenu disabled with the reason on %s", async (_, overrides, reason) => {
+    const { container } = renderGrid(overrides);
+
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+
+    expect(
+      (await screen.findByText("dataGrid.editSelectionUnavailable")).closest("button"),
+    ).toBeDisabled();
+    expect(screen.queryByText("dataGrid.editSelection")).toBeNull();
+    expect(translationMock).toHaveBeenCalledWith("dataGrid.editSelectionUnavailable", {
+      reason,
+    });
   });
 });

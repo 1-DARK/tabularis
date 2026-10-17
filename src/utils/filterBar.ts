@@ -1,6 +1,7 @@
 import type { TableColumn } from "../types/editor";
 import type { DriverCapabilities, PluginManifest } from "../types/plugins";
 import { formatSqlIdentifier, quoteIdentifier, quoteTableRef } from "./identifiers";
+import { formatSqlValueForColumnComparison, isMysqlFloatColumn } from "./foreignKeys";
 
 
 export type FilterOperator =
@@ -174,6 +175,7 @@ export function buildSingleFilterClause(
   filter: StructuredFilter,
   driver?: string | PluginManifest | DriverCapabilities | null,
   quoteMode: FilterQuoteMode = "auto",
+  columnType?: string,
 ): string {
   const col =
     quoteMode === "always"
@@ -198,21 +200,7 @@ export function buildSingleFilterClause(
   }
 
   if (op === "contains" || op === "starts with" || op === "ends with") {
-    const escaped = escapeLikePattern(filter.value);
-    let pattern: string;
-    if (op === "contains") {
-      pattern = `%${escaped}%`;
-    } else if (op === "starts with") {
-      pattern = `${escaped}%`;
-    } else {
-      pattern = `%${escaped}`;
-    }
-    // MySQL/MariaDB (default sql_mode) treat backslash as an escape inside
-    // string literals, so a literal backslash must be doubled to survive.
-    const literal = usesBackslashStringEscapes(driver)
-      ? pattern.replace(/\\/g, "\\\\")
-      : pattern;
-    return `${col} LIKE ${quoteLiteral(literal)} ESCAPE '${LIKE_ESCAPE}'`;
+    return buildLiteralLikeClause(col, filter.value, op, driver);
   }
 
   if (op === "BETWEEN") {
@@ -233,6 +221,9 @@ export function buildSingleFilterClause(
   return `${col} ${op} ${val}`;
 
   function quoteValue(value: string, doubleQuotedValue = false): string {
+    if (isMysqlFloatColumn(driver, columnType) && /^-?\d+(\.\d+)?$/.test(value)) {
+      return formatSqlValueForColumnComparison(Number(value), driver, columnType);
+    }
     // Escape at clause construction, including values the picker already quoted.
     // Stored filter values stay dialect-independent when the picker reopens.
     return quoteIfNeeded(
@@ -240,6 +231,38 @@ export function buildSingleFilterClause(
       doubleQuotedValue,
     );
   }
+}
+
+/** Where a literal LIKE match may sit inside the column value. */
+export type LikeMatchMode = "contains" | "starts with" | "ends with";
+
+/**
+ * Builds `col LIKE '<pattern>' ESCAPE '!'` that matches `value` literally:
+ * `%`, `_` and the escape character in the value are escaped, so they don't
+ * act as wildcards, and the pattern is wrapped with `%` according to `mode`.
+ * `col` must already be a quoted/formatted identifier.
+ */
+export function buildLiteralLikeClause(
+  col: string,
+  value: string,
+  mode: LikeMatchMode,
+  driver: string | PluginManifest | DriverCapabilities | null | undefined,
+): string {
+  const escaped = escapeLikePattern(value);
+  let pattern: string;
+  if (mode === "contains") {
+    pattern = `%${escaped}%`;
+  } else if (mode === "starts with") {
+    pattern = `${escaped}%`;
+  } else {
+    pattern = `%${escaped}`;
+  }
+  // MySQL/MariaDB (default sql_mode) treat backslash as an escape inside
+  // string literals, so a literal backslash must be doubled to survive.
+  const literal = usesBackslashStringEscapes(driver)
+    ? pattern.replace(/\\/g, "\\\\")
+    : pattern;
+  return `${col} LIKE ${quoteLiteral(literal)} ESCAPE '${LIKE_ESCAPE}'`;
 }
 
 /**
@@ -375,10 +398,18 @@ export function buildStructuredFilterClause(
   driver?: string | PluginManifest | DriverCapabilities | null,
   combinator: FilterCombinator = "AND",
   quoteMode: FilterQuoteMode = "auto",
+  columns?: readonly TableColumn[],
 ): string {
   const clauses = filters
     .filter((f) => f.column && f.enabled !== false && isFilterComplete(f))
-    .map((f) => buildSingleFilterClause(f, driver, quoteMode));
+    .map((f) =>
+      buildSingleFilterClause(
+        f,
+        driver,
+        quoteMode,
+        columns?.find((c) => c.name === f.column)?.data_type,
+      ),
+    );
   const joined = clauses.join(` ${combinator} `);
   return combinator === "OR" && clauses.length > 1 ? `(${joined})` : joined;
 }
@@ -510,12 +541,13 @@ export function buildValuePickerWhere(
   excludeId: string,
   driver: string | PluginManifest | DriverCapabilities | null | undefined,
   combinator: FilterCombinator,
+  columns?: readonly TableColumn[],
 ): string {
   if (combinator === "OR") return "";
   const others = filters.filter((f) => f.id !== excludeId);
   // Always quote columns so the WHERE matches buildDistinctValuesQuery
   // (quoteIdentifier), including MySQL reserved words like `order` / `group`.
-  return buildStructuredFilterClause(others, driver, "AND", "always");
+  return buildStructuredFilterClause(others, driver, "AND", "always", columns);
 }
 
 function stringifyCell(value: unknown): string {

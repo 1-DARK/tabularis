@@ -11,7 +11,7 @@ use crate::drivers::driver_trait::{DatabaseDriver, SqlDialect};
 use crate::drivers::registry as driver_registry;
 use crate::drivers::{mysql, postgres, sqlite};
 use crate::heartbeat;
-use crate::models::{ConnectionParams, K8sConnection, SshConnection};
+use crate::models::{ConnectionParams, DatabaseSelection, K8sConnection, SshConnection};
 use crate::paths;
 use crate::persistence;
 use crate::plugins;
@@ -41,6 +41,7 @@ struct CallAudit {
     tool: String,
     connection_id: Option<String>,
     connection_name: Option<String>,
+    database: Option<String>,
     query: Option<String>,
     query_kind: Option<String>,
     rows: Option<usize>,
@@ -55,6 +56,7 @@ impl CallAudit {
             tool: tool.to_string(),
             connection_id: None,
             connection_name: None,
+            database: None,
             query: None,
             query_kind: None,
             rows: None,
@@ -726,6 +728,7 @@ fn handle_list_tools(config: &AppConfig) -> Result<Value, JsonRpcError> {
                 "properties": {
                     "connection_id": { "type": "string", "description": "The ID or name of the connection" },
                     "schema": { "type": "string", "description": "Schema name (optional, defaults to 'public' for PostgreSQL)" },
+                    "database": { "type": "string", "description": "Database to use on a connection with several databases selected (optional, defaults to the first one)" },
                     "output_format": output_format_schema(default_output_format)
                 },
                 "required": ["connection_id"]
@@ -742,6 +745,7 @@ fn handle_list_tools(config: &AppConfig) -> Result<Value, JsonRpcError> {
                     "connection_id": { "type": "string", "description": "The ID or name of the connection" },
                     "table_name": { "type": "string", "description": "The name of the table to describe" },
                     "schema": { "type": "string", "description": "Schema name (optional, defaults to 'public' for PostgreSQL)" },
+                    "database": { "type": "string", "description": "Database to use on a connection with several databases selected (optional, defaults to the first one)" },
                     "output_format": output_format_schema(default_output_format)
                 },
                 "required": ["connection_id", "table_name"]
@@ -755,6 +759,7 @@ fn handle_list_tools(config: &AppConfig) -> Result<Value, JsonRpcError> {
                 "properties": {
                     "connection_id": { "type": "string", "description": "The ID or name of the connection" },
                     "query": { "type": "string", "description": "The SQL query to execute" },
+                    "database": { "type": "string", "description": "Database to use on a connection with several databases selected (optional, defaults to the first one)" },
                     "limit": { "type": "integer", "description": "Maximum number of rows to return (default: 100). If the query already contains a LIMIT clause smaller than this value, the query's LIMIT takes precedence." },
                     "output_format": output_format_schema(default_output_format)
                 },
@@ -850,6 +855,7 @@ fn emit_audit(
         tool: audit.tool.clone(),
         connection_id: audit.connection_id.clone(),
         connection_name: audit.connection_name.clone(),
+        database: audit.database.clone(),
         query: audit.query.clone(),
         query_kind: audit.query_kind.clone(),
         duration_ms: start.elapsed().as_millis() as u64,
@@ -983,6 +989,22 @@ async fn tool_list_connections(
     tool_result(&json!(list), format)
 }
 
+/// The `database` argument of a tool call, if the caller named one.
+fn database_arg(args: &serde_json::Map<String, Value>) -> Option<&str> {
+    args.get("database")
+        .and_then(|v| v.as_str())
+        .filter(|d| !d.is_empty())
+}
+
+/// Point `params` at `database` when the caller names one, the same way the
+/// GUI's query commands apply their `database` argument. Without it a
+/// connection with several databases selected always runs against the first.
+fn apply_database_override(params: &mut ConnectionParams, database: Option<&str>) {
+    if let Some(db) = database {
+        params.database = DatabaseSelection::Single(db.to_string());
+    }
+}
+
 async fn tool_list_tables(
     args: &serde_json::Map<String, Value>,
     config: &AppConfig,
@@ -1001,9 +1023,12 @@ async fn tool_list_tables(
 
     audit.connection_id = Some(conn_id.to_string());
 
-    let (conn, db_params, driver) =
+    let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
     audit.connection_name = Some(conn.name.clone());
+    let database = database_arg(args);
+    audit.database = database.map(str::to_string);
+    apply_database_override(&mut db_params, database);
 
     let effective_schema = resolve_default_schema(&driver, schema);
     let tables = driver
@@ -1080,9 +1105,12 @@ async fn tool_describe_table(
 
     audit.connection_id = Some(conn_id.to_string());
 
-    let (conn, db_params, driver) =
+    let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
     audit.connection_name = Some(conn.name.clone());
+    let database = database_arg(args);
+    audit.database = database.map(str::to_string);
+    apply_database_override(&mut db_params, database);
 
     let effective_schema = resolve_default_schema(&driver, schema);
     // Run the three metadata fetches concurrently so a slow driver costs one
@@ -1138,9 +1166,12 @@ async fn tool_run_query(
     let kind = ai_activity::classify_query_kind(query);
     audit.query_kind = Some(kind.to_string());
 
-    let (conn, db_params, driver) =
+    let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
     audit.connection_name = Some(conn.name.clone());
+    let database = database_arg(args);
+    audit.database = database.map(str::to_string);
+    apply_database_override(&mut db_params, database);
 
     // Read-only enforcement (fail-closed: unknown counts as write).
     if config::is_connection_readonly(config, &conn.id) && kind != "select" {
@@ -1208,6 +1239,7 @@ async fn tool_run_query(
             session_id: session_id.to_string(),
             connection_id: conn.id.clone(),
             connection_name: conn.name.clone(),
+            database: database.map(str::to_string),
             query: query.to_string(),
             query_kind: kind.to_string(),
             client_hint: ai_activity::get_client_hint(),
