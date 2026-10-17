@@ -95,8 +95,11 @@ const guestApi = Object.freeze({
     return (key: string, options?: Record<string, unknown>): string => {
       let value: unknown = translations;
       for (const part of key.split(".")) value = asRecord(value)[part];
-      let translated = typeof value === "string" ? value : key;
-      for (const [name, replacement] of Object.entries(options ?? {})) {
+      const { defaultValue, ...interpolations } = options ?? {};
+      let translated = typeof value === "string"
+        ? value
+        : typeof defaultValue === "string" ? defaultValue : key;
+      for (const [name, replacement] of Object.entries(interpolations)) {
         translated = translated.replaceAll(`{{${name}}}`, String(replacement));
       }
       return translated;

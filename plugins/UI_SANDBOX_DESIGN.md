@@ -64,3 +64,19 @@ it is separate from the iframe RPC boundary.
 Plugins must not import Tauri APIs or use `window.__TAURI__` directly. The host
 injects `__TABULARIS_API__` only in the guest frame; `__TABULARIS_EXPLAIN__` is
 also available there for EXPLAIN parser bundles.
+
+## Published UI plugin compatibility audit
+
+The published Tabularium catalogue currently has five plugins with UI slots:
+
+| Plugin | Existing UI behavior | Sandbox compatibility |
+| --- | --- | --- |
+| [DynamoDB](https://github.com/TabularisDB/tabularis-dynamodb-plugin) | Extra connection fields via `setExtraField` | Supported through the slot callback RPC. |
+| [Elasticsearch](https://github.com/TabularisDB/tabularis-elasticsearch-plugin) | Database field via `onDatabaseChange` | Supported through the slot callback RPC. |
+| [Cloudflare D1](https://github.com/josejorge/tabularis_cloudflare_d1_plugin) | Help text, translations, and `openUrl` | Supported by the guest API, including the `defaultValue` translation fallback. |
+| [SQL Server](https://github.com/TabularisDB/tabularis-sqlserver-plugin) | Extra field and credential visibility callbacks | Supported through the slot callback RPC. |
+| [Google Sheets](https://github.com/TabularisDB/tabularis-google-sheets-plugin) | OAuth settings modal and database field | The slot APIs are supported; the OAuth code exchange must migrate from direct `fetch` to `exchangeGoogleOAuthToken` before upgrading to the sandboxed host. |
+
+This audit is based on the public registry's plugin manifests and the UI source
+in each linked plugin repository. The Google Sheets plugin needs a companion
+release containing the OAuth migration before this sandbox change ships.
