@@ -12,6 +12,8 @@ Adhere to the rules defined in the [rules directory](./.rules/):
 - [Accessibility Rules](./.rules/accessibility.md) (jsx-a11y lint, keyboard access, dialogs, focus)
 - [Plugin Driver Rules](./.rules/plugins.md) (capabilities over driver ids, dialect-aware SQL, plugin contract)
 
+When reviewing pull requests, follow [REVIEW.md](./REVIEW.md).
+
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
