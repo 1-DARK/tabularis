@@ -168,6 +168,8 @@ interface ConnectionParams {
   ssm_region?: string;
   // SQL run on every new connection (e.g. SET / set_config)
   startup_script?: string;
+  /** Connection pooler mode for PgBouncer / transaction-mode poolers. */
+  pooler_mode?: string;
   // Opaque plugin-specific connection fields, forwarded verbatim to the
   // driver/plugin and persisted as-is in connections.json.
   extra?: Record<string, string>;
@@ -2030,6 +2032,7 @@ export const NewConnectionModal = ({
       ssm_target: undefined,
       ssm_profile: undefined,
       ssm_region: undefined,
+      pooler_mode: undefined,
     });
     invalidateK8sDiscovery();
     invalidateInlineK8sTest();
@@ -3152,6 +3155,31 @@ export const NewConnectionModal = ({
         />
         </div>
       </div>
+
+      {/* PostgreSQL: pooler mode (PgBouncer transaction/session) */}
+      {isPostgresDialect && (
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] uppercase font-semibold tracking-wider text-muted block">
+            {t("newConnection.poolerMode")}
+          </label>
+          <Select
+            value={formData.pooler_mode ?? "none"}
+            options={["none", "transaction", "session"]}
+            labels={{
+              none: t("newConnection.poolerModes.none"),
+              transaction: t("newConnection.poolerModes.transaction"),
+              session: t("newConnection.poolerModes.session"),
+            }}
+            onChange={(v) => updateField("pooler_mode", v === "none" ? undefined : v)}
+            searchable={false}
+          />
+          {formData.pooler_mode === "transaction" && (
+            <p className="text-xs text-muted leading-snug">
+              {t("newConnection.poolerModeTransactionHint")}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-2 border-t border-default pt-4">
         <label className="text-[10px] uppercase font-semibold tracking-wider text-muted block">
