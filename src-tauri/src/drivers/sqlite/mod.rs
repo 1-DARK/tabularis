@@ -1074,6 +1074,7 @@ impl SqliteDriver {
                     supports_ssl: false,
                     user_management: false,
                     sql_dialect: Some(SqlDialect::Sqlite),
+                    sql_syntax: None,
                 },
                 is_builtin: true,
                 engine: Some("sqlite".to_string()),

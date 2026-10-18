@@ -31,7 +31,7 @@ use helpers::{
 };
 use row_identity::get_float_columns;
 use sqlx::{Column, Row};
-use stmt_classify::is_text_protocol_stmt;
+use stmt_classify::{is_text_protocol_stmt, HASH_COMMENTS};
 
 /// Whether this connection must avoid the prepared-statement protocol.
 ///
@@ -1438,7 +1438,7 @@ async fn exec_on_mysql_conn(
     // Non-result-set statements (INSERT / UPDATE / DELETE / DDL) go through
     // `execute()` so we can return the actual `rows_affected`. In text mode
     // they must use `raw_sql` (COM_QUERY) since the bastion rejects prepares.
-    if !crate::drivers::common::returns_result_set(query) {
+    if !crate::drivers::common::returns_result_set_for(query, *HASH_COMMENTS) {
         use sqlx::Executor;
         let exec_result = if text.enabled {
             conn.execute(sqlx::raw_sql(query)).await
@@ -1458,7 +1458,7 @@ async fn exec_on_mysql_conn(
         });
     }
 
-    let is_select = crate::drivers::common::is_select_query(query);
+    let is_select = crate::drivers::common::is_select_query_for(query, *HASH_COMMENTS);
     let mut pagination: Option<Pagination> = None;
     let final_query: String;
     let mut manual_limit = limit;
@@ -1981,6 +1981,7 @@ impl MysqlDriver {
                     user_management: true,
                     supports_ssl: true,
                     sql_dialect: Some(SqlDialect::Mysql),
+                    sql_syntax: None,
                 },
                 is_builtin: true,
                 engine: Some("mysql".to_string()),

@@ -5,7 +5,14 @@
 /// on this to route commented-header SELECTs through the pagination
 /// path.
 pub fn is_select_query(query: &str) -> bool {
-    strip_leading_sql_comments(query)
+    is_select_query_for(query, false)
+}
+
+/// [`is_select_query`] for a driver whose resolved syntax has `#` line
+/// comments (`hash_comments`). Must use the same flag as
+/// [`returns_result_set_for`] so `# note\nSELECT 1` is paginated too.
+pub fn is_select_query_for(query: &str, hash_comments: bool) -> bool {
+    strip_leading_sql_comments_for(query, hash_comments)
         .trim_start()
         .to_uppercase()
         .starts_with("SELECT")
@@ -13,11 +20,22 @@ pub fn is_select_query(query: &str) -> bool {
 
 /// Strip leading SQL comments (`-- …` line comments and `/* … */` block
 /// comments) and whitespace so the first statement keyword is at position 0.
+///
+/// A leading `#` is kept: it is code (or an error) outside MySQL-like
+/// syntaxes. Drivers whose resolved syntax has `#` comments use
+/// [`strip_leading_sql_comments_for`].
 pub fn strip_leading_sql_comments(query: &str) -> &str {
+    strip_leading_sql_comments_for(query, false)
+}
+
+/// [`strip_leading_sql_comments`] that also strips `# …` line comments when
+/// `hash_comments` is set (the driver's resolved `SqlSyntax::hash_comments`,
+/// e.g. MySQL / MariaDB).
+pub fn strip_leading_sql_comments_for(query: &str, hash_comments: bool) -> &str {
     let mut s = query;
     loop {
         s = s.trim_start();
-        if s.starts_with("--") {
+        if s.starts_with("--") || (hash_comments && s.starts_with('#')) {
             match s.find('\n') {
                 Some(pos) => s = &s[pos + 1..],
                 None => return "",
@@ -46,7 +64,13 @@ pub fn strip_leading_sql_comments(query: &str) -> &str {
 /// lesser evil compared to misclassifying procedures that do return
 /// rows.
 pub fn returns_result_set(query: &str) -> bool {
-    let head = strip_leading_sql_comments(query)
+    returns_result_set_for(query, false)
+}
+
+/// [`returns_result_set`] for a driver whose resolved syntax has `#` line
+/// comments (`hash_comments`), so `# note\nSELECT 1` still fetches rows.
+pub fn returns_result_set_for(query: &str, hash_comments: bool) -> bool {
+    let head = strip_leading_sql_comments_for(query, hash_comments)
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .next()
         .unwrap_or("")
@@ -78,7 +102,13 @@ pub fn returns_result_set(query: &str) -> bool {
 /// `src/utils/sqlSplitter/classify.ts` (EXPLAINABLE_KEYWORDS) so the
 /// editor's Explain UI cannot offer a statement the backend will refuse.
 pub fn is_explainable_query(query: &str) -> bool {
-    let upper = strip_leading_sql_comments(query).to_uppercase();
+    is_explainable_query_for(query, false)
+}
+
+/// [`is_explainable_query`] for a driver whose resolved syntax has `#` line
+/// comments (`hash_comments`), so `# note\nSELECT 1` can be explained.
+pub fn is_explainable_query_for(query: &str, hash_comments: bool) -> bool {
+    let upper = strip_leading_sql_comments_for(query, hash_comments).to_uppercase();
     upper.starts_with("SELECT")
         || upper.starts_with("INSERT")
         || upper.starts_with("UPDATE")

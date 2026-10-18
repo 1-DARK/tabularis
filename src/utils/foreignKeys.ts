@@ -1,6 +1,7 @@
 import type { ForeignKey } from "../types/schema";
 import type { DriverCapabilities, PluginManifest } from "../types/plugins";
 import { isMysqlDialect, isPostgresDialect, quoteIdentifier } from "./identifiers";
+import { quoteSqlString, sqlBooleanLiteral, stringEscapeStyle } from "./sqlLiteral";
 
 const NUMERIC_TYPE_KEYWORDS = [
   "int",
@@ -104,18 +105,27 @@ export function isNumericColumnType(type: string | undefined): boolean {
   return NUMERIC_TYPE_KEYWORDS.some((kw) => lower.includes(kw));
 }
 
-export function formatSqlValueForFilter(value: unknown, columnType?: string): string {
+export function formatSqlValueForFilter(
+  value: unknown,
+  columnType?: string,
+  driver?: string | PluginManifest | DriverCapabilities | null,
+): string {
   if (typeof value === "number" || typeof value === "bigint") {
     return String(value);
   }
   if (typeof value === "boolean") {
-    return value ? "TRUE" : "FALSE";
+    // TRUE/FALSE unless the driver declares `sql_syntax.boolean_literals`.
+    return sqlBooleanLiteral(value, driver);
   }
   const str = String(value);
   if (isNumericColumnType(columnType) && /^-?\d+(\.\d+)?$/.test(str)) {
     return str;
   }
-  return `'${str.replace(/'/g, "''")}'`;
+  // A backslash-escape syntax (GoogleSQL) has no doubled-quote escape;
+  // every other driver keeps the standard form.
+  return stringEscapeStyle(driver) === "backslash"
+    ? quoteSqlString(str, driver)
+    : `'${str.replace(/'/g, "''")}'`;
 }
 
 export function isMysqlFloatColumn(
@@ -138,7 +148,7 @@ export function formatSqlValueForColumnComparison(
     const widened = Math.fround(value);
     if (Number.isFinite(widened)) return String(widened);
   }
-  const literal = formatSqlValueForFilter(value, columnType);
+  const literal = formatSqlValueForFilter(value, columnType, driver);
   const isPostgresReal = isPostgresDialect(driver) &&
     /^(real|float4)$/i.test(columnType?.trim() ?? "");
   return isPostgresReal ? `CAST(${literal} AS real)` : literal;

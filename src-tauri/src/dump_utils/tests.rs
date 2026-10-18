@@ -431,6 +431,69 @@ fn boolean_literals_follow_the_dialect() {
     assert_eq!(with(Some(SqlDialect::Oracle)), "1");
 }
 
+#[test]
+fn declared_boolean_literals_override_the_dialect() {
+    let declared = |driver_id: &str, dialect: Option<SqlDialect>, style: &str| {
+        let mut caps = serde_json::to_value(DriverCapabilities {
+            sql_dialect: dialect,
+            ..Default::default()
+        })
+        .unwrap();
+        caps["sql_syntax"] = json!({ "boolean_literals": style });
+        let caps: DriverCapabilities = serde_json::from_value(caps).unwrap();
+        let dump = DumpDialect::from_capabilities(driver_id, &caps);
+        (
+            dump.escape_value(json!(true)),
+            dump.escape_value(json!(false)),
+        )
+    };
+    let keywords = ("TRUE".to_string(), "FALSE".to_string());
+    let numeric = ("1".to_string(), "0".to_string());
+    assert_eq!(
+        declared("plugin", Some(SqlDialect::Mysql), "keywords"),
+        keywords
+    );
+    assert_eq!(
+        declared("plugin", Some(SqlDialect::Generic), "keywords"),
+        keywords
+    );
+    assert_eq!(declared("plugin", None, "keywords"), keywords);
+    assert_eq!(
+        declared("plugin", Some(SqlDialect::Postgres), "numeric"),
+        numeric
+    );
+    assert_eq!(declared("postgresql", None, "numeric"), numeric);
+    // An invalid value is ignored: the dialect's default applies.
+    assert_eq!(declared("plugin", Some(SqlDialect::Mysql), "yes"), numeric);
+    assert_eq!(
+        declared("plugin", Some(SqlDialect::Postgres), "yes"),
+        keywords
+    );
+}
+
+#[test]
+fn googlesql_dump_writes_boolean_keywords() {
+    // GoogleSQL has no implicit INT64 -> BOOL coercion: 1/0 into a BOOL
+    // column fails, so the fixture declares keywords on top of `mysql`.
+    let caps = crate::drivers::sql_syntax_tests::googlesql_capabilities();
+    let dialect = DumpDialect::from_capabilities("bigquery", &caps);
+    assert_eq!(
+        dialect.insert_into_statement(
+            None,
+            "flags",
+            &format!(
+                "({}, {}, {})",
+                dialect.escape_value(json!(true)),
+                dialect.escape_value(json!(false)),
+                dialect.escape_value(json!("it's"))
+            )
+        ),
+        "INSERT INTO `flags` VALUES (TRUE, FALSE, 'it\\'s');"
+    );
+    // JSON columns keep JSON scalars.
+    assert_eq!(dialect.escape_json_value(json!(true)), "'true'");
+}
+
 // ---------------------------------------------------------------------------
 // Literal escaping (moved from dump_commands)
 // ---------------------------------------------------------------------------
@@ -521,4 +584,66 @@ fn json_column_values_postgres() {
     );
     assert_eq!(d.escape_json_value(json!("it's")), r#"'"it''s"'"#);
     assert_eq!(d.escape_json_value(json!(false)), "'false'");
+}
+
+#[test]
+fn declared_backslash_escape_writes_googlesql_literals() {
+    let caps = crate::drivers::sql_syntax_tests::googlesql_capabilities();
+    let dialect = DumpDialect::from_capabilities("bigquery", &caps);
+    assert_eq!(dialect.string_escape, LiteralStyle::Backslash);
+    assert_eq!(dialect.escape_value(json!("it's")), "'it\\'s'");
+    assert_eq!(dialect.escape_value(json!("a\\b\nc")), "'a\\\\b\\nc'");
+    assert_eq!(
+        dialect.escape_json_value(json!({ "k": "v'" })),
+        "'{\"k\":\"v\\'\"}'"
+    );
+    assert_eq!(dialect.table_ref(None, "events"), "`events`");
+}
+
+#[test]
+fn declared_standard_escape_cannot_weaken_the_mysql_preset() {
+    // A mysql base (sql_dialect, or extends) keeps doubling backslashes even
+    // when the descriptor declares "standard": the engine still reads `\`
+    // as an escape character.
+    let standard = || {
+        Some(crate::drivers::sql_syntax::SqlSyntaxDescriptor {
+            string_escape: Some(crate::drivers::sql_syntax::StringEscape::Standard),
+            ..Default::default()
+        })
+    };
+    let via_dialect = DriverCapabilities {
+        sql_dialect: Some(SqlDialect::Mysql),
+        sql_syntax: standard(),
+        ..Default::default()
+    };
+    let via_extends = DriverCapabilities {
+        sql_syntax: Some(crate::drivers::sql_syntax::SqlSyntaxDescriptor {
+            extends: Some(SqlDialect::Mysql),
+            string_escape: Some(crate::drivers::sql_syntax::StringEscape::Standard),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for caps in [via_dialect, via_extends] {
+        let dialect = DumpDialect::from_capabilities("plugin", &caps);
+        assert_eq!(dialect.escape_value(json!("a\\b")), "'a\\\\b'");
+        assert_eq!(dialect.escape_value(json!("a\u{0}b")), "'a\\0b'");
+    }
+    // On a standard base, "standard" is honoured.
+    let generic = DriverCapabilities {
+        sql_dialect: Some(SqlDialect::Generic),
+        sql_syntax: standard(),
+        ..Default::default()
+    };
+    assert_eq!(
+        DumpDialect::from_capabilities("plugin", &generic).escape_value(json!("a\\b")),
+        "'a\\b'"
+    );
+}
+
+#[test]
+fn declared_backslash_escape_writes_nul_as_an_escape() {
+    let caps = crate::drivers::sql_syntax_tests::googlesql_capabilities();
+    let dialect = DumpDialect::from_capabilities("bigquery", &caps);
+    assert_eq!(dialect.escape_value(json!("a\u{0}b")), "'a\\0b'");
 }

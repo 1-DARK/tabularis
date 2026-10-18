@@ -129,6 +129,12 @@ pub mod drivers {
     pub mod mysql;
     pub mod postgres;
     pub mod registry;
+    pub mod sql_dialect;
+    #[cfg(test)]
+    pub mod sql_dialect_tests;
+    pub mod sql_syntax;
+    #[cfg(test)]
+    pub mod sql_syntax_tests;
     pub mod sqlite;
 }
 
