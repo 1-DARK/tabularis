@@ -1498,6 +1498,7 @@
     "stop": "Detener",
     "run": "Ejecutar",
     "runSelection": "Ejecutar selección",
+    "copyWithoutComments": "Copiar SQL sin comentarios",
     "runStatement": "Ejecutar sentencia",
     "runAll": "Ejecutar todo",
     "export": "Exportar",
