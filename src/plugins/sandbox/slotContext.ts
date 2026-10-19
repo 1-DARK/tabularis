@@ -4,6 +4,7 @@ const CALLBACK_NAMES = [
   "onDatabaseChange",
   "setExtraField",
   "setCredentialFieldsHidden",
+  "setSecretField",
 ] as const;
 
 export type SlotHostCallback = (method: string, ...args: unknown[]) => void;
@@ -37,6 +38,10 @@ export function hydratePluginSlotContext(
   if (callbacks.includes("setCredentialFieldsHidden")) {
     hydrated.setCredentialFieldsHidden = (hidden: boolean) =>
       callHost("slot.setCredentialFieldsHidden", hidden);
+  }
+  if (callbacks.includes("setSecretField")) {
+    hydrated.setSecretField = (key: string, value: string) =>
+      callHost("slot.setSecretField", key, value);
   }
   return hydrated;
 }

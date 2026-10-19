@@ -928,6 +928,7 @@
       "enabled": "Abilitato",
       "disabled": "Disabilitato",
       "openFolder": "Apri cartella plugin",
+      "legacyGoogleSheetsOAuthHint": "Aggiorna il plugin Google Sheets per ripristinare l’accesso Google in questa versione di Tabularis.",
       "installError": {
         "title": "Installazione fallita",
         "subtitle": "Si è verificato un errore durante l'installazione del plugin. Vedi i dettagli qui sotto.",

@@ -1,4 +1,5 @@
-import { useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl as openExternal } from "@tauri-apps/plugin-opener";
 import { useTranslation } from "react-i18next";
@@ -22,11 +23,13 @@ const MAX_HEIGHT = 4000;
 export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
   const { settings, updateSetting } = useSettings();
   const { showToast } = useToast();
-  const { i18n } = useTranslation();
-  const language = i18n.language;
+  const { i18n, t } = useTranslation();
+  const language = i18n.resolvedLanguage ?? i18n.language;
   const theme = useContext(ThemeContext);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
   const rpcRef = useRef<RpcPort | null>(null);
+  const legacyOAuthHintShown = useRef(false);
   const guestContext: SlotContext = useMemo(
     () => ({
       ...context,
@@ -46,6 +49,27 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
   );
   const contextRef = useRef(guestContext);
   const [height, setHeight] = useState(0);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [frameRect, setFrameRect] = useState({ left: 0, top: 0, width: 0 });
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      setFrameRect({ left: rect.left, top: rect.top, width: rect.width });
+    };
+    updatePosition();
+    const resizeObserver = new ResizeObserver(updatePosition);
+    resizeObserver.observe(anchor);
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [height]);
 
   useEffect(() => {
     const frame = frameRef.current;
@@ -53,6 +77,10 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
     const controller = new AbortController();
     let disposed = false;
     const handlers = {
+      "ui.modal": (open: unknown) => {
+        if (typeof open !== "boolean") throw new Error("Modal state must be a boolean");
+        setModalOpen(open);
+      },
       "ui.resize": (value: unknown) => {
         const requested = typeof value === "number" ? value : 0;
         setHeight(Math.min(MAX_HEIGHT, Math.max(0, requested)));
@@ -77,6 +105,15 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
         const callback = contextRef.current.setCredentialFieldsHidden;
         if (typeof callback !== "function") throw new Error("Credential fields are unavailable in this slot");
         callback(hidden);
+      },
+      "slot.setSecretField": (key: unknown, value: unknown) => {
+        const normalizedKey = typeof key === "string" ? key.trim() : "";
+        if (!/^[A-Za-z0-9._-]{1,64}$/.test(normalizedKey) || typeof value !== "string" || value.length > 1_048_576) {
+          throw new Error("Invalid plugin secret field");
+        }
+        const callback = contextRef.current.setSecretField;
+        if (typeof callback !== "function") throw new Error("Secret fields are unavailable in this slot");
+        callback(normalizedKey, value);
       },
       "api.query": async (query: unknown) => {
         if (typeof query !== "string" || query.trim().length === 0 || query.length > 100_000) {
@@ -182,6 +219,11 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
           ...(typeof token.token_type === "string" ? { token_type: token.token_type } : {}),
         };
       },
+      "api.compatibility.legacyGoogleOAuth": () => {
+        if (pluginId !== "google-sheets" || legacyOAuthHintShown.current) return;
+        legacyOAuthHintShown.current = true;
+        showToast(t("plugins.legacyGoogleSheetsOAuthHint"), { kind: "warning" });
+      },
       "host.loadFailed": (message: unknown) => {
         console.error(`[PluginSlot] ${pluginId}/${module}: ${String(message)}`);
       },
@@ -210,21 +252,49 @@ export function SandboxedPluginFrame({ pluginId, module, context }: Props) {
       rpcRef.current?.close();
       rpcRef.current = null;
     };
-  }, [module, pluginId, showToast, updateSetting]);
+  }, [module, pluginId, showToast, t, updateSetting]);
 
   useEffect(() => {
     contextRef.current = guestContext;
     void rpcRef.current?.call("slot.context", [serializePluginSlotContext(guestContext)]).catch(() => undefined);
   }, [guestContext]);
 
-  return (
+  const iframe = (
     <iframe
       ref={frameRef}
       title={`Plugin ${pluginId}`}
       sandbox="allow-scripts"
       referrerPolicy="no-referrer"
       src={pluginFrameUrl(pluginId, module)}
-      style={{ width: "100%", height, border: 0 }}
+      style={modalOpen
+        ? {
+            position: "fixed",
+            inset: 0,
+            width: "100vw",
+            height: "100dvh",
+            minHeight: "100vh",
+            border: 0,
+            zIndex: 2_147_483_647,
+          }
+        : {
+            position: "fixed",
+            left: frameRect.left,
+            top: frameRect.top,
+            width: frameRect.width,
+            height,
+            border: 0,
+            zIndex: 1,
+          }}
     />
+  );
+  return (
+    <>
+      <div
+        ref={anchorRef}
+        aria-hidden="true"
+        style={{ width: "100%", height, pointerEvents: "none" }}
+      />
+      {createPortal(iframe, document.body)}
+    </>
   );
 }

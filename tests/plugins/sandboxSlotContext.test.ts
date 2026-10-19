@@ -34,4 +34,34 @@ describe("sandbox slot callback bridge", () => {
     expect(callHost).toHaveBeenNthCalledWith(1, "slot.setExtraField", "region", "west");
     expect(callHost).toHaveBeenNthCalledWith(2, "slot.setCredentialFieldsHidden", true);
   });
+
+  it("bridges secret-field callbacks while keeping secret values clone-safe", () => {
+    const setSecretField = vi.fn();
+    const context = serializePluginSlotContext({
+      driver: "bigquery",
+      extra: {},
+      secretFields: {
+        service_account_json: { value: "", hasStoredValue: true, dirty: false },
+      },
+      setSecretField,
+    });
+
+    expect(context.__tabularisHostCallbacks).toEqual(["setSecretField"]);
+    expect(context.secretFields).toEqual({
+      service_account_json: { value: "", hasStoredValue: true, dirty: false },
+    });
+    expect(() => structuredClone(context)).not.toThrow();
+
+    const callHost = vi.fn();
+    const hydrated = hydratePluginSlotContext(context, callHost);
+    (hydrated.setSecretField as (key: string, value: string) => void)(
+      "service_account_json",
+      "{\"type\":\"service_account\"}",
+    );
+    expect(callHost).toHaveBeenCalledWith(
+      "slot.setSecretField",
+      "service_account_json",
+      "{\"type\":\"service_account\"}",
+    );
+  });
 });

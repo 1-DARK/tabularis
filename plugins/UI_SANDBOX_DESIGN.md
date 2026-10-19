@@ -4,9 +4,11 @@
 
 Each UI extension module runs in a sandboxed `tabularis-plugin` iframe with
 scripts enabled, same-origin access disabled, and a guest CSP that blocks
-direct network connections. Google OAuth token exchange is the one network
-operation proxied by the host to a fixed endpoint and fixed form-field
-allow-list. The host and guest communicate over a transferred
+plugin `fetch`/XHR connections. CSP does not prevent a plugin from navigating
+its own iframe, but the sandbox prevents top-level navigation and grants no
+same-origin access. Google OAuth token exchange is the one network operation
+proxied by the host to a fixed endpoint and fixed form-field allow-list. The
+host and guest communicate over a transferred
 `MessagePort`. Host requests are checked against an explicit method allow-list;
 there is no generic Tauri command or `invoke` method in the guest API.
 
@@ -22,13 +24,16 @@ there is no generic Tauri command or `invoke` method in the guest API.
 - Writes to the calling plugin's own JSON settings, capped at 64 KiB per value.
 - Non-modal info, warning, and error toasts; opening HTTP(S) URLs without URL
   credentials.
-- Plugin-authored React modals rendered inside that plugin's iframe.
+- Plugin-authored React modals rendered inside that plugin's iframe. While a
+  modal is open, the host promotes that iframe to a full-viewport overlay so
+  modal content is not clipped by the inline slot height.
 
 The frame receives no connection credentials, filesystem interface, or generic
 backend command proxy. Query results are available to the plugin that requested
-them. Host callbacks such as `onDatabaseChange`, `setExtraField`, and
-`setCredentialFieldsHidden` are represented by plain context data and
-slot-specific RPC methods; functions are never sent through `postMessage`.
+them. Host callbacks such as `onDatabaseChange`, `setExtraField`,
+`setCredentialFieldsHidden`, and `setSecretField` are represented by plain
+context data and slot-specific RPC methods; functions are never sent through
+`postMessage`. Secret-field keys and values are validated on the host.
 
 Most RPC requests time out after 30 seconds; plugin SQL queries may take up to
 five minutes before the guest stops waiting. The host query is not cancelled
@@ -39,7 +44,9 @@ when the guest times out. Internal guest resources use reserved
 ## Plugin migration
 
 Plugins continue to import hooks from `@tabularis/plugin-api`; rebuild against
-API `0.3.0` and require host API `0.3.0`. `setSetting` and `setSettings` now
+API `0.4.0` and require host API `0.4.0`. A restricted `getHost()` shim
+remains available to older bundles and returns only the guest API facade.
+`setSetting` and `setSettings` now
 return promises, so await them when subsequent work depends on persistence.
 Modals remain React-based, but render within the plugin iframe rather than the
 host React tree. Translation lookup supports dotted keys and `{{name}}`
@@ -67,16 +74,19 @@ also available there for EXPLAIN parser bundles.
 
 ## Published UI plugin compatibility audit
 
-The published Tabularium catalogue currently has five plugins with UI slots:
+The published Tabularium catalogue audit covers seven plugins with UI slots or
+EXPLAIN parsers:
 
 | Plugin | Existing UI behavior | Sandbox compatibility |
 | --- | --- | --- |
 | [DynamoDB](https://github.com/TabularisDB/tabularis-dynamodb-plugin) | Extra connection fields via `setExtraField` | Supported through the slot callback RPC. |
 | [Elasticsearch](https://github.com/TabularisDB/tabularis-elasticsearch-plugin) | Database field via `onDatabaseChange` | Supported through the slot callback RPC. |
 | [Cloudflare D1](https://github.com/josejorge/tabularis_cloudflare_d1_plugin) | Help text, translations, and `openUrl` | Supported by the guest API, including the `defaultValue` translation fallback. |
-| [SQL Server](https://github.com/TabularisDB/tabularis-sqlserver-plugin) | Extra field and credential visibility callbacks | Supported through the slot callback RPC. |
-| [Google Sheets](https://github.com/TabularisDB/tabularis-google-sheets-plugin) | OAuth settings modal and database field | The slot APIs are supported; the OAuth code exchange must migrate from direct `fetch` to `exchangeGoogleOAuthToken` before upgrading to the sandboxed host. |
+| [SQL Server](https://github.com/TabularisDB/tabularis-sqlserver-plugin) | Extra field, credential visibility callbacks, and custom EXPLAIN parser | UI callbacks use the slot RPC; the parser loads in the sandbox. |
+| [Google Sheets](https://github.com/TabularisDB/tabularis-google-sheets-plugin) | OAuth settings modal and database field | Companion PR uses `exchangeGoogleOAuthToken` and requires Tabularis 0.29.0. A restricted `getHost()` compatibility shim keeps the released 0.3.0 bundle working during migration. |
+| Google BigQuery 0.2.0 | `connection-modal.extra_fields`; hides Password and stores its credential with `setSecretField`; custom EXPLAIN parser | Supported after forwarding `secretFields` and `setSecretField` over validated slot RPC; parser loads in the sandbox. |
+| Oracle | Custom EXPLAIN parser | Released parser bundle loads in the sandbox. |
 
-This audit is based on the public registry's plugin manifests and the UI source
-in each linked plugin repository. The Google Sheets plugin needs a companion
-release containing the OAuth migration before this sandbox change ships.
+This audit is based on the public registry's plugin manifests and released
+bundles for UI extensions and EXPLAIN parsers. The Google Sheets companion
+release must ship before this sandbox change so existing installs keep working.

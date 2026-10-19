@@ -47,8 +47,10 @@ export default MySlot.component;
 
 Plugin UI runs in a sandboxed iframe and has no direct Tauri `invoke` access.
 The host exposes only the operations represented by these APIs. The guest CSP
-blocks direct network access; Google OAuth is proxied to one fixed endpoint,
-with an allow-list of form fields. Modal content stays inside the plugin iframe.
+blocks plugin `fetch`/XHR connections; it does not prevent the iframe from
+navigating itself. Google OAuth is proxied to one fixed endpoint, with an
+allow-list of form fields. Modal content stays inside the plugin iframe, and
+the host expands that iframe to a full-viewport overlay while the modal is open.
 Setting writes are asynchronous; await `setSetting` or `setSettings` when
 subsequent work depends on persistence.
 
@@ -80,7 +82,8 @@ assertHostCompat(); // throws if the running Tabularis is older than MIN_HOST_VE
 
 | Package version | Minimum Tabularis API | Notes |
 |-----------------|-----------------------|-------|
-| `0.3.0`         | `0.3.0` | Sandboxed UI API; callback RPC and fixed Google OAuth exchange |
+| `0.3.0`         | `0.3.0` | Sandboxed UI API and callback RPC |
+| `0.4.0`         | `0.4.0` | Secret-field slot callback and fixed Google OAuth exchange |
 
 ## Slot reference
 

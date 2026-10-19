@@ -38,6 +38,9 @@ function defineSlot(slot: string, component: unknown) {
 
 /** The UI extension API deliberately contains no Tauri or generic invoke access. */
 const guestApi = Object.freeze({
+  // Compatibility for bundles built against older plugin-api versions that
+  // called getHost() for host APIs. Return only this restricted guest facade.
+  getHost: () => guestApi,
   defineSlot,
   usePluginConnection: () => ({
     connectionId: currentContext.connectionId ?? null,
@@ -139,12 +142,25 @@ function callHostResult<T>(method: string, ...args: unknown[]): Promise<T> {
   return rpcPort.call(method, args) as Promise<T>;
 }
 
+window.addEventListener("securitypolicyviolation", (event) => {
+  if (pluginId !== "google-sheets" || event.effectiveDirective !== "connect-src") return;
+  try {
+    if (new URL(event.blockedURI).origin !== "https://oauth2.googleapis.com") return;
+  } catch {
+    return;
+  }
+  void callHost("api.compatibility.legacyGoogleOAuth").catch(() => undefined);
+});
+
 function GuestRoot({ component: Component }: { component: PluginComponent }) {
   const [modal, setModal] = React.useState<GuestModalOptions | null>(null);
   const modalApi = React.useMemo(() => ({
     openModal: (options: GuestModalOptions) => setModal(options),
     closeModal: () => setModal(null),
   }), []);
+  React.useEffect(() => {
+    void callHost("ui.modal", modal !== null).catch(() => undefined);
+  }, [modal]);
   const modalStyle: React.CSSProperties = {
     position: "fixed", inset: 0, zIndex: 2147483647, display: "grid",
     placeItems: "center", padding: 16, background: "rgba(0,0,0,.6)",
@@ -168,14 +184,59 @@ function GuestRoot({ component: Component }: { component: PluginComponent }) {
     { value: modalApi },
     React.createElement(Component, { context: currentContext, pluginId }),
     modal && React.createElement("div", { style: modalStyle, onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => {
-      if (event.target === event.currentTarget) setModal(null);
+      if (event.target === event.currentTarget) modalApi.closeModal();
     } }, React.createElement("section", { role: "dialog", "aria-modal": true, "aria-label": modal.title, style: dialogStyle,
-      onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { if (event.key === "Escape") setModal(null); }, tabIndex: -1 },
+      onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { if (event.key === "Escape") modalApi.closeModal(); }, tabIndex: -1 },
       React.createElement("header", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
         React.createElement("h2", null, modal.title),
-        React.createElement("button", { type: "button", onClick: () => setModal(null), "aria-label": "Close dialog" }, "×")),
+        React.createElement("button", { type: "button", onClick: modalApi.closeModal, "aria-label": "Close dialog" }, "×")),
       modal.content)),
   );
+}
+
+const THEME_CSS_VARIABLES: Record<string, Record<string, string>> = {
+  bg: {
+    base: "--bg-base", elevated: "--bg-elevated", overlay: "--bg-overlay",
+    input: "--bg-input", tooltip: "--bg-tooltip",
+  },
+  surface: {
+    primary: "--surface-primary", secondary: "--surface-secondary", tertiary: "--surface-tertiary",
+    hover: "--surface-hover", active: "--surface-active", disabled: "--surface-disabled",
+  },
+  text: {
+    primary: "--text-primary", secondary: "--text-secondary", muted: "--text-muted",
+    disabled: "--text-disabled", accent: "--text-accent", inverse: "--text-inverse",
+  },
+  accent: {
+    primary: "--accent-primary", secondary: "--accent-secondary", success: "--accent-success",
+    warning: "--accent-warning", error: "--accent-error", info: "--accent-info",
+  },
+  border: {
+    subtle: "--border-subtle", default: "--border-default", strong: "--border-strong",
+    focus: "--border-focus",
+  },
+  semantic: {
+    string: "--semantic-string", number: "--semantic-number", boolean: "--semantic-boolean",
+    date: "--semantic-date", null: "--semantic-null", primaryKey: "--semantic-pk",
+    foreignKey: "--semantic-fk", index: "--semantic-index", modified: "--semantic-modified",
+    deleted: "--semantic-deleted", new: "--semantic-new",
+  },
+};
+
+function applyGuestTheme(): void {
+  const theme = asRecord(currentContext.theme);
+  const colors = asRecord(theme.colors);
+  const root = document.documentElement;
+  root.style.colorScheme = theme.isDark === true ? "dark" : "light";
+  for (const [group, tokens] of Object.entries(THEME_CSS_VARIABLES)) {
+    const values = asRecord(colors[group]);
+    for (const [token, variable] of Object.entries(tokens)) {
+      const value = values[token];
+      if (typeof value === "string") root.style.setProperty(variable, value);
+    }
+  }
+  const textColor = asRecord(colors.text).primary;
+  if (typeof textColor === "string") document.body.style.color = textColor;
 }
 
 function themeColor(group: string, token: string, fallback: string): string {
@@ -189,7 +250,7 @@ Object.assign(guestWindow, {
   ReactJSXRuntime,
   __TABULARIS_EXPLAIN__: explainApi,
   __TABULARIS_API__: guestApi,
-  __TABULARIS_API_VERSION__: "0.3.0",
+  __TABULARIS_API_VERSION__: "0.4.0",
 });
 
 function loadExplainModule(): Promise<Record<string, unknown>[]> {
@@ -255,6 +316,7 @@ function start(port: MessagePort): void {
         currentContext = hydratePluginSlotContext(next as Record<string, unknown>, (callback, ...values) => {
           void rpc.call(callback, values).catch(() => undefined);
         });
+        applyGuestTheme();
         renderPlugin?.();
       }
       return null;

@@ -10,7 +10,7 @@ const projectFile = (path: string): string =>
   readFileSync(resolve(projectRoot, path), "utf8");
 
 describe("plugin isolation acceptance contract", () => {
-  it("sets a restrictive app CSP and a network-denying guest CSP", () => {
+  it("sets a restrictive app CSP and a guest CSP that blocks fetch connections", () => {
     const tauri = JSON.parse(projectFile("src-tauri/tauri.conf.json")) as {
       app: { security: { csp: Record<string, string> | null; dangerousDisableAssetCspModification?: string[] } };
     };
@@ -77,11 +77,15 @@ describe("plugin isolation acceptance contract", () => {
       '"slot.onDatabaseChange"',
       '"slot.setExtraField"',
       '"slot.setCredentialFieldsHidden"',
+      '"slot.setSecretField"',
+      '"ui.modal"',
     ]) {
       expect(host).toContain(method);
     }
     expect(host).toContain("isReadOnlyQuery(query)");
     expect(host).toContain("execute_plugin_read_only_query");
+    expect(host).toContain("setSecretField");
+    expect(host).toContain("100dvh");
     expect(host).toContain('pluginId !== "google-sheets"');
     expect(host).toContain("https://oauth2.googleapis.com/token");
     expect(host).toContain("Unsupported Google OAuth token field");
@@ -94,7 +98,7 @@ describe("plugin isolation acceptance contract", () => {
 
     const backend = projectFile("src-tauri/src/commands.rs");
     expect(backend).toContain("execute_read_only_query(&params, &query, None, 1");
-    expect(backend).toContain("classify_query_kind(&query)");
+    expect(backend).toContain("classify_query_kind_for_capabilities(");
     expect(projectFile("src-tauri/src/drivers/driver_trait.rs")).toContain("async fn execute_read_only_query(");
     expect(projectFile("src-tauri/src/drivers/sqlite/mod.rs")).toContain("PRAGMA query_only = ON");
     expect(projectFile("src-tauri/src/drivers/postgres/mod.rs")).toContain("BEGIN READ ONLY");
@@ -115,7 +119,11 @@ describe("plugin isolation acceptance contract", () => {
     }
     expect(guest).toContain("__TABULARIS_API__");
     expect(guest).toContain("GuestModalContext");
+    expect(guest).toContain('callHost("ui.modal", modal !== null)');
+    expect(guest).toContain("applyGuestTheme");
+    expect(guest).toContain('callHost("api.compatibility.legacyGoogleOAuth")');
     expect(guest).toContain("exchangeGoogleOAuthToken");
+    expect(guest).toContain("getHost: () => guestApi");
     expect(projectFile("src-tauri/resources/guest/__guest__.html")).toContain("__runtime__.js");
     expect(projectFile("src-tauri/resources/guest/__guest__.html")).toContain("__host.css__");
     expect(projectFile("src-tauri/src/plugins/sandbox_protocol.rs")).toContain('"__runtime__.js"');
@@ -152,10 +160,13 @@ describe("plugin isolation acceptance contract", () => {
     expect(explainDesign).toContain("migration");
     expect(guide).toContain("UI_SANDBOX_DESIGN.md");
     expect(apiReadme).toContain("has no direct Tauri `invoke` access");
-    expect(apiVersion).toContain('API_VERSION = "0.3.0"');
-    expect(apiVersion).toContain('MIN_HOST_VERSION = "0.3.0"');
+    expect(apiVersion).toContain('API_VERSION = "0.4.0"');
+    expect(apiVersion).toContain('MIN_HOST_VERSION = "0.4.0"');
     expect(uiDesign).toContain("database-enforced read-only context");
     expect(uiDesign).toContain("Related connection-export hardening");
     expect(uiDesign).toContain("exchangeGoogleOAuthToken");
+    expect(uiDesign).toContain("Google BigQuery 0.2.0");
+    expect(uiDesign).toContain("full-viewport overlay");
+    expect(uiDesign).toContain("navigating\nits own iframe");
   });
 });

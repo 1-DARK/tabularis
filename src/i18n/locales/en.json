@@ -933,6 +933,7 @@
       "enabled": "Enabled",
       "disabled": "Disabled",
       "openFolder": "Open plugins folder",
+      "legacyGoogleSheetsOAuthHint": "Update the Google Sheets plugin to restore Google sign-in in this Tabularis version.",
       "installError": {
         "title": "Installation Failed",
         "subtitle": "An error occurred while installing the plugin. See the details below.",

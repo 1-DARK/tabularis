@@ -167,6 +167,8 @@ export type HostSlotContextRequirements = {
     setExtraField: (key: string, value: string) => void;
     credentialFieldsHidden: boolean;
     setCredentialFieldsHidden: (hidden: boolean) => void;
+    secretFields: Record<string, PluginSecretFieldState>;
+    setSecretField: (key: string, value: string) => void;
   };
 };
 

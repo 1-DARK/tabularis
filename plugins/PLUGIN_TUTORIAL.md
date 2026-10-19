@@ -407,7 +407,7 @@ ui/
     "build:db-field": "vite build --config vite.db-field.config.ts",
     "typecheck": "tsc --noEmit"
   },
-  "dependencies": { "@tabularis/plugin-api": "^0.3.0" },
+  "dependencies": { "@tabularis/plugin-api": "^0.4.0" },
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",
@@ -475,7 +475,7 @@ const GoogleSheetsDatabaseField = defineSlot(
 export default GoogleSheetsDatabaseField.component;
 ```
 
-With `@tabularis/plugin-api` `0.3.0`, the connection-modal context types include
+With `@tabularis/plugin-api` `0.4.0`, the connection-modal context types include
 `database` and the `onDatabaseChange` callback. The callback is recreated in the
 guest and forwarded through a slot-specific host RPC; it is never sent as a
 function through `postMessage`.

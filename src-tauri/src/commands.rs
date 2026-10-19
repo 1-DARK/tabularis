@@ -5245,15 +5245,19 @@ pub async fn execute_plugin_read_only_query<R: Runtime>(
     if query.trim().is_empty() || query.len() > 100_000 {
         return Err("Plugin query must contain between 1 and 100,000 characters".to_string());
     }
-    if crate::ai_activity::classify_query_kind(&query) != "select" {
-        return Err("Plugin queries must be classified as read-only".to_string());
-    }
     let saved_conn = find_connection_by_id(&app, &connection_id)?;
     let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
     let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
     let params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
     let query = sanitize_user_query(&query);
     let driver = driver_for_params(&params).await?;
+    if crate::ai_activity::classify_query_kind_for_capabilities(
+        &query,
+        Some(&driver.manifest().capabilities),
+    ) != "select"
+    {
+        return Err("Plugin queries must be classified as read-only".to_string());
+    }
     match params.driver.as_str() {
         "sqlite" | "postgres" | "mysql" | "mariadb" => {
             driver

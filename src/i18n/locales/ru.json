@@ -863,6 +863,7 @@
       "enabled": "Включён",
       "disabled": "Отключён",
       "openFolder": "Открыть папку плагинов",
+      "legacyGoogleSheetsOAuthHint": "Обновите плагин Google Sheets, чтобы восстановить вход через Google в этой версии Tabularis.",
       "installError": {
         "title": "Ошибка установки",
         "subtitle": "Ошибка при установке плагина. Подробности ниже.",
