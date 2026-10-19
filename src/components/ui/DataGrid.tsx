@@ -157,6 +157,8 @@ import { KeybindingsContext } from "../../contexts/KeybindingsContext";
 export interface DataGridCommandTarget {
   getResultCommands: () => ResultCommands;
   isEditing: () => boolean;
+  /** Moves focus to the grid (its keyboard focus host). */
+  focus: () => void;
 }
 
 interface DataGridProps {
@@ -444,6 +446,7 @@ export const DataGrid = React.memo(
       x: number;
       y: number;
       colName: string;
+      colIndex: number;
       colType: string;
       support: ColumnStatsSupport;
       masked: boolean;
@@ -2030,6 +2033,7 @@ export const DataGrid = React.memo(
         x,
         y,
         colName,
+        colIndex,
         colType,
         masked,
         support: getColumnStatsSupport(colType, {
@@ -2048,6 +2052,20 @@ export const DataGrid = React.memo(
 
     const closeColumnStats = useCallback(() => setColumnStatsTarget(null), []);
 
+    // Where focus goes back when the popover is closed from inside it
+    // (issue #1138): the header's "select column" control, which is where a
+    // keyboard user opened the header menu, or the grid if that header is no
+    // longer rendered.
+    const columnStatsReturnFocus = useCallback((): HTMLElement | null => {
+      const grid = parentRef.current;
+      if (!grid || !columnStatsTarget) return grid;
+      return (
+        grid.querySelector<HTMLElement>(
+          `th[data-col-index="${columnStatsTarget.colIndex}"] [role="button"]`,
+        ) ?? grid
+      );
+    }, [columnStatsTarget]);
+
     const loadColumnStatsForTarget = useCallback(
       (signal: AbortSignal) => {
         if (!onLoadColumnStats || !columnStatsTarget) {
@@ -2065,6 +2083,9 @@ export const DataGrid = React.memo(
     const filterByTopValue = useCallback(
       (value: string) => {
         if (!onFilterByValue || !columnStatsTarget) return;
+        // The popover is closing: keep the user in the grid. When the filter
+        // remounts the grid, the host focuses the new one (see Editor).
+        parentRef.current?.focus({ preventScroll: true });
         onFilterByValue(
           columnStatsTarget.colName,
           "=",
@@ -2301,6 +2322,7 @@ export const DataGrid = React.memo(
     useImperativeHandle(ref, () => ({
       getResultCommands,
       isEditing: () => isGridEditing || !!editingCellRef.current || isJsonEditing(),
+      focus: () => parentRef.current?.focus({ preventScroll: true }),
     }), [getResultCommands, isGridEditing, isJsonEditing]);
 
     const copyCellFromContext = useCallback(async () => {
@@ -3800,6 +3822,7 @@ export const DataGrid = React.memo(
               masked={columnStatsTarget.masked}
               load={loadColumnStatsForTarget}
               onFilterByValue={onFilterByValue ? filterByTopValue : undefined}
+              returnFocusTo={columnStatsReturnFocus}
               onClose={closeColumnStats}
             />
           )}
