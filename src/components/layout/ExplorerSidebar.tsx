@@ -109,6 +109,8 @@ import { groupRoutinesByType, routineLabel } from "../../utils/routines";
 import { formatObjectCount } from "../../utils/schema";
 import { groupByDate, formatHistoryTime } from "../../utils/dateGroups";
 import { SqlHighlight } from "../ui/SqlHighlight";
+import { SqlMatchExcerpt } from "../ui/SqlMatchExcerpt";
+import { getSavedQueryExcerpt, matchesSavedQuery } from "../../utils/savedQuerySearch";
 import { isMultiDatabaseCapable, isSchemaBasedMultiDb, usesMultiDatabaseLayout, reconcileDatabaseSelection } from "../../utils/database";
 import { supportsManageTables } from "../../utils/driverCapabilities";
 import { newConsoleForDatabase } from "../../utils/newConsole";
@@ -1049,61 +1051,64 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
               return b.updated_at.localeCompare(a.updated_at);
             });
             const filteredQueries = favoritesFilter.trim()
-              ? sorted.filter((q) => q.name.toLowerCase().includes(favoritesFilter.toLowerCase()) || q.sql.toLowerCase().includes(favoritesFilter.toLowerCase()))
+              ? sorted.filter((q) => matchesSavedQuery(q, favoritesFilter))
               : sorted;
             const isSearching = favoritesFilter.trim() !== "";
             const folderGroups = groupQueriesByFolder(filteredQueries, folders);
             const groupedFavorites = groupByDate(isSearching ? filteredQueries : folderGroups.unfiled, (q) => q.updated_at ?? "1970-01-01", settings.displayTimezone);
             const hasFolders = folders.length > 0;
 
-            const renderQueryRow = (q: SavedQuery, showLocation: boolean, indented = false) => (
-              <button
-                type="button"
-                key={q.id}
-                aria-pressed={selectedFavoriteId === q.id}
-                onClick={() => setSelectedFavoriteId(q.id)}
-                onDoubleClick={() => runQuery(q.sql, q.name, false, undefined, q.database ?? undefined)}
-                onKeyDown={(e) => {
-                  // Enter runs the query like a double click; Space keeps selecting it.
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    setSelectedFavoriteId(q.id);
-                    runQuery(q.sql, q.name, false, undefined, q.database ?? undefined);
+            const renderQueryRow = (q: SavedQuery, showLocation: boolean, indented = false) => {
+              const excerpt = getSavedQueryExcerpt(q.sql, favoritesFilter);
+              return (
+                <button
+                  type="button"
+                  key={q.id}
+                  aria-pressed={selectedFavoriteId === q.id}
+                  onClick={() => setSelectedFavoriteId(q.id)}
+                  onDoubleClick={() => runQuery(q.sql, q.name, false, undefined, q.database ?? undefined)}
+                  onKeyDown={(e) => {
+                    // Enter runs the query like a double click; Space keeps selecting it.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      setSelectedFavoriteId(q.id);
+                      runQuery(q.sql, q.name, false, undefined, q.database ?? undefined);
+                    }
+                  }}
+                  onContextMenu={(e) =>
+                    handleContextMenu(e, "query", q.id, q.name, q)
                   }
-                }}
-                onContextMenu={(e) =>
-                  handleContextMenu(e, "query", q.id, q.name, q)
-                }
-                className={`block w-full text-left ${indented ? "pl-6" : "pl-3"} pr-3 py-1.5 cursor-pointer group transition-colors border-b border-default/30 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${
-                  selectedFavoriteId === q.id
-                    ? "bg-surface-secondary"
-                    : "hover:bg-surface-secondary"
-                }`}
-                title={q.database ? `[${q.database}] ${q.sql}` : q.sql}
-              >
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-[13px] font-semibold text-primary truncate tracking-tight">{q.name}</span>
-                  <div className="flex items-center gap-1.5 text-[10px] text-muted shrink-0">
-                    {showLocation && hasFolders && (
-                      <span className="flex items-center gap-0.5">
-                        <Folder size={9} className="shrink-0" />
-                        <span className="truncate max-w-[80px]">{getQueryFolderName(q, folders) ?? t("sidebar.unfiled")}</span>
-                      </span>
-                    )}
-                    {q.database && (
-                      <span className="flex items-center gap-0.5">
-                        <Database size={9} className="shrink-0" />
-                        <span className="truncate max-w-[80px]">{q.database}</span>
-                      </span>
-                    )}
-                    {q.updated_at && (
-                      <span>{formatHistoryTime(q.updated_at, settings.displayTimezone)}</span>
-                    )}
+                  className={`block w-full text-left ${indented ? "pl-6" : "pl-3"} pr-3 py-1.5 cursor-pointer group transition-colors border-b border-default/30 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${
+                    selectedFavoriteId === q.id
+                      ? "bg-surface-secondary"
+                      : "hover:bg-surface-secondary"
+                  }`}
+                  title={q.database ? `[${q.database}] ${q.sql}` : q.sql}
+                >
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-[13px] font-semibold text-primary truncate tracking-tight">{q.name}</span>
+                    <div className="flex items-center gap-1.5 text-[10px] text-muted shrink-0">
+                      {showLocation && hasFolders && (
+                        <span className="flex items-center gap-0.5">
+                          <Folder size={9} className="shrink-0" />
+                          <span className="truncate max-w-[80px]">{getQueryFolderName(q, folders) ?? t("sidebar.unfiled")}</span>
+                        </span>
+                      )}
+                      {q.database && (
+                        <span className="flex items-center gap-0.5">
+                          <Database size={9} className="shrink-0" />
+                          <span className="truncate max-w-[80px]">{q.database}</span>
+                        </span>
+                      )}
+                      {q.updated_at && (
+                        <span>{formatHistoryTime(q.updated_at, settings.displayTimezone)}</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <SqlHighlight sql={q.sql} />
-              </button>
-            );
+                  {excerpt ? <SqlMatchExcerpt excerpt={excerpt} /> : <SqlHighlight sql={q.sql} />}
+                </button>
+              );
+            };
 
             const renderFolder = ({ folder, queries: folderQueries }: { folder: SavedQueryFolder; queries: SavedQuery[] }) => {
               const isCollapsed = collapsedFolders.has(folder.id);
