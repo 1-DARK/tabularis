@@ -3,7 +3,10 @@ import {
   isLocalDriver,
   supportsAlterColumn,
   supportsCreateForeignKeys,
+  supportsColumnComments,
+  supportsPluginDropTableSql,
   supportsExplain,
+  supportsInMemoryDatabase,
   findDriverManifest,
   getCapabilitiesForDriver,
 } from '../../src/utils/driverCapabilities';
@@ -80,6 +83,35 @@ describe('driverCapabilities', () => {
 
     it('should return false when capabilities are undefined', () => {
       expect(supportsAlterColumn(undefined)).toBe(false);
+    });
+  });
+
+  describe('supportsColumnComments', () => {
+    it('should return true only when a plugin opts into column_comments', () => {
+      expect(supportsColumnComments(makeCapabilities({ column_comments: true, identifier_quote: '`' }))).toBe(true);
+    });
+
+    it('should return false when column_comments is false or missing', () => {
+      expect(supportsColumnComments(makeCapabilities({ column_comments: false }))).toBe(false);
+      expect(supportsColumnComments(makeCapabilities())).toBe(false);
+    });
+
+    it('should return false when capabilities are null or undefined', () => {
+      expect(supportsColumnComments(null)).toBe(false);
+      expect(supportsColumnComments(undefined)).toBe(false);
+    });
+  });
+
+  describe('supportsPluginDropTableSql', () => {
+    it('should return true only when a plugin opts into drop_table_sql', () => {
+      expect(supportsPluginDropTableSql(makeCapabilities({ drop_table_sql: true, identifier_quote: '`' }))).toBe(true);
+    });
+
+    it('should return false when drop_table_sql is false, missing or capabilities are absent', () => {
+      expect(supportsPluginDropTableSql(makeCapabilities({ drop_table_sql: false }))).toBe(false);
+      expect(supportsPluginDropTableSql(makeCapabilities())).toBe(false);
+      expect(supportsPluginDropTableSql(null)).toBe(false);
+      expect(supportsPluginDropTableSql(undefined)).toBe(false);
     });
   });
 
@@ -215,5 +247,29 @@ describe('driverCapabilities', () => {
     it('is not local by default', () => expect(isLocalDriver(unknownCaps)).toBe(false));
     it('does not support alter column by default', () => expect(supportsAlterColumn(unknownCaps)).toBe(false));
     it('does not support foreign keys by default', () => expect(supportsCreateForeignKeys(unknownCaps)).toBe(false));
+  });
+});
+
+describe('supportsInMemoryDatabase', () => {
+  it('is true for a file-based plugin that declares in_memory', () => {
+    expect(supportsInMemoryDatabase(makeCapabilities({ file_based: true, in_memory: true }))).toBe(true);
+  });
+
+  it('accepts the camelCase inMemory alias', () => {
+    expect(supportsInMemoryDatabase(makeCapabilities({ file_based: true, inMemory: true }))).toBe(true);
+  });
+
+  it('is false for file-based drivers that do not opt in', () => {
+    expect(supportsInMemoryDatabase(makeCapabilities({ file_based: true }))).toBe(false);
+  });
+
+  it('is false when in_memory is set on a non file-based driver', () => {
+    expect(supportsInMemoryDatabase(makeCapabilities({ in_memory: true }))).toBe(false);
+    expect(supportsInMemoryDatabase(makeCapabilities({ folder_based: true, in_memory: true }))).toBe(false);
+  });
+
+  it('is false without capabilities', () => {
+    expect(supportsInMemoryDatabase(null)).toBe(false);
+    expect(supportsInMemoryDatabase(undefined)).toBe(false);
   });
 });

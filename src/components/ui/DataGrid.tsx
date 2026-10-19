@@ -140,6 +140,9 @@ import {
   columnNamesAsJson,
 } from "../../utils/clipboard";
 import {
+  formatColumnNamesAsSqlList,
+} from "../../utils/objectNameCopy";
+import {
   DEFAULT_MASKING_PATTERNS,
   isColumnMasked,
 } from "../../utils/columnMasking";
@@ -157,6 +160,8 @@ import { KeybindingsContext } from "../../contexts/KeybindingsContext";
 export interface DataGridCommandTarget {
   getResultCommands: () => ResultCommands;
   isEditing: () => boolean;
+  /** Moves focus to the grid (its keyboard focus host). */
+  focus: () => void;
 }
 
 interface DataGridProps {
@@ -216,6 +221,12 @@ interface DataGridProps {
   onDuplicateRow?: (rowData: Record<string, unknown>) => void;
   selectedRows?: Set<number>;
   onSelectionChange?: (indices: Set<number>) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onBeginBatchEdit?: () => void;
+  onEndBatchEdit?: () => void;
   copyFormat?: "csv" | "json" | "sql-insert" | "markdown";
   csvDelimiter?: string;
   csvIncludeHeaders?: boolean;
@@ -339,6 +350,12 @@ export const DataGrid = React.memo(
     onDuplicateRow,
     selectedRows: externalSelectedRows,
     onSelectionChange,
+    onUndo,
+    onRedo,
+    canUndo,
+    canRedo,
+    onBeginBatchEdit,
+    onEndBatchEdit,
     copyFormat,
     csvDelimiter = ",",
     csvIncludeHeaders = true,
@@ -354,7 +371,23 @@ export const DataGrid = React.memo(
   }: DataGridProps) {
     const { t } = useTranslation();
     const keybindings = useContext(KeybindingsContext);
-    const { activeSchema: globalActiveSchema, connections, activeDriver } = useDatabase();
+    const {
+      activeSchema: globalActiveSchema,
+      connections,
+      activeDriver,
+      activeCapabilities,
+      getConnectionData,
+    } = useDatabase();
+    // Dialect the copied SQL literals follow. Prefers the grid's connection
+    // capabilities/driver when available, falling back to the active connection.
+    const connectionData = connectionId
+      ? getConnectionData(connectionId)
+      : undefined;
+    const copyDriver =
+      connectionData?.capabilities ??
+      connectionData?.driver ??
+      activeCapabilities ??
+      activeDriver;
     const activeSchema = schemaProp ?? globalActiveSchema;
     const guardProductionWrite = useProductionGuard();
     const { showAlert } = useAlert();
@@ -437,6 +470,7 @@ export const DataGrid = React.memo(
       x: number;
       y: number;
       colName: string;
+      colIndex: number;
       colType: string;
       support: ColumnStatsSupport;
       masked: boolean;
@@ -1737,27 +1771,51 @@ export const DataGrid = React.memo(
     ]);
 
     const deleteRowsByIndices = useCallback((indicesToDelete: number[]) => {
-      const pkVals: unknown[] = [];
-      for (const idx of indicesToDelete) {
-        const mergedRow = mergedRows[idx];
-        if (!mergedRow) continue;
+      const shouldBatch =
+        indicesToDelete.length > 1 &&
+        typeof onBeginBatchEdit === "function" &&
+        typeof onEndBatchEdit === "function";
 
-        if (mergedRow.type === "insertion" && mergedRow.tempId && onDiscardInsertion) {
-          onDiscardInsertion(mergedRow.tempId);
-        } else if (mergedRow.type === "existing" && pkColumns && pkIndexMaps.length > 0) {
-          pkVals.push(buildPkMap(pkColumns, mergedRow.rowData, pkIndexMaps));
-        }
+      if (shouldBatch) {
+        onBeginBatchEdit();
       }
 
-      // Use batch handler to avoid stale-closure overwrites when called per-row.
-      if (pkVals.length > 0) {
-        if (onMarkMultipleForDeletion) {
-          onMarkMultipleForDeletion(pkVals);
-        } else if (onMarkForDeletion) {
-          pkVals.forEach((v) => onMarkForDeletion(v));
+      try {
+        const pkVals: unknown[] = [];
+        for (const idx of indicesToDelete) {
+          const mergedRow = mergedRows[idx];
+          if (!mergedRow) continue;
+
+          if (mergedRow.type === "insertion" && mergedRow.tempId && onDiscardInsertion) {
+            onDiscardInsertion(mergedRow.tempId);
+          } else if (mergedRow.type === "existing" && pkColumns && pkIndexMaps.length > 0) {
+            pkVals.push(buildPkMap(pkColumns, mergedRow.rowData, pkIndexMaps));
+          }
+        }
+
+        // Use batch handler to avoid stale-closure overwrites when called per-row.
+        if (pkVals.length > 0) {
+          if (onMarkMultipleForDeletion) {
+            onMarkMultipleForDeletion(pkVals);
+          } else if (onMarkForDeletion) {
+            pkVals.forEach((v) => onMarkForDeletion(v));
+          }
+        }
+      } finally {
+        if (shouldBatch) {
+          onEndBatchEdit();
         }
       }
-    }, [mergedRows, onDiscardInsertion, onMarkForDeletion, onMarkMultipleForDeletion, pkColumns, pkIndexMaps]);
+    }, [
+      mergedRows,
+      onDiscardInsertion,
+      onMarkForDeletion,
+      onMarkMultipleForDeletion,
+      pkColumns,
+      pkIndexMaps,
+      onBeginBatchEdit,
+      onEndBatchEdit,
+    ]);
 
     const deleteSelectedRow = useCallback(() => {
       if (!contextMenu) return;
@@ -1969,8 +2027,9 @@ export const DataGrid = React.memo(
           csvIncludeHeaders,
           csvDelimiter,
           tableName,
+          driver: copyDriver,
         }),
-      [columns, copyFormat, csvDelimiter, csvIncludeHeaders, tableName],
+      [columns, copyFormat, csvDelimiter, csvIncludeHeaders, tableName, copyDriver],
     );
 
     // Rows the row context menu acts on: the selected rows (pending insertions
@@ -2022,6 +2081,7 @@ export const DataGrid = React.memo(
         x,
         y,
         colName,
+        colIndex,
         colType,
         masked,
         support: getColumnStatsSupport(colType, {
@@ -2040,6 +2100,20 @@ export const DataGrid = React.memo(
 
     const closeColumnStats = useCallback(() => setColumnStatsTarget(null), []);
 
+    // Where focus goes back when the popover is closed from inside it
+    // (issue #1138): the header's "select column" control, which is where a
+    // keyboard user opened the header menu, or the grid if that header is no
+    // longer rendered.
+    const columnStatsReturnFocus = useCallback((): HTMLElement | null => {
+      const grid = parentRef.current;
+      if (!grid || !columnStatsTarget) return grid;
+      return (
+        grid.querySelector<HTMLElement>(
+          `th[data-col-index="${columnStatsTarget.colIndex}"] [role="button"]`,
+        ) ?? grid
+      );
+    }, [columnStatsTarget]);
+
     const loadColumnStatsForTarget = useCallback(
       (signal: AbortSignal) => {
         if (!onLoadColumnStats || !columnStatsTarget) {
@@ -2057,6 +2131,9 @@ export const DataGrid = React.memo(
     const filterByTopValue = useCallback(
       (value: string) => {
         if (!onFilterByValue || !columnStatsTarget) return;
+        // The popover is closing: keep the user in the grid. When the filter
+        // remounts the grid, the host focuses the new one (see Editor).
+        parentRef.current?.focus({ preventScroll: true });
         onFilterByValue(
           columnStatsTarget.colName,
           "=",
@@ -2102,6 +2179,14 @@ export const DataGrid = React.memo(
       setHeaderContextMenu(null);
     }, [columns, copyToClipboard, t]);
 
+    const copyColumnNamesAsSqlList = useCallback(async () => {
+      await copyToClipboard(
+        formatColumnNamesAsSqlList(columns, copyDriver),
+        t("dataGrid.copiedColumnNames", { count: columns.length }),
+      );
+      setHeaderContextMenu(null);
+    }, [columns, copyDriver, copyToClipboard, t]);
+
     const copySelectedCells = useCallback(async () => {
       if (selectedRowIndices.size === 0) return;
       const rows = getSelectedRows(
@@ -2133,6 +2218,7 @@ export const DataGrid = React.memo(
           csvIncludeHeaders,
           csvDelimiter,
           tableName,
+          driver: copyDriver,
         }),
         rowsCopiedToast(rows.length),
       );
@@ -2144,6 +2230,7 @@ export const DataGrid = React.memo(
       csvIncludeHeaders,
       csvDelimiter,
       tableName,
+      copyDriver,
       copyToClipboard,
       rowsCopiedToast,
     ]);
@@ -2166,6 +2253,7 @@ export const DataGrid = React.memo(
           csvIncludeHeaders,
           csvDelimiter,
           tableName,
+          driver: copyDriver,
         }),
         t("dataGrid.copiedCells", {
           count: rangeRows.length * projected.columns.length,
@@ -2179,6 +2267,7 @@ export const DataGrid = React.memo(
       csvIncludeHeaders,
       csvDelimiter,
       tableName,
+      copyDriver,
       copyToClipboard,
       t,
     ]);
@@ -2196,6 +2285,7 @@ export const DataGrid = React.memo(
           delimiter: csvDelimiter,
           includeHeader: csvIncludeHeaders,
           tableName: tableName ?? "table",
+          driver: copyDriver,
         });
         await copyToClipboard(text);
       },
@@ -2207,6 +2297,7 @@ export const DataGrid = React.memo(
         csvDelimiter,
         csvIncludeHeaders,
         tableName,
+        copyDriver,
         copyToClipboard,
       ],
     );
@@ -2219,9 +2310,9 @@ export const DataGrid = React.memo(
           selectedRowIndices.size > 0
             ? getSelectedRows(rowsWithInsertions, selectedRowIndices)
             : rowsWithInsertions;
-        await copyToClipboard(columnValuesToInClause(rows, colIndex));
+        await copyToClipboard(columnValuesToInClause(rows, colIndex, copyDriver));
       },
-      [selectedRowIndices, mergedRows, copyToClipboard],
+      [selectedRowIndices, mergedRows, copyDriver, copyToClipboard],
     );
 
     const copyCellValue = useCallback(
@@ -2287,6 +2378,7 @@ export const DataGrid = React.memo(
     useImperativeHandle(ref, () => ({
       getResultCommands,
       isEditing: () => isGridEditing || !!editingCellRef.current || isJsonEditing(),
+      focus: () => parentRef.current?.focus({ preventScroll: true }),
     }), [getResultCommands, isGridEditing, isJsonEditing]);
 
     const copyCellFromContext = useCallback(async () => {
@@ -2301,46 +2393,59 @@ export const DataGrid = React.memo(
     // keyless tables) only pending-insertion rows take a value.
     const stageCellWrites = useCallback(
       (writes: CellWrite[]): number => {
-        const canEditExisting =
-          !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+        if (writes.length === 0) return 0;
+        const isBatch = writes.length > 1;
+        if (isBatch) {
+          onBeginBatchEdit?.();
+        }
         let applied = 0;
-        for (const { rowIndex, colIndex, value } of writes) {
-          const mergedRow = mergedRows[rowIndex];
-          if (!mergedRow) continue;
-          const colName = columns[colIndex];
-          // Same guard as inline editing: generated columns are computed by
-          // the database and never accept a value, and masked cells must be
-          // revealed before they take one.
-          if (generatedColumns?.has(colName.toLowerCase())) continue;
-          if (isCellMasked(rowIndex, colIndex)) continue;
-          if (mergedRow.type === "insertion") {
-            if (onPendingInsertionChange && mergedRow.tempId) {
-              onPendingInsertionChange(mergedRow.tempId, colName, value);
+        try {
+          const canEditExisting =
+            !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+          for (const { rowIndex, colIndex, value } of writes) {
+            const mergedRow = mergedRows[rowIndex];
+            if (!mergedRow) continue;
+            const colName = columns[colIndex];
+            // Same guard as inline editing: generated columns are computed by
+            // the database and never accept a value, and masked cells must be
+            // revealed before they take one.
+            if (generatedColumns?.has(colName.toLowerCase())) continue;
+            if (isCellMasked(rowIndex, colIndex)) continue;
+            if (mergedRow.type === "insertion") {
+              if (onPendingInsertionChange && mergedRow.tempId) {
+                onPendingInsertionChange(mergedRow.tempId, colName, value);
+                applied++;
+              }
+            } else if (canEditExisting) {
+              // Same guard as inline editing: aliases and computed result
+              // columns are not physical columns and must not be staged.
+              if (
+                physicalColumnSet &&
+                !physicalColumnSet.has(colName.toLowerCase())
+              ) {
+                continue;
+              }
+              const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
+              // Same convention as handleEditCommit: writing the original value
+              // back clears any pending change instead of staging a no-op.
+              const isUnchanged = isOriginalCellValue(
+                value,
+                mergedRow.rowData[colIndex],
+              );
+              onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
               applied++;
             }
-          } else if (canEditExisting) {
-            // Same guard as inline editing: aliases and computed result
-            // columns are not physical columns and must not be staged.
-            if (
-              physicalColumnSet &&
-              !physicalColumnSet.has(colName.toLowerCase())
-            ) {
-              continue;
-            }
-            const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
-            // Same convention as handleEditCommit: writing the original value
-            // back clears any pending change instead of staging a no-op.
-            const isUnchanged = isOriginalCellValue(
-              value,
-              mergedRow.rowData[colIndex],
-            );
-            onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
-            applied++;
+          }
+        } finally {
+          if (isBatch) {
+            onEndBatchEdit?.();
           }
         }
         return applied;
       },
       [
+        onBeginBatchEdit,
+        onEndBatchEdit,
         mergedRows,
         columns,
         physicalColumnSet,
@@ -2867,6 +2972,33 @@ export const DataGrid = React.memo(
           }
         }
 
+        // CMD/CTRL + Z / CMD/CTRL + SHIFT + Z (and CTRL + Y) — Undo / Redo pending grid edits
+        if (
+          (e.metaKey || e.ctrlKey) &&
+          (e.key === "z" || e.key === "Z" || e.key === "y")
+        ) {
+          if (
+            !editingCell &&
+            !isEditableTarget &&
+            !readonlyProp &&
+            isActiveGridRef.current
+          ) {
+            const isRedo =
+              e.key === "y" || (e.shiftKey && (e.key === "z" || e.key === "Z"));
+            if (isRedo) {
+              if (onRedo && canRedo) {
+                e.preventDefault();
+                onRedo();
+              }
+            } else {
+              if (onUndo && canUndo) {
+                e.preventDefault();
+                onUndo();
+              }
+            }
+          }
+        }
+
         // Delete / Backspace — delete selected rows
         if ((e.key === "Delete" || e.key === "Backspace") && !editingCell && !isEditableTarget && !readonlyProp && selectedRowIndices.size > 0) {
           e.preventDefault();
@@ -2876,7 +3008,7 @@ export const DataGrid = React.memo(
 
       document.addEventListener("keydown", handleKeyDown);
       return () => document.removeEventListener("keydown", handleKeyDown);
-    }, [editingCell, selectedRowIndices, selectedColIndices, cellRange, focusedCell, copyCellValue, copySelectedCells, copySelectedColumns, copyCellRange, pasteFromClipboard, readonlyProp, deleteRowsByIndices, handleSelectAll]);
+    }, [editingCell, selectedRowIndices, selectedColIndices, cellRange, focusedCell, copyCellValue, copySelectedCells, copySelectedColumns, copyCellRange, pasteFromClipboard, readonlyProp, deleteRowsByIndices, handleSelectAll, onUndo, onRedo, canUndo, canRedo]);
 
     // Sensitive-column reveal actions (#485). Column toggling uses
     // toggleSetValue like the other Set-based grid state.
@@ -3740,6 +3872,11 @@ export const DataGrid = React.memo(
                       icon: Copy,
                       action: copyColumnNamesAsJson,
                     },
+                    {
+                      label: t("dataGrid.copyColumnNamesSqlList"),
+                      icon: Copy,
+                      action: copyColumnNamesAsSqlList,
+                    },
                   ],
                 },
                 {
@@ -3786,6 +3923,7 @@ export const DataGrid = React.memo(
               masked={columnStatsTarget.masked}
               load={loadColumnStatsForTarget}
               onFilterByValue={onFilterByValue ? filterByTopValue : undefined}
+              returnFocusTo={columnStatsReturnFocus}
               onClose={closeColumnStats}
             />
           )}

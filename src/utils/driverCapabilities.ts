@@ -8,10 +8,36 @@ export function isLocalDriver(
   );
 }
 
+/** Path a file-based driver declaring `in_memory` opens as a temporary database. */
+export const IN_MEMORY_DATABASE = ":memory:";
+
+export function supportsInMemoryDatabase(
+  capabilities?: DriverCapabilities | null,
+): boolean {
+  return (
+    capabilities?.file_based === true &&
+    (capabilities.in_memory === true || capabilities.inMemory === true)
+  );
+}
+
 export function supportsAlterColumn(
   capabilities?: DriverCapabilities | null,
 ): boolean {
   return capabilities?.alter_column === true;
+}
+
+/** The driver's DDL builders accept a column description (ColumnDefinition.comment). */
+export function supportsColumnComments(
+  capabilities?: DriverCapabilities | null,
+): boolean {
+  return capabilities?.column_comments === true;
+}
+
+/** The plugin builds its own drop statement through the optional get_drop_table_sql RPC. */
+export function supportsPluginDropTableSql(
+  capabilities?: DriverCapabilities | null,
+): boolean {
+  return capabilities?.drop_table_sql === true;
 }
 
 export function supportsCreateForeignKeys(

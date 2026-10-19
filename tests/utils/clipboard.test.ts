@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { GOOGLESQL_CAPS } from '../fixtures/sql-syntax/googlesql';
 import {
   rowToCSV,
   rowsToCSV,
@@ -12,7 +13,10 @@ import {
   rowsToHtmlTable,
   columnNamesAsLines,
   columnNamesAsJson,
+  formatRowsForCopy,
+  rowsToSqlInsert,
 } from '../../src/utils/clipboard';
+import type { DriverCapabilities } from '../../src/types/plugins';
 
 describe('clipboard utils', () => {
   describe('rowToCSV', () => {
@@ -418,6 +422,57 @@ describe('clipboard utils', () => {
       expect(columnValuesToInClause(rows, 1)).toBe(
         "'Alice', 'O''Brien', NULL, TRUE",
       );
+    });
+
+    it('backslash-escapes strings for a GoogleSQL driver', () => {
+      const bq = GOOGLESQL_CAPS;
+      const rows = [["O'Brien\\"], [null]];
+      expect(columnValuesToInClause(rows, 0, bq)).toBe("'O\\'Brien\\\\', NULL");
+      expect(columnValuesToInClause(rows, 0, 'postgres')).toBe("'O''Brien\\', NULL");
+    });
+  });
+
+  describe('rowsToSqlInsert', () => {
+    it('quotes values for the driver dialect', () => {
+      const bq = GOOGLESQL_CAPS;
+      expect(rowsToSqlInsert([[1, "it's"]], ['id', 'name'], 't', bq)).toBe(
+        "INSERT INTO `t` (`id`, `name`) VALUES (1, 'it\\'s');",
+      );
+      expect(rowsToSqlInsert([[1, "it's"]], ['id', 'name'], 't')).toBe(
+        "INSERT INTO `t` (`id`, `name`) VALUES (1, 'it''s');",
+      );
+    });
+
+    it('writes booleans in the declared boolean_literals style', () => {
+      const numeric = {
+        ...GOOGLESQL_CAPS,
+        sql_syntax: { ...GOOGLESQL_CAPS.sql_syntax, boolean_literals: 'numeric' as const },
+      };
+      const rows = [[1, true, false]];
+      const cols = ['id', 'a', 'b'];
+      expect(rowsToSqlInsert(rows, cols, 't', GOOGLESQL_CAPS)).toBe(
+        'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+      );
+      expect(rowsToSqlInsert(rows, cols, 't', numeric)).toBe(
+        'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, 1, 0);',
+      );
+      // Built-in drivers keep TRUE/FALSE.
+      for (const driver of ['mysql', 'postgres', 'sqlite', undefined]) {
+        expect(rowsToSqlInsert(rows, cols, 't', driver)).toBe(
+          'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+        );
+      }
+      expect(columnValuesToInClause([[true], [false]], 0, numeric)).toBe('1, 0');
+    });
+
+    it('passes the driver through formatRowsForCopy and columnValuesForCopy', () => {
+      const bq = GOOGLESQL_CAPS;
+      expect(
+        formatRowsForCopy([["a'b"]], ['c'], 'sql-insert', { tableName: 't', driver: bq }),
+      ).toBe("INSERT INTO `t` (`c`) VALUES ('a\\'b');");
+      expect(
+        columnValuesForCopy([["a'b"]], ['c'], 0, { format: 'sql-insert', tableName: 't', driver: bq }),
+      ).toBe("INSERT INTO `t` (`c`) VALUES ('a\\'b');");
     });
   });
 

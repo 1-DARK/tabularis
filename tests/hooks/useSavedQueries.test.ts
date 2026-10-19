@@ -23,10 +23,15 @@ describe('useSavedQueries', () => {
 
     const mockContextValue: SavedQueriesContextType = {
       queries: mockQueries,
+      folders: [],
       isLoading: false,
       saveQuery: vi.fn(),
       updateQuery: vi.fn(),
       deleteQuery: vi.fn(),
+      createFolder: vi.fn(),
+      renameFolder: vi.fn(),
+      deleteFolder: vi.fn(),
+      moveQuery: vi.fn(),
       refreshQueries: vi.fn(),
     };
 
@@ -44,10 +49,15 @@ describe('useSavedQueries', () => {
   it('should handle empty queries', () => {
     const mockContextValue: SavedQueriesContextType = {
       queries: [],
+      folders: [],
       isLoading: false,
       saveQuery: vi.fn(),
       updateQuery: vi.fn(),
       deleteQuery: vi.fn(),
+      createFolder: vi.fn(),
+      renameFolder: vi.fn(),
+      deleteFolder: vi.fn(),
+      moveQuery: vi.fn(),
       refreshQueries: vi.fn(),
     };
 
@@ -62,10 +72,15 @@ describe('useSavedQueries', () => {
   it('should handle loading state', () => {
     const mockContextValue: SavedQueriesContextType = {
       queries: [],
+      folders: [],
       isLoading: true,
       saveQuery: vi.fn(),
       updateQuery: vi.fn(),
       deleteQuery: vi.fn(),
+      createFolder: vi.fn(),
+      renameFolder: vi.fn(),
+      deleteFolder: vi.fn(),
+      moveQuery: vi.fn(),
       refreshQueries: vi.fn(),
     };
 
@@ -80,10 +95,15 @@ describe('useSavedQueries', () => {
   it('should provide all query management functions', () => {
     const mockContextValue: SavedQueriesContextType = {
       queries: [],
+      folders: [],
       isLoading: false,
       saveQuery: vi.fn(),
       updateQuery: vi.fn(),
       deleteQuery: vi.fn(),
+      createFolder: vi.fn(),
+      renameFolder: vi.fn(),
+      deleteFolder: vi.fn(),
+      moveQuery: vi.fn(),
       refreshQueries: vi.fn(),
     };
 

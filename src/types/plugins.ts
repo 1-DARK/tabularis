@@ -12,6 +12,12 @@ export interface DriverCapabilities {
   routines: boolean;
   file_based: boolean;
   folder_based: boolean;
+  /** File-based driver that also opens `:memory:` as a temporary database living in
+   * the driver process (e.g. DuckDB). Adds an in-memory shortcut to the connection
+   * form and skips the file existence check for that path. Defaults to false. */
+  in_memory?: boolean;
+  /** CamelCase alias accepted for plugin compatibility. */
+  inMemory?: boolean;
   /** The driver exposes a single implicit database (e.g. a flat search/document
    * store like Meilisearch). Skips the database tab + database-name field. */
   single_database?: boolean;
@@ -47,6 +53,10 @@ export interface DriverCapabilities {
   inline_pk?: boolean;
   /** Opts Generate SQL into the optional get_table_query_template RPC. Defaults to false. */
   table_query_templates?: boolean;
+  /** DDL builders honour ColumnDefinition.comment; shows the column description field. Defaults to false. */
+  column_comments?: boolean;
+  /** Opts the explorer's Drop table action into the optional get_drop_table_sql RPC. Defaults to false. */
+  drop_table_sql?: boolean;
   // DDL capabilities (optional, default to false when not present)
   alter_column?: boolean;
   create_foreign_keys?: boolean;
@@ -75,6 +85,63 @@ export interface DriverCapabilities {
    * implicitly via the previous splitter).
    */
   sql_dialect?: Dialect;
+  /**
+   * Declarative SQL syntax extending a preset, for engines no preset
+   * describes (see `SqlSyntaxDescriptor`). Resolve it with
+   * `resolveSqlSyntax` (`src/utils/sqlSyntax.ts`); never read it directly.
+   */
+  sql_syntax?: SqlSyntaxDescriptor;
+}
+
+/** One quote rule of a declared SQL syntax. */
+export interface SqlSyntaxQuote {
+  /** `'`, `"`, `` ` `` or `[`. */
+  open: string;
+  /** Defaults to `open` (`]` for `[`); any other value is invalid. */
+  close?: string;
+  kind: "string" | "identifier";
+  /**
+   * How a closing quote is escaped inside the run: `double` (`''`, the
+   * default), `backslash` (`\'`, no doubling), `both` or `none`.
+   */
+  escape?: "double" | "backslash" | "both" | "none";
+}
+
+/** How generated boolean literals are written (`sql_syntax.boolean_literals`). */
+export type BooleanLiteralStyle = "keywords" | "numeric";
+
+/**
+ * `capabilities.sql_syntax`: how a plugin's SQL is lexed and how the host
+ * writes SQL for it, as data. Every field is optional and overrides the
+ * `extends` preset (default: `sql_dialect`). Invalid fields are ignored.
+ */
+export interface SqlSyntaxDescriptor {
+  extends?: Dialect;
+  /** Replaces the preset's quote rules (1 to 8, unique `open`). */
+  quotes?: SqlSyntaxQuote[];
+  triple_quoted_strings?: boolean;
+  /** 1–2 ASCII letters each (e.g. `r`, `b`, `rb`, `br`), at most 8. */
+  string_prefixes?: string[];
+  hash_comments?: boolean;
+  nested_block_comments?: boolean;
+  line_comment_requires_space?: boolean;
+  script_blocks?: boolean;
+  dollar_quoting?: boolean;
+  /** Generated string literals: `standard` (`''`) or `backslash` (`\'`). */
+  string_escape?: "standard" | "backslash";
+  /** Whether `LIKE … ESCAPE '\'` is supported. Defaults to true. */
+  like_escape?: boolean;
+  /**
+   * Generated boolean literals: `keywords` (`TRUE`/`FALSE`) or `numeric`
+   * (`1`/`0`). Omitted, each generator keeps its historical form.
+   */
+  boolean_literals?: BooleanLiteralStyle;
+  /** `sql-formatter` language for Format SQL (allowlisted). */
+  formatter?: string;
+  /** Extra autocomplete keywords (at most 1000, each up to 64 chars). */
+  keywords?: string[];
+  /** Extra autocomplete function names (same limits as `keywords`). */
+  functions?: string[];
 }
 
 /** Effective metadata for one connection. The registered manifest stays static. */
@@ -106,6 +173,20 @@ export interface DeprecationInfo {
   removal_date?: string;
   /** App version targeted for removal, if decided. */
   removal_version?: string;
+}
+
+export interface ConnectionFieldOverride {
+  hidden?: boolean;
+  label?: string;
+  placeholder?: string;
+}
+
+export interface ConnectionFieldOverrides {
+  host?: ConnectionFieldOverride;
+  port?: ConnectionFieldOverride;
+  username?: ConnectionFieldOverride;
+  password?: ConnectionFieldOverride;
+  database?: ConnectionFieldOverride;
 }
 
 export interface PluginManifest {
@@ -145,6 +226,8 @@ export interface PluginManifest {
   deprecated?: DeprecationInfo;
   /** Raw EXPLAIN parser bundles loaded when this plugin is enabled. */
   explain_parsers?: ExplainParserManifestEntry[];
+  /** Optional presentation overrides for host-owned connection fields. */
+  connection_fields?: ConnectionFieldOverrides;
 }
 
 /** Manifest-level declaration for a plugin-owned EXPLAIN parser bundle. */

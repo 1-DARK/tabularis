@@ -4,8 +4,11 @@ import {
   hasCellReferences,
   resolveQueryVariables,
   findUnresolvedDependencies,
+  variableOptionsForDriver,
 } from "../../src/utils/notebookVariables";
 import type { NotebookCell } from "../../src/types/notebook";
+import type { DriverCapabilities, PluginManifest } from "../../src/types/plugins";
+import { GOOGLESQL_CAPS } from "../fixtures/sql-syntax/googlesql";
 
 function makeCell(overrides: Partial<NotebookCell> = {}): NotebookCell {
   return {
@@ -331,6 +334,52 @@ describe("notebookVariables", () => {
       expect(result.sql).toContain("'C:\\\\temp\\\\'");
     });
 
+    it("should backslash-escape literals for a backslash-escape syntax", () => {
+      const cells = [
+        makeCell({
+          type: "sql",
+          result: {
+            columns: ["v"],
+            rows: [["it's C:\\temp\nnext"]],
+            affected_rows: 0,
+          },
+        }),
+      ];
+      const result = resolveQueryVariables(
+        "SELECT * FROM {{cell_1}}",
+        cells,
+        variableOptionsForDriver(GOOGLESQL_CAPS),
+      );
+      expect(result.sql).toContain("'it\\'s C:\\\\temp\\nnext' AS `v`");
+      // The same result keeps its standard rendering for other drivers.
+      const standard = resolveQueryVariables("SELECT * FROM {{cell_1}}", cells);
+      expect(standard.sql).toContain("'it''s C:\\temp\nnext' AS \"v\"");
+    });
+
+    it("should write booleans in the declared boolean_literals style", () => {
+      const cells = [
+        makeCell({
+          type: "sql",
+          result: { columns: ["on", "off"], rows: [[true, false]], affected_rows: 0 },
+        }),
+      ];
+      const sql = (options?: Parameters<typeof resolveQueryVariables>[2]) =>
+        resolveQueryVariables("SELECT * FROM {{cell_1}}", cells, options).sql;
+      expect(sql(variableOptionsForDriver(GOOGLESQL_CAPS))).toContain(
+        "SELECT TRUE AS `on`, FALSE AS `off`",
+      );
+      const numeric = {
+        ...GOOGLESQL_CAPS,
+        sql_syntax: { ...GOOGLESQL_CAPS.sql_syntax, boolean_literals: "numeric" as const },
+      };
+      expect(sql(variableOptionsForDriver(numeric))).toContain("SELECT 1 AS `on`, 0 AS `off`");
+      // Without a declaration booleans stay quoted strings, as before.
+      expect(sql()).toContain(`SELECT 'true' AS "on", 'false' AS "off"`);
+      expect(sql(variableOptionsForDriver("postgres"))).toContain(
+        `SELECT 'true' AS "on", 'false' AS "off"`,
+      );
+    });
+
     it("should escape a backslash-quote sequence safely for MySQL", () => {
       const cells = [
         makeCell({
@@ -416,6 +465,145 @@ describe("notebookVariables", () => {
         cells,
       );
       expect(result.sql).toContain("WHERE 1=0");
+    });
+  });
+
+  describe("identifier quoting", () => {
+    const cells = [
+      makeCell({
+        result: { columns: ["id", 'we"ird`col'], rows: [[1, "a"]], affected_rows: 0 },
+      }),
+    ];
+    const emptyCells = [
+      makeCell({ result: { columns: ["id"], rows: [], affected_rows: 0 } }),
+    ];
+
+    it("should default to double quotes", () => {
+      const { sql } = resolveQueryVariables("SELECT * FROM {{cell_1}}", cells);
+      expect(sql).toContain(`SELECT 1 AS "id", 'a' AS "we""ird\`col"`);
+    });
+
+    it("should use the identifierQuote option and double it inside names", () => {
+      const { sql } = resolveQueryVariables("SELECT * FROM {{cell_1}}", cells, {
+        identifierQuote: "`",
+      });
+      expect(sql).toContain("SELECT 1 AS `id`, 'a' AS `we\"ird``col`");
+    });
+
+    it("should quote empty-result columns with the identifierQuote option", () => {
+      const { sql } = resolveQueryVariables("SELECT * FROM {{cell_1}}", emptyCells, {
+        identifierQuote: "`",
+      });
+      expect(sql).toContain("SELECT NULL AS `id` WHERE 1=0");
+    });
+
+    it("should not reuse a resolution across identifier quotes", () => {
+      const ansi = resolveQueryVariables("SELECT * FROM {{cell_1}}", cells);
+      const backtick = resolveQueryVariables("SELECT * FROM {{cell_1}}", cells, {
+        identifierQuote: "`",
+      });
+      expect(ansi.sql).toContain('AS "id"');
+      expect(backtick.sql).toContain("AS `id`");
+    });
+  });
+
+  describe("variableOptionsForDriver", () => {
+    const caps = (overrides: Partial<DriverCapabilities>): DriverCapabilities =>
+      ({ identifier_quote: '"', ...overrides }) as DriverCapabilities;
+
+    it("should read the identifier quote and dialect from capabilities", () => {
+      expect(
+        variableOptionsForDriver(caps({ identifier_quote: "`", sql_dialect: "mysql" })),
+      ).toEqual({ escapeBackslashes: true, identifierQuote: "`" });
+      expect(
+        variableOptionsForDriver(caps({ identifier_quote: '"', sql_dialect: "postgres" })),
+      ).toEqual({ escapeBackslashes: false, identifierQuote: '"' });
+    });
+
+    it("should read a declared backslash string_escape", () => {
+      expect(variableOptionsForDriver(GOOGLESQL_CAPS)).toEqual({
+        escapeBackslashes: true,
+        identifierQuote: "`",
+        backslashLiterals: true,
+        booleanLiterals: "keywords",
+      });
+    });
+
+    it("should honour a plugin's backtick quote outside the MySQL dialect", () => {
+      expect(
+        variableOptionsForDriver(caps({ identifier_quote: "`", sql_dialect: "generic" })),
+      ).toEqual({ escapeBackslashes: false, identifierQuote: "`" });
+    });
+
+    it("should keep the driver-id escaping when capabilities name no dialect", () => {
+      // A `mariadb` plugin without sql_dialect: main escaped by id, so the
+      // capabilities must not make it weaker.
+      expect(variableOptionsForDriver(caps({ identifier_quote: "`" }), "mariadb")).toEqual({
+        escapeBackslashes: true,
+        identifierQuote: "`",
+      });
+      expect(
+        variableOptionsForDriver(caps({ identifier_quote: "`", sql_dialect: "generic" }), "mysql"),
+      ).toEqual({ escapeBackslashes: true, identifierQuote: "`" });
+      expect(variableOptionsForDriver(caps({}), "informix")).toEqual({
+        escapeBackslashes: false,
+        identifierQuote: '"',
+      });
+    });
+
+    it("should let a declared dialect decide over the driver id", () => {
+      expect(
+        variableOptionsForDriver(caps({ sql_dialect: "postgres" }), "mariadb"),
+      ).toEqual({ escapeBackslashes: false, identifierQuote: '"' });
+      expect(
+        variableOptionsForDriver(caps({ sql_dialect: "mysql", identifier_quote: "`" }), "custom"),
+      ).toEqual({ escapeBackslashes: true, identifierQuote: "`" });
+    });
+
+    it("should read the id from a plugin manifest", () => {
+      const manifest = {
+        id: "mariadb",
+        capabilities: caps({ identifier_quote: "`" }),
+      } as unknown as PluginManifest;
+      expect(variableOptionsForDriver(manifest).escapeBackslashes).toBe(true);
+    });
+
+    it("should double backslashes in the CTE for a dialect-less mariadb plugin", () => {
+      const cells = [
+        makeCell({
+          id: "c1",
+          result: {
+            columns: ["v"],
+            rows: [["a\\"]],
+            affected_rows: 0,
+          } as NotebookCell["result"],
+        }),
+      ];
+      const { sql } = resolveQueryVariables(
+        "SELECT * FROM {{cell_1}}",
+        cells,
+        variableOptionsForDriver(caps({ identifier_quote: "`" }), "mariadb"),
+      );
+      expect(sql).toContain("'a\\\\' AS `v`");
+    });
+
+    it("should fall back to builtin rules for a bare driver id", () => {
+      expect(variableOptionsForDriver("mysql")).toEqual({
+        escapeBackslashes: true,
+        identifierQuote: "`",
+      });
+      expect(variableOptionsForDriver("mariadb")).toEqual({
+        escapeBackslashes: true,
+        identifierQuote: "`",
+      });
+      expect(variableOptionsForDriver("postgres")).toEqual({
+        escapeBackslashes: false,
+        identifierQuote: '"',
+      });
+      expect(variableOptionsForDriver(null)).toEqual({
+        escapeBackslashes: false,
+        identifierQuote: '"',
+      });
     });
   });
 

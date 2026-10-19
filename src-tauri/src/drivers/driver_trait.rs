@@ -68,6 +68,12 @@ pub struct DriverCapabilities {
     /// Folder-based database (e.g. CSV directory); connection points to a directory instead of a file.
     #[serde(default)]
     pub folder_based: bool,
+    /// File-based driver that also accepts the `:memory:` path, opening a
+    /// temporary database that lives in the driver process (e.g. DuckDB).
+    /// The connection test then skips the file existence check for that
+    /// path. Defaults to `false`.
+    #[serde(default, alias = "inMemory")]
+    pub in_memory: bool,
     /// The driver exposes a single implicit database, so there is nothing to
     /// select or name (e.g. a flat search/document store like Meilisearch).
     /// Skips the database tab and the database-name field in the connection
@@ -116,6 +122,15 @@ pub struct DriverCapabilities {
     /// Omitted/false preserves the host's existing template generation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub table_query_templates: bool,
+    /// The DDL builders honour `ColumnDefinition::comment`, so the column
+    /// editor shows a description field. Omitted/false hides it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub column_comments: bool,
+    /// Opts the explorer's "Drop table" action into the optional
+    /// `get_drop_table_sql` RPC. Omitted/false keeps the generic `DROP TABLE`
+    /// and the RPC is never called.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub drop_table_sql: bool,
     // DDL capabilities
     /// Supports ALTER TABLE MODIFY/ALTER COLUMN on existing tables.
     #[serde(default)]
@@ -176,8 +191,27 @@ pub struct DriverCapabilities {
     /// stays a strict `Option` so security-relevant Rust consumers (the SSL
     /// mode migration, the MCP schema default) can't inherit that default
     /// by accident.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// A dialect this host doesn't know falls back to `Generic` with a
+    /// warning instead of refusing the whole manifest.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::drivers::sql_dialect::deserialize_lenient"
+    )]
     pub sql_dialect: Option<SqlDialect>,
+    /// Declarative SQL syntax extending a preset (`extends`, default
+    /// `sql_dialect`) for engines no preset describes: quotes, comments,
+    /// triple-quoted strings, procedural blocks, literal escaping, formatter
+    /// and autocomplete words. Separate from `sql_dialect` so older hosts
+    /// ignore it and keep using `sql_dialect`. Invalid fields are dropped
+    /// with a warning, never failing the manifest; resolve it with
+    /// [`crate::drivers::sql_syntax::SqlSyntax::resolve`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::drivers::sql_syntax::deserialize_lenient"
+    )]
+    pub sql_syntax: Option<crate::drivers::sql_syntax::SqlSyntaxDescriptor>,
 }
 
 fn default_double_quote() -> String {
@@ -273,6 +307,34 @@ pub fn deprecation_for_builtin(builtin_id: &str) -> Option<DeprecationInfo> {
     }
 }
 
+/// Optional presentation overrides for one of the host-owned connection
+/// fields. Omitted values preserve the host defaults so manifests written
+/// before this contract continue to render exactly as they do today.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ConnectionFieldOverride {
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+}
+
+/// Driver-specific overrides for the common network connection fields.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct ConnectionFieldOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<ConnectionFieldOverride>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<ConnectionFieldOverride>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<ConnectionFieldOverride>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<ConnectionFieldOverride>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<ConnectionFieldOverride>,
+}
+
 /// Metadata describing a registered driver plugin.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PluginManifest {
@@ -321,6 +383,10 @@ pub struct PluginManifest {
     /// Plugin-owned EXPLAIN parser bundles. Absent for built-in drivers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explain_parsers: Option<Vec<ExplainParserManifestEntry>>,
+    /// Optional hide/relabel/placeholder overrides for the common connection
+    /// fields. Absent for built-ins and legacy plugins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_fields: Option<ConnectionFieldOverrides>,
     /// Static type mappings applied by `map_inferred_type`. Keys are generic
     /// inferred types (uppercase, e.g. `"DATETIME"`), values are driver-specific
     /// types (e.g. `"TIMESTAMP"`). Empty for built-in drivers which override the
@@ -360,6 +426,18 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Drop cached discovery results on reconnect. Static drivers do nothing.
     async fn invalidate_connection_metadata(&self, _connection_id: Option<&str>) {}
+
+    /// Bind resolved connection params (with the browsed database already
+    /// applied) to a driver snapshot, so SQL builders whose signature carries
+    /// no params (create table/column/index, routine template) can still
+    /// forward the connection context. Static drivers return `None` and keep
+    /// using the registered instance. No RPC is made.
+    fn bind_connection_params(
+        &self,
+        _params: &ConnectionParams,
+    ) -> Option<std::sync::Arc<dyn DatabaseDriver>> {
+        None
+    }
 
     /// Returns the list of data types supported by this driver.
     fn get_data_types(&self) -> Vec<DataTypeInfo>;
@@ -929,6 +1007,19 @@ pub trait DatabaseDriver: Send + Sync {
         _schema: Option<&str>,
     ) -> Result<Vec<String>, String> {
         Err("DDL generation not supported".into())
+    }
+
+    /// Statement that drops `table`, for engines where a plain `DROP TABLE`
+    /// is wrong for some table kinds (snapshots, external tables, ...).
+    /// `None` means the host builds its generic `DROP TABLE`. Only plugins
+    /// declaring `capabilities.drop_table_sql` are asked.
+    async fn get_drop_table_sql(
+        &self,
+        _params: &ConnectionParams,
+        _table: &str,
+        _schema: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        Ok(None)
     }
 
     /// Returns the DDL (e.g. `CREATE TABLE ...`) for an *existing* table, as

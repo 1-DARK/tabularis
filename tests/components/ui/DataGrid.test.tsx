@@ -21,7 +21,7 @@ vi.mock("../../../src/components/ui/CellCodeEditor", () => ({
 }));
 
 vi.mock("../../../src/hooks/useDatabase", () => ({
-  useDatabase: () => ({ activeSchema: null, connections: [] }),
+  useDatabase: () => databaseMock(),
 }));
 
 vi.mock("../../../src/hooks/useAlert", () => ({
@@ -37,6 +37,7 @@ const {
   virtualizerRenderControl,
   sidebarState,
   writeHtmlMock,
+  databaseMock,
 } = vi.hoisted(() => ({
   showToastMock: vi.fn(),
   openRowEditorMock: vi.fn(),
@@ -48,6 +49,11 @@ const {
   virtualizerRenderControl: { forceEmpty: false },
   sidebarState: { isOpen: false, activePanel: null as string | null },
   writeHtmlMock: vi.fn(),
+  databaseMock: vi.fn((): Record<string, unknown> => ({
+    activeSchema: null,
+    connections: [],
+    getConnectionData: vi.fn(),
+  })),
 }));
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", async (importOriginal) => ({
@@ -2211,6 +2217,96 @@ describe("DataGrid column statistics (#1001)", () => {
     await screen.findByText("dataGrid.copyColumnName");
     expect(screen.queryByText("dataGrid.columnStatistics")).toBeNull();
   });
+
+  describe("focus when the popover closes (#1138)", () => {
+    const gridOf = (container: HTMLElement) =>
+      container.querySelector<HTMLElement>('div[tabindex="0"]')!;
+    // The header's focusable "select column" control.
+    const headerControl = (header: Element) =>
+      header.querySelector<HTMLElement>('[role="button"]')!;
+
+    const openStats = async (overrides: Partial<ComponentProps<typeof DataGrid>> = {}) => {
+      const utils = renderStatsGrid(overrides);
+      const control = headerControl(utils.header(1));
+      control.focus();
+      // Shift+F10 / the context-menu key fire contextmenu on the focused control.
+      fireEvent.contextMenu(control);
+      fireEvent.click(await screen.findByText("dataGrid.columnStatistics"));
+      const dialog = await screen.findByRole("dialog");
+      expect(dialog).toHaveFocus();
+      return { ...utils, control, dialog };
+    };
+
+    it("returns focus to the column header on Escape", async () => {
+      const { control, dialog } = await openStats();
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(control).toHaveFocus();
+    });
+
+    it("returns focus to the column header from the close button", async () => {
+      const { control } = await openStats();
+      await screen.findByText("dataGrid.columnStats.rows");
+      fireEvent.click(screen.getByRole("button", { name: "dataGrid.columnStats.close" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(control).toHaveFocus();
+    });
+
+    it("returns focus to the column header when the load is cancelled", async () => {
+      const { control } = await openStats({
+        onLoadColumnStats: vi.fn(() => new Promise<never>(() => {})),
+      });
+      fireEvent.click(screen.getByRole("button", { name: "common.cancel" }));
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(control).toHaveFocus();
+    });
+
+    it("falls back to the grid when the header is gone", async () => {
+      const { container, dialog, rerender } = await openStats();
+      // The column the popover was opened for is no longer rendered.
+      rerender(
+        <DataGrid
+          columns={["id"]}
+          data={[[1]]}
+          tableName="orders"
+          columnMetadata={metadata}
+          onFilterByValue={vi.fn()}
+          onLoadColumnStats={vi.fn().mockResolvedValue(stats)}
+          selectedRows={new Set()}
+          onSelectionChange={vi.fn()}
+          readonly
+        />,
+      );
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(gridOf(container)).toHaveFocus();
+    });
+
+    it("leaves focus on what was clicked outside the popover", async () => {
+      const { control } = await openStats();
+      const elsewhere = document.createElement("button");
+      document.body.appendChild(elsewhere);
+      try {
+        // A real click focuses the target on mousedown; jsdom only dispatches it.
+        fireEvent.mouseDown(elsewhere);
+        elsewhere.focus();
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(elsewhere).toHaveFocus();
+        expect(control).not.toHaveFocus();
+      } finally {
+        elsewhere.remove();
+      }
+    });
+
+    it("focuses the grid when a top value is picked", async () => {
+      const { container, onFilterByValue } = await openStats();
+      const values = await screen.findAllByTitle("dataGrid.columnStats.filterBy");
+      fireEvent.click(values[0]);
+      expect(onFilterByValue).toHaveBeenCalledWith("status", "=", "open", "varchar(20)");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(gridOf(container)).toHaveFocus();
+    });
+  });
 });
 
 describe("DataGrid open link context menu", () => {
@@ -2685,5 +2781,232 @@ describe("DataGrid Edit selection context menu (#1000)", () => {
     expect(translationMock).toHaveBeenCalledWith("dataGrid.editSelectionUnavailable", {
       reason,
     });
+  });
+
+  it("triggers onUndo when Cmd/Ctrl+Z is pressed and canUndo is true", async () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    const { container } = renderGrid({
+      onUndo,
+      onRedo,
+      canUndo: true,
+      canRedo: false,
+    });
+
+    fireEvent.mouseDown(container.querySelector("table")!);
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true });
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    expect(onRedo).not.toHaveBeenCalled();
+  });
+
+  it("triggers onRedo when Cmd/Ctrl+Shift+Z or Ctrl+Y is pressed and canRedo is true", async () => {
+    const onUndo = vi.fn();
+    const onRedo = vi.fn();
+    const { container } = renderGrid({
+      onUndo,
+      onRedo,
+      canUndo: false,
+      canRedo: true,
+    });
+
+    fireEvent.mouseDown(container.querySelector("table")!);
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true, shiftKey: true });
+    expect(onRedo).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(document, { key: "y", ctrlKey: true });
+    expect(onRedo).toHaveBeenCalledTimes(2);
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it("ignores Ctrl+Z when canUndo is false", async () => {
+    const onUndo = vi.fn();
+    const { container } = renderGrid({
+      onUndo,
+      canUndo: false,
+    });
+
+    fireEvent.mouseDown(container.querySelector("table")!);
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true });
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it("ignores Ctrl+Z while editing a cell inline", async () => {
+    const onUndo = vi.fn();
+    const { container } = renderGrid({
+      onUndo,
+      canUndo: true,
+      readonly: false,
+    });
+
+    fireEvent.mouseDown(container.querySelector("table")!);
+    const targetCell = cellAt(container, 0, 1);
+    fireEvent.doubleClick(targetCell);
+
+    // Editing cell is active with inline text input
+    fireEvent.keyDown(document, { key: "z", ctrlKey: true });
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  it("ignores Ctrl+Z when an editable text input has focus", async () => {
+    const onUndo = vi.fn();
+    const { container } = renderGrid({
+      onUndo,
+      canUndo: true,
+    });
+
+    fireEvent.mouseDown(container.querySelector("table")!);
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+
+    fireEvent.keyDown(input, { key: "z", ctrlKey: true });
+    expect(onUndo).not.toHaveBeenCalled();
+
+    document.body.removeChild(input);
+  });
+
+  it("calls onBeginBatchEdit and onEndBatchEdit around batch cell writes", async () => {
+    const onBeginBatchEdit = vi.fn();
+    const onEndBatchEdit = vi.fn();
+    const { container, onPendingChange } = renderGrid({
+      onBeginBatchEdit,
+      onEndBatchEdit,
+    });
+
+    selectColumn(1);
+    fireEvent.contextMenu(cellAt(container, 0, 1));
+    await openEditSelection();
+    fireEvent.click(await screen.findByText("dataGrid.upperCase"));
+
+    expect(onBeginBatchEdit).toHaveBeenCalledTimes(1);
+    expect(onEndBatchEdit).toHaveBeenCalledTimes(1);
+    expect(onPendingChange).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("DataGrid copy column names as SQL list", () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+
+  beforeEach(() => {
+    writeText.mockClear();
+    showToastMock.mockClear();
+    translationMock.mockClear();
+    databaseMock.mockReset();
+    databaseMock.mockReturnValue({
+      activeSchema: null,
+      connections: [],
+      getConnectionData: vi.fn(),
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+  });
+
+  it("copies all column names as a quoted SQL list in result-column order and shows the toast", async () => {
+    const { container } = render(
+      <DataGrid
+        columns={["select", "full name", 'col"quote']}
+        data={[[1, "Alice", "x"]]}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        readonly
+      />,
+    );
+
+    fireEvent.contextMenu(container.querySelectorAll("th")[1]);
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNames"));
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNamesSqlList"));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('"select", "full name", "col""quote"'),
+    );
+    expect(showToastMock).toHaveBeenCalledWith("dataGrid.copiedColumnNames", {
+      kind: "success",
+    });
+    expect(translationMock).toHaveBeenCalledWith("dataGrid.copiedColumnNames", {
+      count: 3,
+    });
+  });
+
+  it("honors the grid connection's own capabilities and driver over the globally active connection", async () => {
+    databaseMock.mockReturnValue({
+      activeSchema: null,
+      connections: [],
+      activeDriver: "postgres",
+      activeCapabilities: {
+        schemas: true,
+        views: true,
+        routines: false,
+        file_based: false,
+        folder_based: false,
+        identifier_quote: '"',
+        alter_primary_key: false,
+      },
+      getConnectionData: vi.fn((id: string) =>
+        id === "mysql-conn"
+          ? {
+              driver: "mysql",
+              capabilities: null,
+            }
+          : undefined,
+      ),
+    });
+
+    const { container } = render(
+      <DataGrid
+        connectionId="mysql-conn"
+        columns={["id", "user`name"]}
+        data={[[1, "Alice"]]}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        readonly
+      />,
+    );
+
+    fireEvent.contextMenu(container.querySelectorAll("th")[1]);
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNames"));
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNamesSqlList"));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("`id`, `user``name`"),
+    );
+  });
+
+  it("falls back to the active connection when the grid connection data is missing", async () => {
+    databaseMock.mockReturnValue({
+      activeSchema: null,
+      connections: [],
+      activeDriver: "postgres",
+      activeCapabilities: {
+        schemas: true,
+        views: true,
+        routines: false,
+        file_based: false,
+        folder_based: false,
+        identifier_quote: '"',
+        alter_primary_key: false,
+      },
+      getConnectionData: vi.fn(() => undefined),
+    });
+
+    const { container } = render(
+      <DataGrid
+        connectionId="missing-conn"
+        columns={["col1", "col2"]}
+        data={[[1, 2]]}
+        selectedRows={new Set()}
+        onSelectionChange={vi.fn()}
+        readonly
+      />,
+    );
+
+    fireEvent.contextMenu(container.querySelectorAll("th")[1]);
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNames"));
+    fireEvent.click(await screen.findByText("dataGrid.copyColumnNamesSqlList"));
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith('"col1", "col2"'),
+    );
   });
 });

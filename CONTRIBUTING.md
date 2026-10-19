@@ -235,7 +235,7 @@ If your changes involve native desktop behaviors (Tauri IPC commands, filesystem
 
 1. **Explore open targets and scope:**
    - Review current and requested drivers in the [Driver Contribution Hub (#1145)](https://github.com/TabularisDB/tabularis/issues/1145).
-   - Check the [Plugin Bounty Board](https://tabularis.dev/plugins/bounties) for funded driver opportunities.
+   - Check the [Plugin Bounty Board](https://tabularis.dev/plugins/bounties) for open driver targets looking for contributors.
 2. **Scaffold a new driver plugin:**
    Use the official `@tabularis/create-plugin` generator:
    ```bash
@@ -290,6 +290,11 @@ Tabularis follows the [Conventional Commits](https://www.conventionalcommits.org
 - `refactor:` Code restructuring without changing behavior or adding features.
 - `test:` Adding or refactoring automated tests.
 - `chore:` Maintenance tasks, dependency updates, and build script adjustments.
+- `perf:` Performance improvements without behavior changes.
+- `ci:` / `build:` Changes to CI workflows or the build setup.
+- `revert:` Reverts a previous commit.
+
+The scope in parentheses is optional and names the area you touched (`editor`, `grid`, `postgres`, `create-plugin`, ...). Start the subject with a lowercase letter. Add `!` after the type or scope for a breaking change (`feat(plugin-api)!: ...`).
 
 Example:
 ```git
@@ -297,6 +302,8 @@ feat(editor): add shortcut for executing current cell in sql notebook
 fix(grid): prevent horizontal scroll jump when expanding nested json
 docs(contributing): add first contribution quickstart and workflow guide
 ```
+
+Pull requests are squash merged, so **the PR title becomes the commit on `main`** and must follow the same format. A check on every PR validates it; if it fails, edit the title and the check re-runs. For the npm packages under `packages/`, the title also decides the release: a `fix` produces a patch release, a `feat` a minor one, while `chore`, `docs`, `test` and similar do not release anything.
 
 ## Join The Project Team
 

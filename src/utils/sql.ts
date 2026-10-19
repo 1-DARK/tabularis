@@ -1,6 +1,10 @@
 import {
   type Dialect,
+  type DialectInput,
+  type DialectOptions,
+  type SqlSyntaxSource,
   type Statement,
+  dialectOptions,
   splitStatements,
   stripLeadingComments,
   isExplainable,
@@ -41,12 +45,34 @@ const CTE_WRITE_RE = /\b(?:INSERT|UPDATE|DELETE|MERGE|INTO)\b/i;
 
 const SELECT_INTO_RE = /\bINTO\b/i;
 
-const MASK_DIALECTS: readonly SqlDialect[] = [
+// Not a dialect: GoogleSQL-style lexing (backslash escapes in every quote,
+// triple-quoted and prefixed strings, `#` comments), which no preset has. A
+// declared `sql_syntax` can make an engine lex this way, so the dialect-blind
+// check below reads the query this way too.
+const GENERIC_OPTIONS: DialectOptions = dialectOptions("generic");
+const TRIPLE_QUOTED_BACKSLASH: SqlSyntaxSource = {
+  dialect: "generic",
+  declared: true,
+  options: {
+    ...GENERIC_OPTIONS,
+    quotes: [
+      { open: "'", close: "'", escape: "\\", doubleClose: false, kind: "string" },
+      { open: '"', close: '"', escape: "\\", doubleClose: false, kind: "string" },
+      { open: "`", close: "`", escape: "\\", doubleClose: false, kind: "identifier" },
+    ],
+    hashComments: true,
+    tripleQuotedStrings: true,
+    stringPrefixes: ["r", "b", "rb", "br"],
+  },
+};
+
+const MASK_DIALECTS: readonly DialectInput[] = [
   "postgres",
   "mysql",
   "mssql",
   "sqlite",
   "oracle",
+  TRIPLE_QUOTED_BACKSLASH,
   "generic",
 ];
 
@@ -61,11 +87,15 @@ const MASK_DIALECTS: readonly SqlDialect[] = [
  * helpers rather than in the plan analysis package.
  */
 export function isDataModifyingQuery(query: string): boolean {
-  const keyword = leadingKeyword(query);
-  if (DATA_MODIFYING_KEYWORDS.has(keyword)) return true;
-  if (keyword === "SELECT") return matchesOutsideStrings(query, SELECT_INTO_RE);
-  if (keyword === "WITH") return matchesOutsideStrings(query, CTE_WRITE_RE);
-  return false;
+  // The dialect is unknown: a statement modifies data if it does under either
+  // reading of a leading `#` (a MySQL comment, or code elsewhere).
+  return [false, true].some((hashComments) => {
+    const keyword = leadingKeyword(query, { hashComments });
+    if (DATA_MODIFYING_KEYWORDS.has(keyword)) return true;
+    if (keyword === "SELECT") return matchesOutsideStrings(query, SELECT_INTO_RE);
+    if (keyword === "WITH") return matchesOutsideStrings(query, CTE_WRITE_RE);
+    return false;
+  });
 }
 
 // Look for a keyword outside strings and comments. The connection's dialect is
@@ -266,7 +296,7 @@ export function extractEditableViewDefinition(sql: string): string {
  */
 export function getExplainableQueries(
   sql: string,
-  dialect?: SqlDialect,
+  dialect?: DialectInput,
 ): { query: string; index: number }[] {
   return splitStatements(sql, dialect).flatMap((s, i) =>
     s.isExplainable ? [{ query: s.text, index: i + 1 }] : [],

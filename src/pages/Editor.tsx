@@ -21,6 +21,18 @@ import {
   getLoadedRowsExportLimit,
 } from "../utils/resultExport";
 import { serializePkKey, buildPkMap } from "../utils/dataGrid";
+import {
+  createGridHistory,
+  recordGridEdit,
+  undoGridEdit,
+  redoGridEdit,
+  canUndoGrid,
+  canRedoGrid,
+  clonePendingChanges,
+  clonePendingDeletions,
+  clonePendingInsertions,
+  type GridPendingSnapshot,
+} from "../utils/gridUndo";
 import { TONE_SOFT_BG_CLASS, TONE_TEXT_CLASS, tint } from "../utils/tones";
 import {
   buildKeylessUpdatePlan,
@@ -71,11 +83,14 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  ArrowLeft,
+  ArrowRight,
   ArrowLeftToLine,
   ArrowRightToLine,
   XCircle,
   Trash2,
   Undo2,
+  Redo2,
   Check,
   BookOpen,
   UsersRound,
@@ -122,6 +137,9 @@ import {
   type ExportStatus,
 } from "../components/modals/ExportProgressModal";
 import { splitQueries, splitStatements, splitBatches, findStatementAtOffset, extractTableName, getExplainableQueries, statementLabel, type Statement } from "../utils/sql";
+import type { DialectInput } from "../utils/sqlSplitter";
+import { resolveSqlSyntax } from "../utils/sqlSyntax";
+import { canStripSqlComments, stripSqlComments } from "../utils/stripSqlComments";
 import { resolveRunTarget, type RunContext } from "../utils/runTarget";
 import {
   createResultEntries,
@@ -203,6 +221,7 @@ import {
   type ColumnStatsSupport,
 } from "../utils/columnStats";
 import { getNextSortClause } from "../utils/tableToolbar";
+import { getAdjacentTabGap } from "../utils/tabDnd";
 import {
   createSqlFileTab,
   getSqlFileName,
@@ -231,7 +250,7 @@ const CHEVRON_SELECT_STYLE: React.CSSProperties = {
 };
 
 // Execution units: one per `GO` batch on T-SQL, one per statement elsewhere.
-function splitBatchQueries(sql: string, dialect: string | undefined): string[] {
+function splitBatchQueries(sql: string, dialect: DialectInput): string[] {
   return splitBatches(sql, dialect).map((statement) => statement.text);
 }
 
@@ -239,7 +258,7 @@ function splitBatchQueries(sql: string, dialect: string | undefined): string[] {
 // "run statement at cursor"), used by both the Run and Explain actions.
 function getStatementAtCursor(
   editor: Parameters<OnMount>[0],
-  dialect: string | undefined,
+  dialect: DialectInput,
   split = splitBatches,
 ): Statement | undefined {
   const model = editor.getModel();
@@ -302,7 +321,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
 
   const driverReadonly = isReadonly(activeCapabilities);
   const driverSupportsExplain = supportsExplain(activeCapabilities);
-  const activeDialect = activeCapabilities?.sql_dialect;
+  // The connection's resolved SQL syntax (`sql_dialect` preset plus any
+  // declared `sql_syntax`), passed wherever a dialect is needed. Cached per
+  // capabilities, so it is as stable as the dialect string it replaces.
+  const activeDialect = resolveSqlSyntax(activeCapabilities);
 
   // Editor panes stay mounted (hidden with display:none) so Monaco never
   // remounts. Render them sorted by id, decoupled from the tab-strip order:
@@ -684,8 +706,11 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     [activeTab?.activeResultId, activeTab?.results],
   );
   const activeExportResult = activeResultEntry?.result ?? activeTab?.result;
+  // A header-only grid can still be saved as HTML. CSV, JSON and Markdown
+  // stay disabled then: with no loaded rows those actions re-run the query.
+  const hasLoadedExportRows = (activeExportResult?.rows.length ?? 0) > 0;
   const canExportActiveResult =
-    !!activeExportResult && activeExportResult.rows.length > 0;
+    hasLoadedExportRows || (activeExportResult?.columns.length ?? 0) > 0;
 
   const activeTabFlatDatabase = isMultiDb
     ? resolveFlatMultiDbTabDatabase(activeTab, selectedDatabases)
@@ -768,6 +793,9 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   const runMultipleQueriesRef = useRef<typeof runMultipleQueries>(null!);
   const openExplainForQueryRef = useRef<(query: string) => void>(null!);
   const activeDialectRef = useRef<typeof activeDialect>(undefined);
+  // Per-editor Monaco context keys that gate the Copy SQL Without Comments
+  // action, so it is hidden where the connection declares no SQL dialect.
+  const stripCommentsKeysRef = useRef<Map<string, { set(value: boolean): void }>>(new Map());
   const supportsExplainRef = useRef(false);
   const tabScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
@@ -996,6 +1024,17 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     activeTab?.pendingDeletions,
     activeTab?.pendingInsertions,
   ]);
+
+  const canUndoGridActiveTab = useMemo(
+    () => canUndoGrid(activeTab?.gridHistory),
+    [activeTab?.gridHistory],
+  );
+  const canRedoGridActiveTab = useMemo(
+    () => canRedoGrid(activeTab?.gridHistory),
+    [activeTab?.gridHistory],
+  );
+  const showPendingChangesBar =
+    hasPendingChanges || canUndoGridActiveTab || canRedoGridActiveTab;
 
   useLayoutEffect(() => {
     tabsRef.current = tabs;
@@ -1343,6 +1382,8 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           pendingChanges: preservePendingChanges?.pendingChanges,
           pendingDeletions: preservePendingChanges?.pendingDeletions,
           pendingInsertions: preservePendingChanges?.pendingInsertions,
+          // Submitting changes or running queries establishes a clean history boundary
+          gridHistory: undefined,
           selectedRows: [],
         });
         // A fresh query's result set can be a different size (or empty), so an
@@ -2204,10 +2245,11 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         csvIncludeHeaders,
         csvDelimiter,
         tableName,
+        driver: activeCapabilities,
       });
       return { text, count: res.rows.length };
     },
-    [activeConnectionId, copyFormat, csvDelimiter, csvIncludeHeaders],
+    [activeConnectionId, activeCapabilities, copyFormat, csvDelimiter, csvIncludeHeaders],
   );
 
   // Schema resolution mirrors runQuery so the full fetch targets the same
@@ -2726,6 +2768,11 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   runMultipleQueriesRef.current = runMultipleQueries;
   openExplainForQueryRef.current = openExplainForQuery;
   activeDialectRef.current = activeDialect;
+
+  useEffect(() => {
+    const canStrip = canStripSqlComments(activeDialect);
+    for (const key of stripCommentsKeysRef.current.values()) key.set(canStrip);
+  }, [activeDialect]);
   supportsExplainRef.current = driverSupportsExplain;
 
   // Global Ctrl/Command+F5 shortcut for Run (+Shift for Run All)
@@ -2996,6 +3043,16 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     ],
   );
 
+  // Filtering by a value from the grid (e.g. a top value in the column
+  // statistics popover) remounts the grid: its key includes the filter, and
+  // the loading state replaces it until the rows arrive. Focus drops to
+  // <body> on the way, so the grid showing the new rows takes it back
+  // (issue #1138). `staleResult` is the result the filter was picked from.
+  const gridFocusRequestRef = useRef<{
+    tabId: string;
+    staleResult: QueryResult | null | undefined;
+  } | null>(null);
+
   const handleFilterByValue = useCallback(
     (
       column: string,
@@ -3007,6 +3064,10 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         (tb) => tb.id === activeTabIdRef.current,
       );
       if (!currentTab) return;
+      gridFocusRequestRef.current = {
+        tabId: currentTab.id,
+        staleResult: currentTab.result,
+      };
 
       const sourceType =
         columnType ||
@@ -3026,6 +3087,28 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     },
     [activeDriver, activeCapabilities, handleToolbarUpdate],
   );
+
+  const activeResult = activeTab?.result;
+  const activeIsLoading = !!activeTab?.isLoading;
+  useEffect(() => {
+    const request = gridFocusRequestRef.current;
+    if (!request) return;
+    if (request.tabId !== activeTabId) {
+      gridFocusRequestRef.current = null;
+      return;
+    }
+    // Wait for the filtered rows: the grid also remounts as soon as the
+    // filter changes, still showing the old ones, before the loading state.
+    if (activeIsLoading || !activeResult || activeResult === request.staleResult) {
+      return;
+    }
+    gridFocusRequestRef.current = null;
+    // Leave focus alone if the user moved it while the query ran.
+    const focused = document.activeElement;
+    if (!focused || focused === document.body) {
+      dataGridCommandTargetRef.current?.focus();
+    }
+  }, [activeTabId, activeResult, activeIsLoading]);
 
   // Column statistics popover (issue #1001): counts the rows matching the
   // tab's current filter, like the row count does (sort and LIMIT ignored).
@@ -3087,10 +3170,55 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     ],
   );
 
+  const isBatchingGridEditRef = useRef(false);
+  const batchBeforeSnapshotRef = useRef<GridPendingSnapshot | null>(null);
+
+  const handleBeginBatchEdit = useCallback(() => {
+    if (!activeTabIdRef.current) return;
+    const currentTab = tabsRef.current.find((t) => t.id === activeTabIdRef.current);
+    if (!currentTab) return;
+    isBatchingGridEditRef.current = true;
+    batchBeforeSnapshotRef.current = {
+      pendingChanges: clonePendingChanges(currentTab.pendingChanges),
+      pendingDeletions: clonePendingDeletions(currentTab.pendingDeletions),
+      pendingInsertions: clonePendingInsertions(currentTab.pendingInsertions),
+    };
+  }, []);
+
+  const handleEndBatchEdit = useCallback(() => {
+    if (!activeTabIdRef.current || !isBatchingGridEditRef.current) return;
+    const tabId = activeTabIdRef.current;
+    const beforeSnap = batchBeforeSnapshotRef.current;
+    isBatchingGridEditRef.current = false;
+    batchBeforeSnapshotRef.current = null;
+
+    if (!beforeSnap) return;
+
+    updateTab(tabId, (currentTab) => {
+      const afterSnap: GridPendingSnapshot = {
+        pendingChanges: currentTab.pendingChanges,
+        pendingDeletions: currentTab.pendingDeletions,
+        pendingInsertions: currentTab.pendingInsertions,
+      };
+      const nextGridHistory = recordGridEdit(
+        currentTab.gridHistory,
+        beforeSnap,
+        afterSnap,
+        Date.now(),
+        { coalesce: false },
+      );
+      return {
+        ...currentTab,
+        gridHistory: nextGridHistory,
+      };
+    });
+  }, [updateTab]);
+
   const handlePendingChange = useCallback(
     (pkVal: unknown, colName: string, value: unknown) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
+      const isBatching = isBatchingGridEditRef.current;
 
       // Functional update: rapid successive calls (e.g. a multi-cell paste)
       // must each see the previous call's result, not a stale snapshot.
@@ -3125,11 +3253,77 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           };
         }
 
-        return { pendingChanges: newPending };
+        const nextPendingChanges =
+          Object.keys(newPending).length === 0 ? undefined : newPending;
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: nextPendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              Date.now(),
+            );
+
+        return {
+          pendingChanges: nextPendingChanges,
+          gridHistory: nextGridHistory,
+        };
       });
     },
     [updateTab],
   );
+
+  const handleUndoGrid = useCallback(() => {
+    if (!activeTabIdRef.current) return;
+    const tabId = activeTabIdRef.current;
+    updateTab(tabId, (currentTab) => {
+      const step = undoGridEdit(
+        currentTab.gridHistory ?? createGridHistory(),
+        {
+          pendingChanges: currentTab.pendingChanges,
+          pendingDeletions: currentTab.pendingDeletions,
+          pendingInsertions: currentTab.pendingInsertions,
+        },
+      );
+      if (!step) return {};
+      return {
+        pendingChanges: step.pendingChanges,
+        pendingDeletions: step.pendingDeletions,
+        pendingInsertions: step.pendingInsertions,
+        gridHistory: step.history,
+      };
+    });
+  }, [updateTab]);
+
+  const handleRedoGrid = useCallback(() => {
+    if (!activeTabIdRef.current) return;
+    const tabId = activeTabIdRef.current;
+    updateTab(tabId, (currentTab) => {
+      const step = redoGridEdit(
+        currentTab.gridHistory ?? createGridHistory(),
+        {
+          pendingChanges: currentTab.pendingChanges,
+          pendingDeletions: currentTab.pendingDeletions,
+          pendingInsertions: currentTab.pendingInsertions,
+        },
+      );
+      if (!step) return {};
+      return {
+        pendingChanges: step.pendingChanges,
+        pendingDeletions: step.pendingDeletions,
+        pendingInsertions: step.pendingInsertions,
+        gridHistory: step.history,
+      };
+    });
+  }, [updateTab]);
 
   const handleSelectionChange = useCallback(
     (indices: Set<number>) => {
@@ -3217,9 +3411,35 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       }
     });
 
+    const nextPendingDeletions =
+      Object.keys(newPendingDeletions).length > 0
+        ? newPendingDeletions
+        : undefined;
+    const nextPendingInsertions =
+      Object.keys(newPendingInsertions).length > 0
+        ? newPendingInsertions
+        : undefined;
+
+    const nextGridHistory = recordGridEdit(
+      activeTab.gridHistory,
+      {
+        pendingChanges: activeTab.pendingChanges,
+        pendingDeletions: activeTab.pendingDeletions,
+        pendingInsertions: activeTab.pendingInsertions,
+      },
+      {
+        pendingChanges: activeTab.pendingChanges,
+        pendingDeletions: nextPendingDeletions,
+        pendingInsertions: nextPendingInsertions,
+      },
+      Date.now(),
+      { coalesce: false },
+    );
+
     updateActiveTab({
-      pendingDeletions: newPendingDeletions,
-      pendingInsertions: newPendingInsertions,
+      pendingDeletions: nextPendingDeletions,
+      pendingInsertions: nextPendingInsertions,
+      gridHistory: nextGridHistory,
       selectedRows: [],
     });
   }, [activeTab, updateActiveTab, rowIdentity]);
@@ -3228,6 +3448,7 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (tempId: string, colName: string, value: unknown) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
+      const isBatching = isBatchingGridEditRef.current;
 
       // Functional update: rapid successive calls (e.g. a multi-cell paste)
       // must each see the previous call's result, not a stale snapshot.
@@ -3243,14 +3464,34 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           newData[colName] = value;
         }
 
-        return {
-          pendingInsertions: {
-            ...currentPendingInsertions,
-            [tempId]: {
-              ...insertion,
-              data: newData,
-            },
+        const nextPendingInsertions = {
+          ...currentPendingInsertions,
+          [tempId]: {
+            ...insertion,
+            data: newData,
           },
+        };
+
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: nextPendingInsertions,
+              },
+              Date.now(),
+            );
+
+        return {
+          pendingInsertions: nextPendingInsertions,
+          gridHistory: nextGridHistory,
         };
       });
     },
@@ -3261,13 +3502,41 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (tempId: string) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
-      const currentTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!currentTab?.pendingInsertions) return;
+      const isBatching = isBatchingGridEditRef.current;
 
-      const newPendingInsertions = { ...currentTab.pendingInsertions };
-      delete newPendingInsertions[tempId];
+      updateTab(tabId, (currentTab) => {
+        if (!currentTab?.pendingInsertions) return {};
 
-      updateTab(tabId, { pendingInsertions: newPendingInsertions });
+        const newPendingInsertions = { ...currentTab.pendingInsertions };
+        delete newPendingInsertions[tempId];
+        const nextPendingInsertions =
+          Object.keys(newPendingInsertions).length > 0
+            ? newPendingInsertions
+            : undefined;
+
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: nextPendingInsertions,
+              },
+              Date.now(),
+              { coalesce: false },
+            );
+
+        return {
+          pendingInsertions: nextPendingInsertions,
+          gridHistory: nextGridHistory,
+        };
+      });
     },
     [updateTab],
   );
@@ -3276,18 +3545,40 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (pkVal: unknown) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
-      const currentTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!currentTab?.pendingDeletions) return;
+      const isBatching = isBatchingGridEditRef.current;
+      updateTab(tabId, (currentTab) => {
+        if (!currentTab?.pendingDeletions) return {};
 
-      const pkKey = serializePkKey(pkVal as Record<string, unknown>);
-      const newPendingDeletions = { ...currentTab.pendingDeletions };
-      delete newPendingDeletions[pkKey];
-
-      updateTab(tabId, {
-        pendingDeletions:
+        const pkKey = serializePkKey(pkVal as Record<string, unknown>);
+        const newPendingDeletions = { ...currentTab.pendingDeletions };
+        delete newPendingDeletions[pkKey];
+        const nextPendingDeletions =
           Object.keys(newPendingDeletions).length > 0
             ? newPendingDeletions
-            : undefined,
+            : undefined;
+
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: nextPendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              Date.now(),
+              { coalesce: false },
+            );
+
+        return {
+          pendingDeletions: nextPendingDeletions,
+          gridHistory: nextGridHistory,
+        };
       });
     },
     [updateTab],
@@ -3297,17 +3588,38 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (pkVal: unknown) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
-      const currentTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!currentTab) return;
+      const isBatching = isBatchingGridEditRef.current;
+      updateTab(tabId, (currentTab) => {
+        const pkKey = serializePkKey(pkVal as Record<string, unknown>);
+        const currentPendingDeletions = currentTab.pendingDeletions || {};
+        const newPendingDeletions = {
+          ...currentPendingDeletions,
+          [pkKey]: pkVal,
+        };
 
-      const pkKey = serializePkKey(pkVal as Record<string, unknown>);
-      const currentPendingDeletions = currentTab.pendingDeletions || {};
-      const newPendingDeletions = {
-        ...currentPendingDeletions,
-        [pkKey]: pkVal,
-      };
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: newPendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              Date.now(),
+              { coalesce: false },
+            );
 
-      updateTab(tabId, { pendingDeletions: newPendingDeletions });
+        return {
+          pendingDeletions: newPendingDeletions,
+          gridHistory: nextGridHistory,
+        };
+      });
     },
     [updateTab],
   );
@@ -3316,15 +3628,36 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (pkVals: unknown[]) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
-      const currentTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!currentTab) return;
+      const isBatching = isBatchingGridEditRef.current;
+      updateTab(tabId, (currentTab) => {
+        const newPendingDeletions = { ...(currentTab.pendingDeletions || {}) };
+        for (const pkVal of pkVals) {
+          newPendingDeletions[serializePkKey(pkVal as Record<string, unknown>)] = pkVal;
+        }
 
-      const newPendingDeletions = { ...(currentTab.pendingDeletions || {}) };
-      for (const pkVal of pkVals) {
-        newPendingDeletions[serializePkKey(pkVal as Record<string, unknown>)] = pkVal;
-      }
+        const nextGridHistory = isBatching
+          ? currentTab.gridHistory
+          : recordGridEdit(
+              currentTab.gridHistory,
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: currentTab.pendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              {
+                pendingChanges: currentTab.pendingChanges,
+                pendingDeletions: newPendingDeletions,
+                pendingInsertions: currentTab.pendingInsertions,
+              },
+              Date.now(),
+              { coalesce: false },
+            );
 
-      updateTab(tabId, { pendingDeletions: newPendingDeletions });
+        return {
+          pendingDeletions: newPendingDeletions,
+          gridHistory: nextGridHistory,
+        };
+      });
     },
     [updateTab],
   );
@@ -3333,26 +3666,44 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
     (rowData: Record<string, unknown>) => {
       if (!activeTabIdRef.current) return;
       const tabId = activeTabIdRef.current;
-      const currentTab = tabsRef.current.find((t) => t.id === tabId);
-      if (!currentTab) return;
+      updateTab(tabId, (currentTab) => {
+        const autoIncrementCols = currentTab.autoIncrementColumns ?? [];
+        const data: Record<string, unknown> = { ...rowData };
+        autoIncrementCols.forEach((col) => {
+          data[col] = null;
+        });
 
-      const autoIncrementCols = currentTab.autoIncrementColumns ?? [];
-      const data: Record<string, unknown> = { ...rowData };
-      autoIncrementCols.forEach((col) => {
-        data[col] = null;
-      });
+        const tempId = generateTempId();
+        const currentPendingInsertions = currentTab.pendingInsertions || {};
+        const existingRowCount = currentTab.result?.rows.length || 0;
+        const insertionCount = Object.keys(currentPendingInsertions).length;
+        const displayIndex = existingRowCount + insertionCount;
 
-      const tempId = generateTempId();
-      const currentPendingInsertions = currentTab.pendingInsertions || {};
-      const existingRowCount = currentTab.result?.rows.length || 0;
-      const insertionCount = Object.keys(currentPendingInsertions).length;
-      const displayIndex = existingRowCount + insertionCount;
-
-      updateTab(tabId, {
-        pendingInsertions: {
+        const newPendingInsertions = {
           ...currentPendingInsertions,
           [tempId]: { tempId, data, displayIndex },
-        },
+        };
+
+        const nextGridHistory = recordGridEdit(
+          currentTab.gridHistory,
+          {
+            pendingChanges: currentTab.pendingChanges,
+            pendingDeletions: currentTab.pendingDeletions,
+            pendingInsertions: currentTab.pendingInsertions,
+          },
+          {
+            pendingChanges: currentTab.pendingChanges,
+            pendingDeletions: currentTab.pendingDeletions,
+            pendingInsertions: newPendingInsertions,
+          },
+          Date.now(),
+          { coalesce: false },
+        );
+
+        return {
+          pendingInsertions: newPendingInsertions,
+          gridHistory: nextGridHistory,
+        };
       });
     },
     [updateTab],
@@ -3408,8 +3759,25 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
         },
       };
 
+      const nextGridHistory = recordGridEdit(
+        activeTab.gridHistory,
+        {
+          pendingChanges: activeTab.pendingChanges,
+          pendingDeletions: activeTab.pendingDeletions,
+          pendingInsertions: activeTab.pendingInsertions,
+        },
+        {
+          pendingChanges: activeTab.pendingChanges,
+          pendingDeletions: activeTab.pendingDeletions,
+          pendingInsertions: newPendingInsertions,
+        },
+        Date.now(),
+        { coalesce: false },
+      );
+
       const updates: Partial<Tab> = {
         pendingInsertions: newPendingInsertions,
+        gridHistory: nextGridHistory,
       };
 
       // If activeTab.result is missing (e.g. empty table initially), initialize it
@@ -3938,10 +4306,23 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
 
     // If applyToAll is true OR no selection, rollback everything
     if (applyToAll || !selectedRows || selectedRows.length === 0) {
+      const beforeSnap: GridPendingSnapshot = {
+        pendingChanges,
+        pendingDeletions,
+        pendingInsertions,
+      };
+      const nextGridHistory = recordGridEdit(
+        activeTab.gridHistory,
+        beforeSnap,
+        undefined,
+        Date.now(),
+        { coalesce: false },
+      );
       updateActiveTab({
         pendingChanges: undefined,
         pendingDeletions: undefined,
         pendingInsertions: undefined,
+        gridHistory: nextGridHistory,
       });
       return;
     }
@@ -3988,19 +4369,42 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       insertionIndex++;
     }
 
+    const nextPendingChanges =
+      Object.keys(newPendingChanges).length > 0
+        ? newPendingChanges
+        : undefined;
+    const nextPendingDeletions =
+      Object.keys(newPendingDeletions).length > 0
+        ? newPendingDeletions
+        : undefined;
+    const nextPendingInsertions =
+      Object.keys(newPendingInsertions).length > 0
+        ? newPendingInsertions
+        : undefined;
+
+    const beforeSnap: GridPendingSnapshot = {
+      pendingChanges,
+      pendingDeletions,
+      pendingInsertions,
+    };
+    const afterSnap: GridPendingSnapshot = {
+      pendingChanges: nextPendingChanges,
+      pendingDeletions: nextPendingDeletions,
+      pendingInsertions: nextPendingInsertions,
+    };
+    const nextGridHistory = recordGridEdit(
+      activeTab.gridHistory,
+      beforeSnap,
+      afterSnap,
+      Date.now(),
+      { coalesce: false },
+    );
+
     updateActiveTab({
-      pendingChanges:
-        Object.keys(newPendingChanges).length > 0
-          ? newPendingChanges
-          : undefined,
-      pendingDeletions:
-        Object.keys(newPendingDeletions).length > 0
-          ? newPendingDeletions
-          : undefined,
-      pendingInsertions:
-        Object.keys(newPendingInsertions).length > 0
-          ? newPendingInsertions
-          : undefined,
+      pendingChanges: nextPendingChanges,
+      pendingDeletions: nextPendingDeletions,
+      pendingInsertions: nextPendingInsertions,
+      gridHistory: nextGridHistory,
     });
   }, [activeTab, updateActiveTab, applyToAll, rowIdentity]);
 
@@ -4059,6 +4463,32 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           setExplainSelectableQueries(explainable);
           setIsExplainSelectionOpen(true);
         }
+      },
+    });
+    stripCommentsKeysRef.current.set(
+      tabId,
+      editor.createContextKey(
+        "tabularisCanStripSqlComments",
+        canStripSqlComments(activeDialectRef.current),
+      ),
+    );
+    editor.onDidDispose(() => stripCommentsKeysRef.current.delete(tabId));
+    editor.addAction({
+      id: "copy-sql-without-comments",
+      label: t("editor.copyWithoutComments"),
+      precondition: "tabularisCanStripSqlComments",
+      contextMenuGroupId: "9_cutcopypaste",
+      contextMenuOrder: 3,
+      run: (ed) => {
+        const selection = ed.getSelection();
+        const model = ed.getModel();
+        const source =
+          selection && !selection.isEmpty()
+            ? model?.getValueInRange(selection)
+            : ed.getValue();
+        if (!source) return;
+        const stripped = stripSqlComments(source, activeDialectRef.current);
+        void copyTextToClipboard(stripped);
       },
     });
   };
@@ -4343,6 +4773,57 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
   const handleExportCSV = () => handleExportCommon("csv");
   const handleExportJSON = () => handleExportCommon("json");
   const handleExportMarkdown = () => handleExportCommon("markdown");
+
+  // Writes the grid already on screen. Never calls the streaming exporter.
+  const handleExportHtml = async () => {
+    if (!activeTab || !activeConnectionId || !activeExportResult) return;
+
+    try {
+      const loadedRowsLimit = getLoadedRowsExportLimit(activeExportResult);
+      const warningMessage = loadedRowsLimit
+        ? t("editor.exportLoadedRowsWarning", {
+            loaded: loadedRowsLimit.loadedRows.toLocaleString(),
+            total: loadedRowsLimit.totalRows.toLocaleString(),
+          })
+        : undefined;
+
+      const filePath = await saveFileDialog({
+        filters: [{ name: "HTML", extensions: ["html"] }],
+        defaultPath: buildExportFileName({
+          tableName: activeTab.type === "table" ? activeTab.activeTable : null,
+          extension: "html",
+        }),
+      });
+
+      if (!filePath) return;
+
+      setExportState({
+        isOpen: true,
+        status: "exporting",
+        rowsProcessed: activeExportResult.rows.length,
+        fileName: filePath.split(/[/\\]/).pop() || filePath,
+        errorMessage: undefined,
+        warningMessage,
+      });
+      setExportMenuOpen(false);
+
+      await writeTextFile(
+        filePath,
+        formatResultForExport(activeExportResult, "html"),
+      );
+
+      setExportState((prev) => ({
+        ...prev,
+        status: "completed",
+      }));
+    } catch (e) {
+      setExportState((prev) => ({
+        ...prev,
+        status: "error",
+        errorMessage: String(e),
+      }));
+    }
+  };
 
   const handleRunDropdownToggle = useCallback(() => {
     if (!isRunDropdownOpen) {
@@ -4963,34 +5444,50 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
           {exportMenuOpen && (
             <div
               role="menu"
-              className="absolute top-full right-0 mt-1 w-44 max-w-[calc(100cqw-1rem)] bg-elevated border border-strong rounded-md shadow-xl z-50 flex flex-col py-1 overflow-hidden"
+              className="absolute top-full right-0 mt-1 min-w-44 w-max max-w-[calc(100cqw-1rem)] bg-elevated border border-strong rounded-md shadow-xl z-50 flex flex-col py-1 overflow-hidden"
             >
               <button
+                type="button"
                 role="menuitem"
                 onClick={handleExportCSV}
-                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary hover:bg-accent-primary/15 hover:text-accent transition-colors"
+                disabled={!hasLoadedExportRows}
+                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary enabled:hover:bg-accent-primary/15 enabled:hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FileText size={14} className="shrink-0 opacity-80" />
                 <span className="flex-1">CSV</span>
                 <span className="text-xs text-muted">.csv</span>
               </button>
               <button
+                type="button"
                 role="menuitem"
                 onClick={handleExportJSON}
-                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary hover:bg-accent-primary/15 hover:text-accent transition-colors"
+                disabled={!hasLoadedExportRows}
+                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary enabled:hover:bg-accent-primary/15 enabled:hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FileJson size={14} className="shrink-0 opacity-80" />
                 <span className="flex-1">JSON</span>
                 <span className="text-xs text-muted">.json</span>
               </button>
               <button
+                type="button"
                 role="menuitem"
                 onClick={handleExportMarkdown}
-                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary hover:bg-accent-primary/15 hover:text-accent transition-colors"
+                disabled={!hasLoadedExportRows}
+                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary enabled:hover:bg-accent-primary/15 enabled:hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <FileText size={14} className="shrink-0 opacity-80" />
                 <span className="flex-1">Markdown</span>
                 <span className="text-xs text-muted">.md</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleExportHtml}
+                className="flex items-center gap-2.5 text-left px-3 py-2 text-sm text-secondary hover:bg-accent-primary/15 hover:text-accent transition-colors whitespace-nowrap focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+              >
+                <FileCode size={14} className="shrink-0 opacity-80" />
+                <span className="flex-1">{t("editor.exportLoadedHtml")}</span>
+                <span className="text-xs text-muted">.html</span>
               </button>
             </div>
           )}
@@ -5711,59 +6208,91 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                     </div>
 
                     {/* Separator */}
-                    {hasPendingChanges && (
+                    {showPendingChangesBar && (
                       <div className="w-[1px] h-4 bg-surface-secondary mx-1"></div>
                     )}
 
-                    {hasPendingChanges && (
+                    {showPendingChangesBar && (
                       <div className="ml-auto flex items-center my-1 bg-surface-secondary/30 border border-default rounded-xl overflow-hidden cursor-pointer">
-                        <label className="flex items-center gap-2 px-2.5 @[560px]:px-4 py-2 cursor-pointer select-none group hover:bg-surface-secondary transition-colors">
-                          <input
-                            type="checkbox"
-                            checked={applyToAll}
-                            onChange={(e) => setApplyToAll(e.target.checked)}
-                            className="w-4 h-4 cursor-pointer accent-primary"
-                          />
-                          <span className="text-sm text-primary font-medium whitespace-nowrap">
-                            {t("editor.applyToAll")}
-                          </span>
-                        </label>
-                        <div className="w-px self-stretch bg-default"></div>
+                        {hasPendingChanges && (
+                          <>
+                            <label className="flex items-center gap-2 px-2.5 @[560px]:px-4 py-2 cursor-pointer select-none group hover:bg-surface-secondary transition-colors">
+                              <input
+                                type="checkbox"
+                                checked={applyToAll}
+                                onChange={(e) => setApplyToAll(e.target.checked)}
+                                className="w-4 h-4 cursor-pointer accent-primary"
+                              />
+                              <span className="text-sm text-primary font-medium whitespace-nowrap">
+                                {t("editor.applyToAll")}
+                              </span>
+                            </label>
+                            <div className="w-px self-stretch bg-default"></div>
+                            <button
+                              onClick={handleSubmitChanges}
+                              disabled={!applyToAll && !selectionHasPending}
+                              className="flex items-center gap-1.5 px-2.5 @[560px]:px-4 py-2 text-accent-success hover:bg-surface-secondary transition-colors text-sm font-medium disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+                              title={t("editor.submitChanges")}
+                            >
+                              <Check size={15} />
+                              <span className="hidden @[480px]:inline">
+                                {t("editor.submit")}
+                              </span>
+                            </button>
+                            <div className="w-px self-stretch bg-default"></div>
+                            <button
+                              onClick={handleRollbackChanges}
+                              disabled={!applyToAll && !selectionHasPending}
+                              className="flex items-center gap-1.5 px-2.5 @[560px]:px-4 py-2 text-secondary hover:text-primary hover:bg-surface-secondary transition-colors text-sm font-medium disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+                              title={t("editor.rollbackChanges")}
+                            >
+                              <ArrowLeftToLine size={15} />
+                              <span className="hidden @[480px]:inline">
+                                {t("editor.rollback")}
+                              </span>
+                            </button>
+                            <div className="w-px self-stretch bg-default"></div>
+                          </>
+                        )}
                         <button
-                          onClick={handleSubmitChanges}
-                          disabled={!applyToAll && !selectionHasPending}
-                          className="flex items-center gap-1.5 px-2.5 @[560px]:px-4 py-2 text-accent-success hover:bg-surface-secondary transition-colors text-sm font-medium disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
-                          title={t("editor.submitChanges")}
-                        >
-                          <Check size={15} />
-                          <span className="hidden @[480px]:inline">
-                            {t("editor.submit")}
-                          </span>
-                        </button>
-                        <div className="w-px self-stretch bg-default"></div>
-                        <button
-                          onClick={handleRollbackChanges}
-                          disabled={!applyToAll && !selectionHasPending}
+                          onClick={handleUndoGrid}
+                          disabled={!canUndoGrid(activeTab.gridHistory)}
                           className="flex items-center gap-1.5 px-2.5 @[560px]:px-4 py-2 text-secondary hover:text-primary hover:bg-surface-secondary transition-colors text-sm font-medium disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
-                          title={t("editor.rollbackChanges")}
+                          title={t("editor.undoGridEdit")}
                         >
-                          <ArrowLeftToLine size={15} />
+                          <Undo2 size={15} />
                           <span className="hidden @[480px]:inline">
-                            {t("editor.rollback")}
+                            {t("editor.undo")}
                           </span>
                         </button>
                         <div className="w-px self-stretch bg-default"></div>
-                        <span className="px-2.5 @[560px]:px-4 py-2 text-sm font-medium text-accent select-none hover:bg-surface-secondary transition-colors whitespace-nowrap">
-                          {t("editor.pendingCount", {
-                            count:
-                              Object.keys(activeTab.pendingChanges || {})
-                                .length +
-                              Object.keys(activeTab.pendingDeletions || {})
-                                .length +
-                              Object.keys(activeTab.pendingInsertions || {})
-                                .length,
-                          })}
-                        </span>
+                        <button
+                          onClick={handleRedoGrid}
+                          disabled={!canRedoGrid(activeTab.gridHistory)}
+                          className="flex items-center gap-1.5 px-2.5 @[560px]:px-4 py-2 text-secondary hover:text-primary hover:bg-surface-secondary transition-colors text-sm font-medium disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer"
+                          title={t("editor.redoGridEdit")}
+                        >
+                          <Redo2 size={15} />
+                          <span className="hidden @[480px]:inline">
+                            {t("editor.redo")}
+                          </span>
+                        </button>
+                        {hasPendingChanges && (
+                          <>
+                            <div className="w-px self-stretch bg-default"></div>
+                            <span className="px-2.5 @[560px]:px-4 py-2 text-sm font-medium text-accent select-none hover:bg-surface-secondary transition-colors whitespace-nowrap">
+                              {t("editor.pendingCount", {
+                                count:
+                                  Object.keys(activeTab.pendingChanges || {})
+                                    .length +
+                                  Object.keys(activeTab.pendingDeletions || {})
+                                    .length +
+                                  Object.keys(activeTab.pendingInsertions || {})
+                                    .length,
+                              })}
+                            </span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
@@ -5834,6 +6363,12 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
                       )}
                       onScrollTopChange={handleScrollTopChange}
                       scrollToNewInsertion={scrollToNewInsertion}
+                      onUndo={handleUndoGrid}
+                      onRedo={handleRedoGrid}
+                      canUndo={canUndoGrid(activeTab.gridHistory)}
+                      canRedo={canRedoGrid(activeTab.gridHistory)}
+                      onBeginBatchEdit={handleBeginBatchEdit}
+                      onEndBatchEdit={handleEndBatchEdit}
                     />
                   </div>
                   {activeFkQuery && activeConnectionId && (
@@ -5993,6 +6528,12 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
       />
       {tabContextMenu && (() => {
         const contextTab = tabs.find((t) => t.id === tabContextMenu.tabId);
+        const moveGap = (direction: "left" | "right") =>
+          contextTab
+            ? getAdjacentTabGap(tabs, contextTab.connectionId, contextTab.id, direction)
+            : null;
+        const leftGap = moveGap("left");
+        const rightGap = moveGap("right");
         return (
         <ContextMenu
           x={tabContextMenu.x}
@@ -6050,6 +6591,24 @@ export const Editor = ({ commandScopeId }: EditorProps) => {
               disabled: !canReopenClosedTab,
               action: () => reopenClosedTab(),
             },
+            { separator: true },
+            {
+              label: t("editor.moveTabLeft"),
+              icon: ArrowLeft,
+              disabled: leftGap === null,
+              action: () => {
+                if (leftGap !== null) reorderTab(tabContextMenu.tabId, leftGap);
+              },
+            },
+            {
+              label: t("editor.moveTabRight"),
+              icon: ArrowRight,
+              disabled: rightGap === null,
+              action: () => {
+                if (rightGap !== null) reorderTab(tabContextMenu.tabId, rightGap);
+              },
+            },
+            { separator: true },
             {
               label: t("editor.closeTab"),
               icon: X,

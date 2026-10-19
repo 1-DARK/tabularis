@@ -2128,6 +2128,7 @@ impl PostgresDriver {
                     routine_management: true,
                     file_based: false,
                     folder_based: false,
+                    in_memory: false,
                     connection_string: true,
                     connection_string_example: "postgres://user:pass@localhost:5432/db".into(),
                     connection_string_examples: Vec::new(),
@@ -2139,6 +2140,8 @@ impl PostgresDriver {
                     serial_type: "SERIAL".into(),
                     inline_pk: false,
                     table_query_templates: false,
+                    column_comments: false,
+                    drop_table_sql: false,
                     alter_column: true,
                     create_foreign_keys: true,
                     no_connection_required: false,
@@ -2149,6 +2152,7 @@ impl PostgresDriver {
                     supports_ssl: true,
                     user_management: false,
                     sql_dialect: Some(SqlDialect::Postgres),
+                    sql_syntax: None,
                 },
                 is_builtin: true,
                 engine: Some("postgres".to_string()),
@@ -2171,6 +2175,7 @@ impl PostgresDriver {
                 }],
                 ui_extensions: None,
                 explain_parsers: None,
+                connection_fields: None,
                 type_mappings: std::collections::HashMap::new(),
                 // The built-in postgres driver is deprecated in favour of the
                 // standalone `postgresql` plugin; the decision lives in the

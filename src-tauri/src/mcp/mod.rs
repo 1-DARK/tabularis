@@ -306,6 +306,22 @@ async fn resolve_db_params(
         }
     }
 
+    // Plugin-owned secrets live only in the keychain and must reach the
+    // plugin driver through `params.extra`, exactly as in the app.
+    if !conn.plugin_secret_keys.is_empty() {
+        conn = tokio::task::spawn_blocking(move || {
+            let cache = credential_cache::CredentialCache::default();
+            crate::plugin_secrets::hydrate_connection(&cache, &mut conn);
+            conn
+        })
+        .await
+        .map_err(|e| JsonRpcError {
+            code: -32000,
+            message: e.to_string(),
+            data: None,
+        })?;
+    }
+
     let expanded = expand_ssh_params_for_mcp(&conn.params).await?;
     let expanded = expand_k8s_params_for_mcp(&expanded).await?;
     let db_params = commands::resolve_connection_params(&expanded).map_err(|e| JsonRpcError {
@@ -1163,11 +1179,16 @@ async fn tool_run_query(
 
     audit.connection_id = Some(conn_id.to_string());
     audit.query = Some(query.to_string());
-    let kind = ai_activity::classify_query_kind(query);
-    audit.query_kind = Some(kind.to_string());
+    // Dialect-agnostic first, so the audit entry has a kind even when the
+    // connection cannot be resolved; refined below once the driver's
+    // `sql_dialect` / `sql_syntax` are known.
+    audit.query_kind = Some(ai_activity::classify_query_kind(query).to_string());
 
     let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
+    let capabilities = driver.manifest().capabilities.clone();
+    let kind = ai_activity::classify_query_kind_for_capabilities(query, Some(&capabilities));
+    audit.query_kind = Some(kind.to_string());
     audit.connection_name = Some(conn.name.clone());
     let database = database_arg(args);
     audit.database = database.map(str::to_string);
@@ -1280,7 +1301,10 @@ async fn tool_run_query(
                         // payload) and slip past the gate that runs against
                         // the *original* query above.
                         effective_query = edited.to_string();
-                        let new_kind = ai_activity::classify_query_kind(&effective_query);
+                        let new_kind = ai_activity::classify_query_kind_for_capabilities(
+                            &effective_query,
+                            Some(&capabilities),
+                        );
                         audit.query = Some(effective_query.clone());
                         audit.query_kind = Some(new_kind.to_string());
 
