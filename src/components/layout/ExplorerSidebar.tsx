@@ -213,6 +213,8 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
   const {
     entries: historyEntries,
     isLoading: isHistoryLoading,
+    isPaused: isHistoryPaused,
+    togglePaused: toggleHistoryPaused,
     deleteEntry: deleteHistoryEntry,
     clearHistory,
     recoveryNotice: historyRecoveryNotice,
@@ -1224,6 +1226,8 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
             <div className="animate-fade-in"><QueryHistorySection
               entries={historyEntries}
               isLoading={isHistoryLoading}
+              isPaused={isHistoryPaused}
+              onTogglePaused={toggleHistoryPaused}
               recoveryNotice={historyRecoveryNotice}
               onDismissRecoveryNotice={dismissHistoryRecoveryNotice}
               onDoubleClick={(entry) => {
