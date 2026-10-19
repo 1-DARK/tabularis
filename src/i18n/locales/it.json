@@ -2126,6 +2126,8 @@
     },
     "expand": "Espandi",
     "collapse": "Comprimi",
+    "expandAll": "Espandi tutto",
+    "collapseAll": "Comprimi tutto",
     "search": "Cerca",
     "copyPath": "Copia percorso",
     "copyValue": "Copia valore",

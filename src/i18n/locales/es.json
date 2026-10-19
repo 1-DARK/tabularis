@@ -2027,6 +2027,8 @@
     },
     "expand": "Expandir",
     "collapse": "Contraer",
+    "expandAll": "Expandir todo",
+    "collapseAll": "Contraer todo",
     "search": "Buscar",
     "copyPath": "Copiar ruta",
     "copyValue": "Copiar valor",
