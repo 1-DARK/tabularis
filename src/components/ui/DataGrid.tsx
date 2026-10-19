@@ -218,6 +218,12 @@ interface DataGridProps {
   onDuplicateRow?: (rowData: Record<string, unknown>) => void;
   selectedRows?: Set<number>;
   onSelectionChange?: (indices: Set<number>) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onBeginBatchEdit?: () => void;
+  onEndBatchEdit?: () => void;
   copyFormat?: "csv" | "json" | "sql-insert" | "markdown";
   csvDelimiter?: string;
   csvIncludeHeaders?: boolean;
@@ -341,6 +347,12 @@ export const DataGrid = React.memo(
     onDuplicateRow,
     selectedRows: externalSelectedRows,
     onSelectionChange,
+    onUndo,
+    onRedo,
+    canUndo,
+    canRedo,
+    onBeginBatchEdit,
+    onEndBatchEdit,
     copyFormat,
     csvDelimiter = ",",
     csvIncludeHeaders = true,
@@ -1747,27 +1759,51 @@ export const DataGrid = React.memo(
     ]);
 
     const deleteRowsByIndices = useCallback((indicesToDelete: number[]) => {
-      const pkVals: unknown[] = [];
-      for (const idx of indicesToDelete) {
-        const mergedRow = mergedRows[idx];
-        if (!mergedRow) continue;
+      const shouldBatch =
+        indicesToDelete.length > 1 &&
+        typeof onBeginBatchEdit === "function" &&
+        typeof onEndBatchEdit === "function";
 
-        if (mergedRow.type === "insertion" && mergedRow.tempId && onDiscardInsertion) {
-          onDiscardInsertion(mergedRow.tempId);
-        } else if (mergedRow.type === "existing" && pkColumns && pkIndexMaps.length > 0) {
-          pkVals.push(buildPkMap(pkColumns, mergedRow.rowData, pkIndexMaps));
-        }
+      if (shouldBatch) {
+        onBeginBatchEdit();
       }
 
-      // Use batch handler to avoid stale-closure overwrites when called per-row.
-      if (pkVals.length > 0) {
-        if (onMarkMultipleForDeletion) {
-          onMarkMultipleForDeletion(pkVals);
-        } else if (onMarkForDeletion) {
-          pkVals.forEach((v) => onMarkForDeletion(v));
+      try {
+        const pkVals: unknown[] = [];
+        for (const idx of indicesToDelete) {
+          const mergedRow = mergedRows[idx];
+          if (!mergedRow) continue;
+
+          if (mergedRow.type === "insertion" && mergedRow.tempId && onDiscardInsertion) {
+            onDiscardInsertion(mergedRow.tempId);
+          } else if (mergedRow.type === "existing" && pkColumns && pkIndexMaps.length > 0) {
+            pkVals.push(buildPkMap(pkColumns, mergedRow.rowData, pkIndexMaps));
+          }
+        }
+
+        // Use batch handler to avoid stale-closure overwrites when called per-row.
+        if (pkVals.length > 0) {
+          if (onMarkMultipleForDeletion) {
+            onMarkMultipleForDeletion(pkVals);
+          } else if (onMarkForDeletion) {
+            pkVals.forEach((v) => onMarkForDeletion(v));
+          }
+        }
+      } finally {
+        if (shouldBatch) {
+          onEndBatchEdit();
         }
       }
-    }, [mergedRows, onDiscardInsertion, onMarkForDeletion, onMarkMultipleForDeletion, pkColumns, pkIndexMaps]);
+    }, [
+      mergedRows,
+      onDiscardInsertion,
+      onMarkForDeletion,
+      onMarkMultipleForDeletion,
+      pkColumns,
+      pkIndexMaps,
+      onBeginBatchEdit,
+      onEndBatchEdit,
+    ]);
 
     const deleteSelectedRow = useCallback(() => {
       if (!contextMenu) return;
@@ -2337,46 +2373,59 @@ export const DataGrid = React.memo(
     // keyless tables) only pending-insertion rows take a value.
     const stageCellWrites = useCallback(
       (writes: CellWrite[]): number => {
-        const canEditExisting =
-          !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+        if (writes.length === 0) return 0;
+        const isBatch = writes.length > 1;
+        if (isBatch) {
+          onBeginBatchEdit?.();
+        }
         let applied = 0;
-        for (const { rowIndex, colIndex, value } of writes) {
-          const mergedRow = mergedRows[rowIndex];
-          if (!mergedRow) continue;
-          const colName = columns[colIndex];
-          // Same guard as inline editing: generated columns are computed by
-          // the database and never accept a value, and masked cells must be
-          // revealed before they take one.
-          if (generatedColumns?.has(colName.toLowerCase())) continue;
-          if (isCellMasked(rowIndex, colIndex)) continue;
-          if (mergedRow.type === "insertion") {
-            if (onPendingInsertionChange && mergedRow.tempId) {
-              onPendingInsertionChange(mergedRow.tempId, colName, value);
+        try {
+          const canEditExisting =
+            !!onPendingChange && !!pkColumns && pkIndexMaps.length > 0;
+          for (const { rowIndex, colIndex, value } of writes) {
+            const mergedRow = mergedRows[rowIndex];
+            if (!mergedRow) continue;
+            const colName = columns[colIndex];
+            // Same guard as inline editing: generated columns are computed by
+            // the database and never accept a value, and masked cells must be
+            // revealed before they take one.
+            if (generatedColumns?.has(colName.toLowerCase())) continue;
+            if (isCellMasked(rowIndex, colIndex)) continue;
+            if (mergedRow.type === "insertion") {
+              if (onPendingInsertionChange && mergedRow.tempId) {
+                onPendingInsertionChange(mergedRow.tempId, colName, value);
+                applied++;
+              }
+            } else if (canEditExisting) {
+              // Same guard as inline editing: aliases and computed result
+              // columns are not physical columns and must not be staged.
+              if (
+                physicalColumnSet &&
+                !physicalColumnSet.has(colName.toLowerCase())
+              ) {
+                continue;
+              }
+              const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
+              // Same convention as handleEditCommit: writing the original value
+              // back clears any pending change instead of staging a no-op.
+              const isUnchanged = isOriginalCellValue(
+                value,
+                mergedRow.rowData[colIndex],
+              );
+              onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
               applied++;
             }
-          } else if (canEditExisting) {
-            // Same guard as inline editing: aliases and computed result
-            // columns are not physical columns and must not be staged.
-            if (
-              physicalColumnSet &&
-              !physicalColumnSet.has(colName.toLowerCase())
-            ) {
-              continue;
-            }
-            const pkMapVal = buildPkMap(pkColumns!, mergedRow.rowData, pkIndexMaps);
-            // Same convention as handleEditCommit: writing the original value
-            // back clears any pending change instead of staging a no-op.
-            const isUnchanged = isOriginalCellValue(
-              value,
-              mergedRow.rowData[colIndex],
-            );
-            onPendingChange!(pkMapVal, colName, isUnchanged ? undefined : value);
-            applied++;
+          }
+        } finally {
+          if (isBatch) {
+            onEndBatchEdit?.();
           }
         }
         return applied;
       },
       [
+        onBeginBatchEdit,
+        onEndBatchEdit,
         mergedRows,
         columns,
         physicalColumnSet,
@@ -2903,6 +2952,33 @@ export const DataGrid = React.memo(
           }
         }
 
+        // CMD/CTRL + Z / CMD/CTRL + SHIFT + Z (and CTRL + Y) — Undo / Redo pending grid edits
+        if (
+          (e.metaKey || e.ctrlKey) &&
+          (e.key === "z" || e.key === "Z" || e.key === "y")
+        ) {
+          if (
+            !editingCell &&
+            !isEditableTarget &&
+            !readonlyProp &&
+            isActiveGridRef.current
+          ) {
+            const isRedo =
+              e.key === "y" || (e.shiftKey && (e.key === "z" || e.key === "Z"));
+            if (isRedo) {
+              if (onRedo && canRedo) {
+                e.preventDefault();
+                onRedo();
+              }
+            } else {
+              if (onUndo && canUndo) {
+                e.preventDefault();
+                onUndo();
+              }
+            }
+          }
+        }
+
         // Delete / Backspace — delete selected rows
         if ((e.key === "Delete" || e.key === "Backspace") && !editingCell && !isEditableTarget && !readonlyProp && selectedRowIndices.size > 0) {
           e.preventDefault();
@@ -2912,7 +2988,7 @@ export const DataGrid = React.memo(
 
       document.addEventListener("keydown", handleKeyDown);
       return () => document.removeEventListener("keydown", handleKeyDown);
-    }, [editingCell, selectedRowIndices, selectedColIndices, cellRange, focusedCell, copyCellValue, copySelectedCells, copySelectedColumns, copyCellRange, pasteFromClipboard, readonlyProp, deleteRowsByIndices, handleSelectAll]);
+    }, [editingCell, selectedRowIndices, selectedColIndices, cellRange, focusedCell, copyCellValue, copySelectedCells, copySelectedColumns, copyCellRange, pasteFromClipboard, readonlyProp, deleteRowsByIndices, handleSelectAll, onUndo, onRedo, canUndo, canRedo]);
 
     // Sensitive-column reveal actions (#485). Column toggling uses
     // toggleSetValue like the other Set-based grid state.
