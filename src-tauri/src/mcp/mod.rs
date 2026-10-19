@@ -11,6 +11,7 @@ use crate::drivers::driver_trait::{DatabaseDriver, SqlDialect};
 use crate::drivers::registry as driver_registry;
 use crate::drivers::{mysql, postgres, sqlite};
 use crate::heartbeat;
+use crate::keychain_utils;
 use crate::models::{ConnectionParams, DatabaseSelection, K8sConnection, SshConnection};
 use crate::paths;
 use crate::persistence;
@@ -22,13 +23,17 @@ use std::sync::Arc;
 
 mod cooldown;
 pub mod install;
+mod keychain;
 mod output;
 pub mod preflight;
 pub mod protocol;
 use cooldown::{DISABLE_CHECK_COOLDOWN, RELOAD_COOLDOWN};
+use keychain::{read_stored_secret, StoredSecret};
 use output::{OutputFormatError, ToolOutputFormat};
 use protocol::*;
 
+#[cfg(test)]
+mod keychain_tests;
 #[cfg(test)]
 mod output_tests;
 #[cfg(test)]
@@ -133,11 +138,10 @@ async fn expand_ssh_params_for_mcp(
     }
 
     if ssh.save_in_keychain.unwrap_or(false) {
-        let cache = std::sync::Arc::new(credential_cache::CredentialCache::default());
         let id = ssh.id.clone();
         let (pwd_r, pass_r) = tokio::task::spawn_blocking(move || {
-            let pwd = credential_cache::get_ssh_password_cached(&cache, &id);
-            let pass = credential_cache::get_ssh_key_passphrase_cached(&cache, &id);
+            let pwd = keychain_utils::find_ssh_password(&id);
+            let pass = keychain_utils::find_ssh_key_passphrase(&id);
             (pwd, pass)
         })
         .await
@@ -147,12 +151,19 @@ async fn expand_ssh_params_for_mcp(
             data: None,
         })?;
 
-        if let Ok(v) = pwd_r {
+        // Only password auth can't do without its secret. A key may not be
+        // encrypted, so a failed passphrase read is left to the SSH layer.
+        let owner = format!("SSH connection \"{}\"", ssh.name);
+        let password_auth = ssh.auth_type.as_deref() == Some("password");
+        if let Some(v) =
+            read_stored_secret(pwd_r, StoredSecret::SshPassword, &owner, password_auth)?
+        {
             if !v.trim().is_empty() {
                 ssh.password = Some(v);
             }
         }
-        if let Ok(v) = pass_r {
+        if let Some(v) = read_stored_secret(pass_r, StoredSecret::SshKeyPassphrase, &owner, false)?
+        {
             if !v.trim().is_empty() {
                 ssh.key_passphrase = Some(v);
             }
@@ -259,19 +270,19 @@ async fn resolve_db_params(
     // connect — never from the keychain, where a stale token would survive.
     let iam_auth = conn.params.use_iam_auth.unwrap_or(false);
     if !iam_auth && conn.params.save_in_keychain.unwrap_or(false) {
-        let cache = std::sync::Arc::new(credential_cache::CredentialCache::default());
         let id = conn.id.clone();
-        let pwd = tokio::task::spawn_blocking(move || {
-            credential_cache::get_db_password_cached(&cache, &id)
-        })
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32000,
-            message: e.to_string(),
-            data: None,
-        })?;
+        let pwd = tokio::task::spawn_blocking(move || keychain_utils::find_db_password(&id))
+            .await
+            .map_err(|e| JsonRpcError {
+                code: -32000,
+                message: e.to_string(),
+                data: None,
+            })?;
 
-        if let Ok(p) = pwd {
+        // A missing entry keeps the password unset as before, but a keychain
+        // failure must not reach the driver as an empty password.
+        let owner = format!("connection \"{}\"", conn.name);
+        if let Some(p) = read_stored_secret(pwd, StoredSecret::Password, &owner, true)? {
             if !p.trim().is_empty() {
                 conn.params.password = Some(p);
             }
@@ -290,18 +301,16 @@ async fn resolve_db_params(
     // password branches above: the URI has its own keychain entry and its own
     // marker, so it must not depend on how the password happens to be stored.
     if conn.params.connection_uri_in_keychain.unwrap_or(false) {
-        let cache = std::sync::Arc::new(credential_cache::CredentialCache::default());
         let id = conn.id.clone();
-        let uri = tokio::task::spawn_blocking(move || {
-            credential_cache::get_connection_uri_cached(&cache, &id, true)
-        })
-        .await
-        .map_err(|e| JsonRpcError {
-            code: -32000,
-            message: e.to_string(),
-            data: None,
-        })?;
-        if let Ok(Some(value)) = uri {
+        let uri = tokio::task::spawn_blocking(move || keychain_utils::find_connection_uri(&id))
+            .await
+            .map_err(|e| JsonRpcError {
+                code: -32000,
+                message: e.to_string(),
+                data: None,
+            })?;
+        let owner = format!("connection \"{}\"", conn.name);
+        if let Some(value) = read_stored_secret(uri, StoredSecret::ConnectionUri, &owner, true)? {
             conn.params.connection_uri = Some(value);
         }
     }
