@@ -265,6 +265,7 @@
     "insertToEditor": "In Editor einfügen",
     "openInNewTab": "In neuem Tab öffnen",
     "copyQuery": "Abfrage kopieren",
+    "exportAsSql": "Als SQL exportieren…",
     "copyDetails": "Details kopieren",
     "historyDetails": {
       "database": "Datenbank",

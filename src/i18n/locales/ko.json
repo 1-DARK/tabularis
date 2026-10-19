@@ -255,6 +255,7 @@
     "insertToEditor": "에디터에 삽입",
     "openInNewTab": "새 탭에서 열기",
     "copyQuery": "쿼리 복사",
+    "exportAsSql": "SQL로 내보내기…",
     "copyDetails": "세부 정보 복사",
     "historyDetails": {
       "database": "데이터베이스",

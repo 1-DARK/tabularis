@@ -264,6 +264,7 @@
     "insertToEditor": "插入到编辑器",
     "openInNewTab": "在新标签中打开",
     "copyQuery": "复制查询",
+    "exportAsSql": "导出为 SQL…",
     "copyDetails": "复制详情",
     "historyDetails": {
       "database": "数据库",

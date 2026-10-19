@@ -278,6 +278,7 @@
     "insertToEditor": "Insérer dans l’éditeur",
     "openInNewTab": "Ouvrir dans un nouvel onglet",
     "copyQuery": "Copier la requête",
+    "exportAsSql": "Exporter en SQL…",
     "copyDetails": "Copier les détails",
     "historyDetails": {
       "database": "Base de données",

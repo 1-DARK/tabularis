@@ -47,11 +47,12 @@ import {
   Pencil,
   FolderInput,
 } from "lucide-react";
-import { ask, open } from "@tauri-apps/plugin-dialog";
+import { ask, open, save as saveFileDialog } from "@tauri-apps/plugin-dialog";
 import { toErrorMessage } from "../../utils/errors";
 import { useAlert } from "../../hooks/useAlert";
 import { useToast } from "../../hooks/useToast";
 import { getSavedQueryCopyName } from "../../utils/savedQueryNames";
+import { getSavedQueryExportFileName } from "../../utils/sqlFile";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { useSettings } from "../../hooks/useSettings";
 import { useDatabase } from "../../hooks/useDatabase";
@@ -3104,6 +3105,30 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
                                   try {
                                     await copyTextToClipboard((contextMenu.data as SavedQuery).sql);
                                     showToast(t("common.copied"), { kind: "success" });
+                                  } catch (error) {
+                                    showToast(`${t("common.error")}: ${toErrorMessage(error)}`, { kind: "error" });
+                                  }
+                                },
+                              },
+                              {
+                                label: t("sidebar.exportAsSql"),
+                                icon: Download,
+                                action: async () => {
+                                  if (!contextMenu.data || !("sql" in contextMenu.data)) return;
+                                  const sq = contextMenu.data as SavedQuery;
+                                  try {
+                                    const filePath = await saveFileDialog({
+                                      defaultPath: getSavedQueryExportFileName(sq.name),
+                                      filters: [
+                                        {
+                                          name: t("editor.sqlFileFilter"),
+                                          extensions: ["sql", "psql", "pgsql"],
+                                        },
+                                      ],
+                                    });
+                                    if (typeof filePath !== "string") return;
+                                    await invoke("write_sql_file", { path: filePath, content: sq.sql });
+                                    showToast(t("editor.sqlFileSaved"), { kind: "success" });
                                   } catch (error) {
                                     showToast(`${t("common.error")}: ${toErrorMessage(error)}`, { kind: "error" });
                                   }

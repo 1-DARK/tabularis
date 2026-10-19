@@ -255,6 +255,7 @@
     "insertToEditor": "Inserir no Editor",
     "openInNewTab": "Abrir em Nova Aba",
     "copyQuery": "Copiar Consulta",
+    "exportAsSql": "Exportar como SQL…",
     "copyDetails": "Copiar Detalhes",
     "historyDetails": {
       "database": "Banco de dados",

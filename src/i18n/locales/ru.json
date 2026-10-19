@@ -278,6 +278,7 @@
     "insertToEditor": "Вставить в редактор",
     "openInNewTab": "Открыть в новой вкладке",
     "copyQuery": "Копировать запрос",
+    "exportAsSql": "Экспортировать как SQL…",
     "copyDetails": "Копировать сведения",
     "historyDetails": {
       "database": "База данных",

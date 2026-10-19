@@ -272,6 +272,7 @@
     "insertToEditor": "Inserisci nell'Editor",
     "openInNewTab": "Apri in Nuova Scheda",
     "copyQuery": "Copia Query",
+    "exportAsSql": "Esporta come SQL…",
     "copyDetails": "Copia Dettagli",
     "historyDetails": {
       "database": "Database",

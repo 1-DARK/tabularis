@@ -278,6 +278,7 @@
     "insertToEditor": "エディタに挿入",
     "openInNewTab": "新しいタブで開く",
     "copyQuery": "クエリをコピー",
+    "exportAsSql": "SQLとしてエクスポート…",
     "copyDetails": "詳細をコピー",
     "historyDetails": {
       "database": "データベース",

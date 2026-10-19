@@ -278,6 +278,7 @@
     "insertToEditor": "Ipasok sa Editor",
     "openInNewTab": "Buksan sa Bagong Tab",
     "copyQuery": "Kopyahin ang Query",
+    "exportAsSql": "I-export bilang SQL…",
     "copyDetails": "Kopyahin ang Detalye",
     "historyDetails": {
       "database": "Database",
