@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "このフォルダの名前を変更します",
     "moveToFolderSubtitle": "このクエリを表示する場所を選択します",
     "confirmDeleteFolderTitle": "フォルダを削除",
+    "foldersFileUnreadable": "保存済みクエリのフォルダファイル (saved_queries/folders.json) を読み取れません。修復または削除してから、もう一度お試しください。",
     "execute": "実行",
     "edit": "編集",
     "delete": "削除",

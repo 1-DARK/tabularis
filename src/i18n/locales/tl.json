@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Baguhin ang pangalan ng folder na ito",
     "moveToFolderSubtitle": "Piliin kung saan ililista ang query na ito",
     "confirmDeleteFolderTitle": "Burahin ang folder",
+    "foldersFileUnreadable": "Hindi mabasa ang file ng mga folder ng naka-save na query (saved_queries/folders.json). Ayusin o alisin ito, pagkatapos ay subukan muli.",
     "execute": "I-run",
     "edit": "I-edit",
     "delete": "Burahin",

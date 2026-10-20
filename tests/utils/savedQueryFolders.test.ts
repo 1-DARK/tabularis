@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
+  FOLDERS_FILE_UNREADABLE,
   MAX_FOLDER_NAME_CHARS,
+  getFolderErrorMessage,
   getFolderNameError,
   getQueryFolderName,
   groupQueriesByFolder,
@@ -90,5 +92,25 @@ describe("getQueryFolderName", () => {
     expect(getQueryFolderName(query("1"), folders)).toBeNull();
     expect(getQueryFolderName(query("1", null), folders)).toBeNull();
     expect(getQueryFolderName(query("1", "gone"), folders)).toBeNull();
+  });
+});
+
+describe("getFolderErrorMessage", () => {
+  const t = (key: string) => `translated:${key}`;
+
+  it("translates the unreadable-folders-file code, however the error is wrapped", () => {
+    expect(getFolderErrorMessage(FOLDERS_FILE_UNREADABLE, t)).toBe(
+      "translated:sidebar.foldersFileUnreadable",
+    );
+    expect(getFolderErrorMessage(new Error(FOLDERS_FILE_UNREADABLE), t)).toBe(
+      "translated:sidebar.foldersFileUnreadable",
+    );
+  });
+
+  it("passes other backend messages through unchanged", () => {
+    expect(getFolderErrorMessage("Folder is not empty. Move or delete its queries first.", t)).toBe(
+      "Folder is not empty. Move or delete its queries first.",
+    );
+    expect(getFolderErrorMessage(new Error("Folder not found"), t)).toBe("Folder not found");
   });
 });

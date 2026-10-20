@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Modifiez le nom de ce dossier",
     "moveToFolderSubtitle": "Choisissez où cette requête est listée",
     "confirmDeleteFolderTitle": "Supprimer le dossier",
+    "foldersFileUnreadable": "Le fichier des dossiers de requêtes enregistrées (saved_queries/folders.json) est illisible. Réparez-le ou supprimez-le, puis réessayez.",
     "execute": "Exécuter",
     "edit": "Modifier",
     "delete": "Supprimer",

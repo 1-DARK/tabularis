@@ -5,9 +5,9 @@ import { Modal } from "../ui/Modal";
 import type { SavedQueryFolder } from "../../contexts/SavedQueriesContext";
 import {
   MAX_FOLDER_NAME_CHARS,
+  getFolderErrorMessage,
   getFolderNameError,
 } from "../../utils/savedQueryFolders";
-import { toErrorMessage } from "../../utils/errors";
 
 interface SavedQueryFolderModalProps {
   isOpen: boolean;
@@ -52,7 +52,7 @@ const FolderForm = ({ onClose, folders, folder = null, onSubmit }: FolderFormPro
       await onSubmit(name.trim());
       onClose();
     } catch (err) {
-      setServerError(toErrorMessage(err));
+      setServerError(getFolderErrorMessage(err, t));
     } finally {
       setBusy(false);
     }

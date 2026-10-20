@@ -1,7 +1,11 @@
 import type { SavedQuery, SavedQueryFolder } from "../contexts/SavedQueriesContext";
+import { toErrorMessage } from "./errors";
 
 export const MAX_FOLDER_NAME_CHARS = 64;
 export const UNFILED_OPTION = "__unfiled__";
+
+/** Error code the backend returns when `folders.json` cannot be read. */
+export const FOLDERS_FILE_UNREADABLE = "folders_file_unreadable";
 
 export type FolderNameError = "empty" | "tooLong" | "duplicate";
 
@@ -64,4 +68,19 @@ export function getQueryFolderName(
 ): string | null {
   if (!query.folder_id) return null;
   return folders.find((f) => f.id === query.folder_id)?.name ?? null;
+}
+
+/**
+ * Message to show for a failed folder command. Known backend error codes are
+ * translated; anything else is shown as the backend sent it.
+ */
+export function getFolderErrorMessage(
+  error: unknown,
+  t: (key: string) => string,
+): string {
+  const message = toErrorMessage(error);
+  if (message.includes(FOLDERS_FILE_UNREADABLE)) {
+    return t("sidebar.foldersFileUnreadable");
+  }
+  return message;
 }

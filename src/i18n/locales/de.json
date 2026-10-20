@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Ändere den Namen dieses Ordners",
     "moveToFolderSubtitle": "Wähle, wo diese Abfrage aufgelistet wird",
     "confirmDeleteFolderTitle": "Ordner löschen",
+    "foldersFileUnreadable": "Die Datei mit den Abfrageordnern (saved_queries/folders.json) ist nicht lesbar. Repariere oder entferne sie und versuche es erneut.",
     "execute": "Ausführen",
     "edit": "Bearbeiten",
     "delete": "Löschen",

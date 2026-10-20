@@ -131,6 +131,7 @@
     "renameFolderSubtitle": "Altere o nome desta pasta",
     "moveToFolderSubtitle": "Escolha onde esta consulta é listada",
     "confirmDeleteFolderTitle": "Excluir pasta",
+    "foldersFileUnreadable": "O arquivo de pastas de consultas salvas (saved_queries/folders.json) não pode ser lido. Repare ou remova o arquivo e tente novamente.",
     "execute": "Executar",
     "edit": "Editar",
     "delete": "Excluir",

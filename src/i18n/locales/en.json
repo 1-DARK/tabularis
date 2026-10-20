@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Change how this folder is named",
     "moveToFolderSubtitle": "Choose where this query is listed",
     "confirmDeleteFolderTitle": "Delete Folder",
+    "foldersFileUnreadable": "The saved query folders file (saved_queries/folders.json) is unreadable. Repair or remove it, then try again.",
     "execute": "Execute",
     "edit": "Edit",
     "delete": "Delete",

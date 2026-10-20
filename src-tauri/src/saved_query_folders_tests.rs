@@ -249,7 +249,7 @@ mod tests {
         std::fs::write(&path, "{ not json").unwrap();
 
         let err = read_folders_file(&path).unwrap_err();
-        assert_eq!(err, FOLDERS_FILE_ERROR);
+        assert_eq!(err, FOLDERS_FILE_UNREADABLE);
         assert!(!err.contains("expected"));
         assert!(!err.contains("line 1"));
         assert!(read_folders_file_lenient(&path).is_empty());
@@ -285,5 +285,37 @@ mod tests {
             .map(|e| e.unwrap().file_name().into_string().unwrap())
             .collect();
         assert_eq!(leftovers, vec!["folders.json".to_string()]);
+    }
+
+    #[test]
+    fn listing_folders_filters_by_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("folders.json");
+        let all = vec![
+            folder("f1", "c1", "Reports"),
+            folder("f2", "c2", "Other"),
+            folder("f3", "c1", "Ops"),
+        ];
+        write_folders_file(&path, &all).unwrap();
+
+        let listed = list_folders_for_connection(&path, "c1");
+        assert_eq!(listed, vec![all[0].clone(), all[2].clone()]);
+        assert!(list_folders_for_connection(&path, "nobody").is_empty());
+    }
+
+    #[test]
+    fn listing_folders_is_lenient_when_the_file_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("folders.json");
+        std::fs::write(&path, "{ not json").unwrap();
+
+        assert!(list_folders_for_connection(&path, "c1").is_empty());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{ not json");
+    }
+
+    #[test]
+    fn listing_folders_without_a_file_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(list_folders_for_connection(&dir.path().join("folders.json"), "c1").is_empty());
     }
 }

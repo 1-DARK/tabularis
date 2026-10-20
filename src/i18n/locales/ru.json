@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Измените название этой папки",
     "moveToFolderSubtitle": "Выберите, где будет показан этот запрос",
     "confirmDeleteFolderTitle": "Удалить папку",
+    "foldersFileUnreadable": "Не удаётся прочитать файл папок сохранённых запросов (saved_queries/folders.json). Исправьте или удалите его и повторите попытку.",
     "execute": "Выполнить",
     "edit": "Изменить",
     "delete": "Удалить",

@@ -154,6 +154,7 @@
     "renameFolderSubtitle": "Cambia el nombre de esta carpeta",
     "moveToFolderSubtitle": "Elige dónde aparece esta consulta",
     "confirmDeleteFolderTitle": "Eliminar carpeta",
+    "foldersFileUnreadable": "No se puede leer el archivo de carpetas de consultas guardadas (saved_queries/folders.json). Repáralo o elimínalo e inténtalo de nuevo.",
     "execute": "Ejecutar",
     "edit": "Editar",
     "delete": "Eliminar",

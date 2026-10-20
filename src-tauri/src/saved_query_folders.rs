@@ -16,12 +16,11 @@ use crate::saved_queries::SavedQueryMeta;
 /// frontend input.
 pub const MAX_FOLDER_NAME_CHARS: usize = 64;
 
-/// Shown when `folders.json` cannot be read or parsed. Creating, renaming,
-/// deleting and moving stop instead of overwriting the file, so the user can
-/// repair or remove it.
-pub const FOLDERS_FILE_ERROR: &str =
-    "The saved query folders file (saved_queries/folders.json) is unreadable. \
-     Repair or remove it, then try again.";
+/// Stable error code returned when `folders.json` cannot be read or parsed.
+/// The frontend maps it to a translated message (`getFolderErrorMessage`).
+/// Creating, renaming, deleting and moving stop with this error instead of
+/// overwriting the file, so the user can repair or remove it.
+pub const FOLDERS_FILE_UNREADABLE: &str = "folders_file_unreadable";
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct SavedQueryFolder {
@@ -160,35 +159,44 @@ pub fn resolve_folder_id(meta: &SavedQueryMeta, folders: &[SavedQueryFolder]) ->
         .map(|f| f.id.clone())
 }
 
-/// Reads `folders.json`. A missing file is an empty list. Unreadable or
-/// invalid content is an error with a user-facing message; the technical
-/// detail goes to the log instead of the UI.
-pub fn read_folders_file(path: &Path) -> Result<Vec<SavedQueryFolder>, String> {
+/// Reads and parses `folders.json`, returning the technical detail on failure.
+/// A missing file is an empty list.
+fn load_folders_file(path: &Path) -> Result<Vec<SavedQueryFolder>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let content = fs::read_to_string(path).map_err(|e| {
-        log::warn!("Cannot read {}: {}", path.display(), e);
-        FOLDERS_FILE_ERROR.to_string()
-    })?;
-    serde_json::from_str(&content).map_err(|e| {
-        log::warn!("Cannot parse {}: {}", path.display(), e);
-        FOLDERS_FILE_ERROR.to_string()
+    let content =
+        fs::read_to_string(path).map_err(|e| format!("cannot read {}: {}", path.display(), e))?;
+    serde_json::from_str(&content).map_err(|e| format!("cannot parse {}: {}", path.display(), e))
+}
+
+/// Strict read. Unreadable or invalid content yields the stable
+/// `FOLDERS_FILE_UNREADABLE` code; the technical detail is logged once.
+pub fn read_folders_file(path: &Path) -> Result<Vec<SavedQueryFolder>, String> {
+    load_folders_file(path).map_err(|detail| {
+        log::warn!("Saved-query folders file unreadable: {}", detail);
+        FOLDERS_FILE_UNREADABLE.to_string()
     })
 }
 
 /// Like `read_folders_file`, but a corrupt or unreadable file degrades to no
 /// folders (queries show as Unfiled) so organizational metadata can never hide
-/// or block saved queries. The file is left untouched for manual recovery.
+/// or block saved queries. The file is left untouched for manual recovery, and
+/// the detail is logged once.
 pub fn read_folders_file_lenient(path: &Path) -> Vec<SavedQueryFolder> {
-    read_folders_file(path).unwrap_or_else(|e| {
-        log::warn!(
-            "Ignoring unreadable saved-query folders file {}: {}",
-            path.display(),
-            e
-        );
+    load_folders_file(path).unwrap_or_else(|detail| {
+        log::warn!("Ignoring unreadable saved-query folders file: {}", detail);
         Vec::new()
     })
+}
+
+/// The folders of one connection, read leniently. Backs
+/// `get_saved_query_folders`.
+pub fn list_folders_for_connection(path: &Path, connection_id: &str) -> Vec<SavedQueryFolder> {
+    read_folders_file_lenient(path)
+        .into_iter()
+        .filter(|f| f.connection_id == connection_id)
+        .collect()
 }
 
 /// Writes `folders.json` through a temp file and rename so a crash mid-write

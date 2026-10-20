@@ -12,6 +12,7 @@ import { useEditor } from "../../../src/hooks/useEditor";
 import { useSettings } from "../../../src/hooks/useSettings";
 import { useDatabaseObjectNavigation } from "../../../src/hooks/useDatabaseObjectNavigation";
 import { openEditor } from "../../../src/utils/editorNavigation";
+import { FOLDERS_FILE_UNREADABLE } from "../../../src/utils/savedQueryFolders";
 
 const translateMock = vi.hoisted(() => (key: string) => key);
 const toastSpy = vi.hoisted(() => vi.fn());
@@ -1144,6 +1145,32 @@ describe("ExplorerSidebar — saved query actions", () => {
 
       await waitFor(() =>
         expect(screen.getByRole("alert").textContent).toBe("The saved query folders file is unreadable."),
+      );
+    });
+
+    it("shows a translated message when the folders file is unreadable", async () => {
+      createFolder.mockRejectedValueOnce(FOLDERS_FILE_UNREADABLE);
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      fireEvent.change(screen.getByLabelText("sidebar.folderName"), { target: { value: "Ops" } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toBe("sidebar.foldersFileUnreadable"),
+      );
+    });
+
+    it("shows a translated message when deleting fails on an unreadable folders file", async () => {
+      deleteFolder.mockRejectedValueOnce(FOLDERS_FILE_UNREADABLE);
+      renderWithFolders([savedQuery], [folderRef]);
+      fireEvent.click(screen.getByLabelText("sidebar.deleteFolder: Reports"));
+      fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+
+      await waitFor(() =>
+        expect(toastSpy).toHaveBeenCalledWith(
+          "sidebar.folderActionFailed: sidebar.foldersFileUnreadable",
+          { kind: "error" },
+        ),
       );
     });
 

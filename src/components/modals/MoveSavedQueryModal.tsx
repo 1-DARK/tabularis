@@ -4,8 +4,7 @@ import { Folder, X } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { Select } from "../ui/Select";
 import type { SavedQuery, SavedQueryFolder } from "../../contexts/SavedQueriesContext";
-import { UNFILED_OPTION } from "../../utils/savedQueryFolders";
-import { toErrorMessage } from "../../utils/errors";
+import { UNFILED_OPTION, getFolderErrorMessage } from "../../utils/savedQueryFolders";
 
 interface MoveSavedQueryModalProps {
   isOpen: boolean;
@@ -45,7 +44,7 @@ const MoveForm = ({ onClose, query, folders, onMove }: MoveFormProps) => {
       await onMove(query.id, target === UNFILED_OPTION ? null : target);
       onClose();
     } catch (err) {
-      setError(toErrorMessage(err));
+      setError(getFolderErrorMessage(err, t));
     } finally {
       setBusy(false);
     }

@@ -279,10 +279,10 @@ pub async fn get_saved_query_folders<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
 ) -> Result<Vec<SavedQueryFolder>, String> {
-    Ok(read_folders_or_empty(&app)
-        .into_iter()
-        .filter(|f| f.connection_id == connection_id)
-        .collect())
+    Ok(saved_query_folders::list_folders_for_connection(
+        &get_folders_path(&app)?,
+        &connection_id,
+    ))
 }
 
 #[tauri::command]

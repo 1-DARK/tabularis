@@ -153,6 +153,7 @@
     "renameFolderSubtitle": "更改此文件夹的名称",
     "moveToFolderSubtitle": "选择此查询的列出位置",
     "confirmDeleteFolderTitle": "删除文件夹",
+    "foldersFileUnreadable": "无法读取已保存查询的文件夹文件 (saved_queries/folders.json)。请修复或删除该文件后重试。",
     "execute": "执行",
     "edit": "编辑",
     "delete": "删除",

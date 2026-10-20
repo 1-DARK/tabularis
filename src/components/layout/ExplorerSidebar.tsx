@@ -60,7 +60,7 @@ import { useEditor } from "../../hooks/useEditor";
 import { useSavedQueries } from "../../hooks/useSavedQueries";
 import { useQueryHistory } from "../../hooks/useQueryHistory";
 import type { SavedQuery, SavedQueryFolder } from "../../contexts/SavedQueriesContext";
-import { groupQueriesByFolder, getQueryFolderName } from "../../utils/savedQueryFolders";
+import { groupQueriesByFolder, getQueryFolderName, getFolderErrorMessage } from "../../utils/savedQueryFolders";
 import type { QueryHistoryEntry } from "../../types/queryHistory";
 import type { NotebookMetadata } from "../../types/notebook";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
@@ -3408,7 +3408,7 @@ export const ExplorerSidebar = ({ sidebarWidth, startResize, onCollapse, sidebar
           try {
             await deleteFolder(target.id);
           } catch (error) {
-            showToast(`${t("sidebar.folderActionFailed")}: ${toErrorMessage(error)}`, { kind: "error" });
+            showToast(`${t("sidebar.folderActionFailed")}: ${getFolderErrorMessage(error, t)}`, { kind: "error" });
           }
         }}
       />

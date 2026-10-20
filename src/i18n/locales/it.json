@@ -161,6 +161,7 @@
     "renameFolderSubtitle": "Cambia il nome di questa cartella",
     "moveToFolderSubtitle": "Scegli dove viene elencata questa query",
     "confirmDeleteFolderTitle": "Elimina cartella",
+    "foldersFileUnreadable": "Il file delle cartelle delle query salvate (saved_queries/folders.json) non è leggibile. Riparalo o rimuovilo, poi riprova.",
     "execute": "Esegui",
     "edit": "Modifica",
     "delete": "Elimina",
