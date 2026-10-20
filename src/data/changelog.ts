@@ -79,4 +79,6 @@ export const versionLinks: Record<string, string> = {
     "https://tabularis.dev/blog/v0270-cell-value-filter-stable-columns-tsql-batches",
   "0.28.0":
     "https://tabularis.dev/blog/v0280-structured-filters-auto-refresh-read-only-mcp",
+  "0.29.0":
+    "https://tabularis.dev/blog/v0290-chatgpt-sign-in-postgres-multi-database-file-import",
 };
