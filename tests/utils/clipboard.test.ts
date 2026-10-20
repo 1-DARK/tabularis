@@ -456,9 +456,16 @@ describe('clipboard utils', () => {
                 'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, 1, 0);',
             );
             // Built-in drivers keep TRUE/FALSE.
-            for (const driver of ['mysql', 'postgres', 'sqlite', undefined]) {
+            expect(rowsToSqlInsert(rows, cols, 't', 'mysql')).toBe(
+                'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+            );
+            expect(rowsToSqlInsert(rows, cols, 't', undefined)).toBe(
+                'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+            );
+            // Postgres and SQLite quote identifiers with double quotes, not backticks.
+            for (const driver of ['postgres', 'sqlite']) {
                 expect(rowsToSqlInsert(rows, cols, 't', driver)).toBe(
-                    'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+                    'INSERT INTO "t" ("id", "a", "b") VALUES (1, TRUE, FALSE);',
                 );
             }
             expect(columnValuesToInClause([[true], [false]], 0, numeric)).toBe('1, 0');
