@@ -1,7 +1,7 @@
 import type { QueryResult } from "../types/editor";
 import { csvField, rowsToHtmlTable, rowsToMarkdown } from "./clipboard";
 
-export type ResultExportFormat = "csv" | "json" | "markdown" | "html";
+export type ResultExportFormat = "csv" | "json" | "ndjson" | "markdown" | "html";
 
 export function getLoadedRowsExportLimit(
   result: QueryResult,
@@ -27,6 +27,17 @@ export function getLoadedRowsExportLimit(
  */
 const NULL_CSV_VALUE = "NULL";
 
+function rowToResultObject(
+  columns: string[],
+  row: unknown[],
+): Record<string, unknown> {
+  const obj: Record<string, unknown> = {};
+  columns.forEach((column, index) => {
+    obj[column] = row[index] ?? null;
+  });
+  return obj;
+}
+
 function csvValue(value: unknown, delimiter: string): string {
   const text =
     value === null || value === undefined
@@ -45,7 +56,16 @@ function resultToCsv(result: QueryResult, delimiter: string): string {
   const rows = result.rows.map((row) =>
     row.map((value) => csvValue(value, delimiter)).join(delimiter),
   );
-  return [header, ...rows].join("\n");
+  return toLineFile([header, ...rows]);
+}
+
+/**
+ * Joins line-based records into file content where every record, the last
+ * one included, ends with a newline. This is what the streaming exporter's
+ * `csv::Writer` writes, and what NDJSON requires.
+ */
+function toLineFile(lines: string[]): string {
+  return lines.map((line) => `${line}\n`).join("");
 }
 
 const HTML_DOCUMENT_STYLE = [
@@ -84,14 +104,18 @@ export function formatResultForExport(
   csvDelimiter = ",",
 ): string {
   if (format === "json") {
-    const rows = result.rows.map((row) => {
-      const obj: Record<string, unknown> = {};
-      result.columns.forEach((column, index) => {
-        obj[column] = row[index] ?? null;
-      });
-      return obj;
-    });
+    const rows = result.rows.map((row) =>
+      rowToResultObject(result.columns, row),
+    );
     return JSON.stringify(rows, null, 2);
+  }
+
+  if (format === "ndjson") {
+    return toLineFile(
+      result.rows.map((row) =>
+        JSON.stringify(rowToResultObject(result.columns, row)),
+      ),
+    );
   }
 
   if (format === "markdown") {

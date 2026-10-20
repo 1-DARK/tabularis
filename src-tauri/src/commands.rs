@@ -1269,6 +1269,27 @@ pub async fn get_table_query_template<R: Runtime>(
     drv.get_table_query_template(&params, &request).await
 }
 
+/// Column statistics through the optional plugin RPC (issue #1137). `None`
+/// means the driver doesn't provide them; the frontend then falls back to its
+/// generic SQL or hides the entry.
+#[tauri::command]
+pub async fn get_column_stats<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+    request: crate::models::ColumnStatsRequest,
+    database: Option<String>,
+) -> Result<Option<crate::models::ColumnStatsResult>, String> {
+    let saved_conn = find_connection_by_id(&app, &connection_id)?;
+    let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
+    let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
+    let mut params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
+    if let Some(db) = database.filter(|d| !d.is_empty()) {
+        params.database = crate::models::DatabaseSelection::Single(db);
+    }
+    let drv = driver_for_params(&params).await?;
+    drv.get_column_stats(&params, &request).await
+}
+
 #[tauri::command]
 pub async fn build_routine_call_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -2606,11 +2627,8 @@ fn load_k8s_connections_sync<R: Runtime>(app: &AppHandle<R>) -> Result<Vec<K8sCo
 }
 
 /// Get the path to the k8s_connections.json file.
-fn get_k8s_config_path<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let config_dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| format!("Failed to get config dir: {}", e))?;
+fn get_k8s_config_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
+    let config_dir = crate::paths::get_app_config_dir();
     if !config_dir.exists() {
         fs::create_dir_all(&config_dir).map_err(|e| e.to_string())?;
     }

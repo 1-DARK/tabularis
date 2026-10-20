@@ -16,6 +16,7 @@ import type { ComponentProps } from "react";
 // can drive it directly, exercising the real `runToolbarQuery` callback
 // without rendering the filter-value picker UI.
 let capturedRunToolbarQuery: ((sql: string) => Promise<QueryResult>) | undefined;
+let capturedRefresh: (() => void) | undefined;
 // Same for the DataGrid's column statistics loader (issue #1001).
 type LoadColumnStats = NonNullable<ComponentProps<typeof DataGridType>["onLoadColumnStats"]>;
 let capturedLoadColumnStats: LoadColumnStats | undefined;
@@ -29,7 +30,12 @@ const mocks = vi.hoisted(() => ({
   noop: vi.fn(),
   location: { state: null, pathname: "/editor", key: "test" },
   settings: { resultPageSize: 100, csvIncludeHeaders: true },
-  capabilities: { schemas: true, sql_dialect: "postgresql", identifier_quote: '"' },
+  capabilities: { schemas: true, sql_dialect: "postgresql", identifier_quote: '"' } as Record<
+    string,
+    unknown
+  >,
+  driver: "postgres",
+  drivers: [{ id: "postgres", is_builtin: true }] as { id: string; is_builtin?: boolean }[],
   t: (key: string, options?: Record<string, unknown>) =>
     key === "toolbar.autoRefresh.failed" ? String(options?.error) : key,
   notify: vi.fn().mockResolvedValue(undefined),
@@ -49,7 +55,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("../../src/hooks/useDatabase", () => ({
   useDatabase: () => ({
     activeConnectionId: mocks.connectionId,
-    activeDriver: "postgres",
+    activeDriver: mocks.driver,
     activeSchema: "public",
     activeCapabilities: mocks.capabilities,
     activeDatabaseName: "test",
@@ -61,7 +67,7 @@ vi.mock("../../src/hooks/useDatabase", () => ({
     selectedDatabases: [],
   }),
 }));
-vi.mock("../../src/hooks/useDrivers", () => ({ useDrivers: () => ({ allDrivers: [] }) }));
+vi.mock("../../src/hooks/useDrivers", () => ({ useDrivers: () => ({ allDrivers: mocks.drivers }) }));
 vi.mock("../../src/hooks/useSettings", () => ({ useSettings: () => ({ settings: mocks.settings }) }));
 vi.mock("../../src/hooks/useConnectionLayoutContext", () => ({
   useConnectionLayoutContext: () => ({ explorerConnectionId: null }),
@@ -112,9 +118,16 @@ vi.mock("../../src/components/ui/SqlEditorWrapper", () => ({
 // The filter-value picker UI is too deep to drive in a unit test; capturing
 // the prop lets us call the callback directly and verify the invoke payload.
 vi.mock("../../src/components/ui/TableToolbar", () => ({
-  TableToolbar: ({ onRunQuery }: { onRunQuery?: (sql: string) => Promise<QueryResult> }) => {
+  TableToolbar: ({
+    onRunQuery,
+    onRefresh,
+  }: {
+    onRunQuery?: (sql: string) => Promise<QueryResult>;
+    onRefresh?: () => void;
+  }) => {
     useLayoutEffect(() => {
       capturedRunToolbarQuery = onRunQuery;
+      capturedRefresh = onRefresh;
     });
     return null;
   },
@@ -406,6 +419,7 @@ describe("column statistics loader (#1001)", () => {
 
 describe("focus after filtering by a grid value (#1138)", () => {
   let finish: (value: QueryResult) => void = () => {};
+  let fail: (reason: unknown) => void = () => {};
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -415,7 +429,7 @@ describe("focus after filtering by a grid value (#1138)", () => {
     vi.mocked(invoke).mockReset();
     vi.mocked(invoke).mockImplementation((command) =>
       command === "execute_query"
-        ? new Promise((resolve) => { finish = resolve; })
+        ? new Promise((resolve, reject) => { finish = resolve; fail = reject; })
         : Promise.resolve([]),
     );
   });
@@ -461,5 +475,206 @@ describe("focus after filtering by a grid value (#1138)", () => {
     } finally {
       elsewhere.remove();
     }
+  });
+
+  it("drops the focus request when the filtered query fails", async () => {
+    await filterFromGrid();
+    await act(async () => {
+      fail("syntax error");
+    });
+    expect(document.body).toHaveFocus();
+
+    // An unrelated refresh succeeds later: it must not pull focus to the grid.
+    await act(async () => {
+      capturedRefresh?.();
+    });
+    await act(async () => {
+      finish({ ...initialResult, rows: [[9]] });
+    });
+
+    expect(screen.getByTestId("grid")).toHaveTextContent("[[9]]");
+    expect(document.body).toHaveFocus();
+  });
+});
+
+describe("column statistics from plugin drivers (#1137)", () => {
+  const ALL = { distinct: true, minMax: true, topValues: true };
+  const defaults = {
+    capabilities: mocks.capabilities,
+    driver: mocks.driver,
+    drivers: mocks.drivers,
+  };
+  const optedIn = { schemas: false, identifier_quote: "`", column_stats: true };
+  const pluginStats = {
+    row_count: 4,
+    null_count: 1,
+    distinct_count: 2,
+    min: 1,
+    max: 9,
+    top_values: [{ value: 7, count: 2 }],
+  };
+
+  function statsCalls() {
+    return vi.mocked(invoke).mock.calls.filter(([command]) => command === "get_column_stats");
+  }
+
+  function usePlugin(capabilities: Record<string, unknown>) {
+    mocks.capabilities = capabilities;
+    mocks.driver = "surrealdb";
+    mocks.drivers = [{ id: "surrealdb", is_builtin: false }];
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    mocks.connectionId = "connection-1";
+    capturedLoadColumnStats = undefined;
+    vi.mocked(invoke).mockReset();
+  });
+  afterEach(() => {
+    Object.assign(mocks, defaults);
+    vi.useRealTimers();
+  });
+
+  it("asks an opted-in plugin through get_column_stats and runs no SQL", async () => {
+    usePlugin(optedIn);
+    vi.mocked(invoke).mockImplementation((command) =>
+      Promise.resolve(command === "get_column_stats" ? pluginStats : []),
+    );
+    render(<Harness initialTabs={[initialTab("table-1", "connection-1", "ns_db")]} />);
+
+    let stats: Awaited<ReturnType<LoadColumnStats>> | undefined;
+    await act(async () => {
+      stats = await capturedLoadColumnStats?.("id", ALL, new AbortController().signal);
+    });
+
+    expect(statsCalls()).toEqual([
+      [
+        "get_column_stats",
+        {
+          connectionId: "connection-1",
+          database: "ns_db",
+          request: {
+            table: "jobs",
+            schema: null,
+            column: "id",
+            data_type: null,
+            filter: "id > 0",
+            top_values_limit: 10,
+            include: { distinct: true, min_max: true, top_values: true },
+          },
+        },
+      ],
+    ]);
+    expect(executeQueryCalls()).toHaveLength(0);
+    expect(stats).toMatchObject({
+      rowCount: 4,
+      nullCount: 1,
+      distinctCount: 2,
+      min: 1,
+      max: 9,
+      topValues: [{ value: "7", count: 2 }],
+      filtered: true,
+    });
+  });
+
+  it("reports an error when a non-SQL plugin answers that it has no statistics", async () => {
+    usePlugin(optedIn);
+    vi.mocked(invoke).mockImplementation((command) =>
+      Promise.resolve(command === "get_column_stats" ? null : []),
+    );
+    render(<Harness />);
+
+    let error: unknown;
+    await act(async () => {
+      await capturedLoadColumnStats?.("id", ALL, new AbortController().signal).catch((e) => {
+        error = e;
+      });
+    });
+    expect(String(error)).toContain("doesn't provide column statistics");
+    expect(executeQueryCalls()).toHaveLength(0);
+  });
+
+  it("falls back to the generic SQL when a SQL-compatible plugin has no statistics", async () => {
+    usePlugin({ ...optedIn, sql_dialect: "mysql" });
+    vi.mocked(invoke).mockImplementation((command, args) => {
+      if (command === "get_column_stats") return Promise.resolve(null);
+      if (command !== "execute_query") return Promise.resolve([]);
+      const query = (args as { query: string }).query;
+      return Promise.resolve({
+        ...initialResult,
+        rows: query.startsWith("SELECT COUNT(*)") ? [[2, 0, 2, 1, 2]] : [[1, 1], [2, 1]],
+      });
+    });
+    render(<Harness />);
+
+    await act(async () => {
+      await capturedLoadColumnStats?.("id", ALL, new AbortController().signal);
+    });
+    expect(statsCalls()).toHaveLength(1);
+    expect((executeQueryCalls()[0][1] as { query: string }).query).toBe(
+      "SELECT COUNT(*), COUNT(*) - COUNT(`id`), COUNT(DISTINCT `id`), MIN(`id`), MAX(`id`) " +
+        "FROM `jobs` WHERE (id > 0)",
+    );
+  });
+
+  it("uses the generic SQL for a SQL-compatible plugin that doesn't opt in", async () => {
+    usePlugin({ schemas: false, identifier_quote: "`", sql_dialect: "mysql" });
+    vi.mocked(invoke).mockResolvedValue([]);
+    render(<Harness />);
+    expect(capturedLoadColumnStats).toBeDefined();
+  });
+
+  it.each([
+    ["no sql_dialect", { schemas: false, identifier_quote: '"' }],
+    ["a dialect without LIMIT", { schemas: false, identifier_quote: '"', sql_dialect: "mssql" }],
+    ["the generic dialect", { schemas: false, identifier_quote: '"', sql_dialect: "generic" }],
+  ])("hides the entry for a plugin with %s that doesn't opt in", (_name, capabilities) => {
+    usePlugin(capabilities);
+    vi.mocked(invoke).mockResolvedValue([]);
+    render(<Harness />);
+    expect(capturedLoadColumnStats).toBeUndefined();
+  });
+
+  it("drops a late plugin result after an abort and never sends cancel_query", async () => {
+    usePlugin(optedIn);
+    let finish: (value: unknown) => void = () => {};
+    vi.mocked(invoke).mockImplementation((command) =>
+      command === "get_column_stats"
+        ? new Promise((resolve) => { finish = resolve; })
+        : Promise.resolve([]),
+    );
+    render(<Harness />);
+    const controller = new AbortController();
+
+    let result: Promise<unknown> | undefined;
+    await act(async () => {
+      result = capturedLoadColumnStats?.("id", ALL, controller.signal);
+      result?.catch(() => {});
+    });
+    expect(statsCalls()).toHaveLength(1);
+
+    controller.abort();
+    await act(async () => {
+      finish(pluginStats);
+      await result?.catch(() => {});
+    });
+    await expect(result).rejects.toSatisfy(
+      (error: unknown) => error instanceof Error && error.name === "AbortError",
+    );
+    expect(invoke).not.toHaveBeenCalledWith("cancel_query", expect.anything());
+  });
+
+  it("sends no request when aborted before it runs", async () => {
+    usePlugin(optedIn);
+    vi.mocked(invoke).mockResolvedValue([]);
+    render(<Harness />);
+    const controller = new AbortController();
+    controller.abort();
+
+    await act(async () => {
+      await capturedLoadColumnStats?.("id", ALL, controller.signal).catch(() => {});
+    });
+    expect(statsCalls()).toHaveLength(0);
   });
 });

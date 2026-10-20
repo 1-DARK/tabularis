@@ -18,7 +18,7 @@ const result: QueryResult = {
 describe("resultExport", () => {
   it("formats loaded result rows as CSV with headers", () => {
     expect(formatResultForExport(result, "csv")).toBe(
-      "id,name\n1,John\n2,NULL",
+      "id,name\n1,John\n2,NULL\n",
     );
   });
 
@@ -32,7 +32,7 @@ describe("resultExport", () => {
     };
 
     expect(formatResultForExport(fixture, "csv")).toBe(
-      "null_col,empty_col,literal_null,zero,flag\nNULL,,NULL,0,false",
+      "null_col,empty_col,literal_null,zero,flag\nNULL,,NULL,0,false\n",
     );
   });
 
@@ -44,13 +44,13 @@ describe("resultExport", () => {
     };
 
     expect(formatResultForExport(tricky, "csv")).toBe(
-      'a,b,c\nNULL,"has,comma","say ""hi""\nthere"',
+      'a,b,c\nNULL,"has,comma","say ""hi""\nthere"\n',
     );
   });
 
   it("uses the configured CSV delimiter", () => {
     expect(formatResultForExport(result, "csv", ";")).toBe(
-      "id;name\n1;John\n2;NULL",
+      "id;name\n1;John\n2;NULL\n",
     );
   });
 
@@ -62,7 +62,7 @@ describe("resultExport", () => {
     };
 
     expect(formatResultForExport(specialResult, "csv")).toBe(
-      'id,note\n1,"hello, ""world""\nagain"',
+      'id,note\n1,"hello, ""world""\nagain"\n',
     );
   });
 
@@ -73,7 +73,38 @@ describe("resultExport", () => {
       affected_rows: 0,
     };
 
-    expect(formatResultForExport(carriageResult, "csv")).toBe('id,note\n1,"hello\rworld"');
+    expect(formatResultForExport(carriageResult, "csv")).toBe('id,note\n1,"hello\rworld"\n');
+  });
+
+  it("writes object and array values as JSON text, not [object Object]", () => {
+    const withJson: QueryResult = {
+      columns: ["id", "doc", "tags"],
+      rows: [[1, { a: 1, b: [true, null] }, ["x", "y"]]],
+      affected_rows: 0,
+    };
+
+    expect(formatResultForExport(withJson, "csv")).toBe(
+      'id,doc,tags\n1,"{""a"":1,""b"":[true,null]}","[""x"",""y""]"\n',
+    );
+  });
+
+  it("treats undefined like NULL in CSV and JSON", () => {
+    const sparse: QueryResult = {
+      columns: ["a", "b"],
+      rows: [[undefined, 1]],
+      affected_rows: 0,
+    };
+
+    expect(formatResultForExport(sparse, "csv")).toBe("a,b\nNULL,1\n");
+    expect(JSON.parse(formatResultForExport(sparse, "json"))).toEqual([
+      { a: null, b: 1 },
+    ]);
+  });
+
+  it("writes only the header for an empty result", () => {
+    expect(
+      formatResultForExport({ columns: ["a"], rows: [], affected_rows: 0 }, "csv"),
+    ).toBe("a\n");
   });
 
   it("formats loaded result rows as pretty JSON", () => {
@@ -87,6 +118,50 @@ describe("resultExport", () => {
         2,
       ),
     );
+  });
+
+  it("formats loaded result rows as NDJSON with one JSON object per line and escaped newlines", () => {
+    const ndjsonResult: QueryResult = {
+      columns: ["id", "active", "note", "meta", "missing"],
+      rows: [
+        [1, true, "first\nline\r\nsecond", { role: "admin", tags: ["a", "b"] }, undefined],
+        [2, false, null, { role: "user", tags: [] }, "present"],
+      ],
+      affected_rows: 0,
+    };
+
+    const output = formatResultForExport(ndjsonResult, "ndjson");
+    // Every record ends with a newline, the last one included.
+    expect(output.endsWith("}\n")).toBe(true);
+    const lines = output.slice(0, -1).split("\n");
+
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      {
+        id: 1,
+        active: true,
+        note: "first\nline\r\nsecond",
+        meta: { role: "admin", tags: ["a", "b"] },
+        missing: null,
+      },
+      {
+        id: 2,
+        active: false,
+        note: null,
+        meta: { role: "user", tags: [] },
+        missing: "present",
+      },
+    ]);
+  });
+
+  it("produces an empty file when exporting empty results as NDJSON", () => {
+    const emptyResult: QueryResult = {
+      columns: ["id", "name"],
+      rows: [],
+      affected_rows: 0,
+    };
+
+    expect(formatResultForExport(emptyResult, "ndjson")).toBe("");
   });
 
   it("formats loaded result rows as Markdown", () => {
