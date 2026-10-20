@@ -1590,6 +1590,7 @@
     "rowsProcessed": "Filas Procesadas",
     "exportLoadedRowsWarning": "Solo se exportaron {{loaded}} filas cargadas de {{total}} filas totales. Recorre las páginas del resultado o ejecuta una consulta más específica antes de exportar si necesitas más filas.",
     "exportLoadedHtml": "Exportar filas cargadas como HTML…",
+    "exportLoadedNdjson": "Exportar filas cargadas como NDJSON…",
     "queryParameters": "Parámetros de Consulta",
     "formatSql": "Formatear SQL",
     "selectCurrentStatement": "Seleccionar la instrucción actual",
