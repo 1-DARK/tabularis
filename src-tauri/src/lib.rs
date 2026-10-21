@@ -102,6 +102,7 @@ pub mod sql_file_tests;
 pub mod saved_query_folders;
 #[cfg(test)]
 pub mod saved_query_folders_tests;
+pub mod secret_store;
 pub mod sqlite_database;
 #[cfg(test)]
 pub mod sqlite_database_tests;
@@ -192,6 +193,11 @@ pub fn run() {
     // The capturing logger writes to stderr, keeping MCP's stdout JSON-RPC
     // stream clean while providing the same diagnostics in every launch mode.
     let log_buffer = runtime::bootstrap::initialize_logging(args.debug);
+
+    if let Err(error) = secret_store::install_from_env() {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
 
     if let Some(cli::Command::Web(web_args)) = &args.command {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
