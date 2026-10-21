@@ -28,13 +28,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "tabularis.image" -}}
-{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
-{{- if eq .Values.image.flavor "alpine" -}}
-{{- $tag = printf "%s-alpine" $tag -}}
-{{- else if ne .Values.image.flavor "debian" -}}
-{{- fail "image.flavor must be debian or alpine" -}}
-{{- end -}}
-{{- printf "%s:%s" .Values.image.repository $tag -}}
+{{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default .Chart.AppVersion) -}}
 {{- end -}}
 
 {{- define "tabularis.secretName" -}}

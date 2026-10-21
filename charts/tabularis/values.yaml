@@ -7,8 +7,6 @@ allowedOrigins: []
 
 image:
   repository: ghcr.io/tabularisdb/tabularis
-  # -- debian or alpine
-  flavor: debian
   # -- Defaults to the chart appVersion.
   tag: ""
   pullPolicy: IfNotPresent

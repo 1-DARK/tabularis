@@ -100,7 +100,7 @@ tabularis web \
 
 Remote login attempts are rate-limited. Remote sessions receive database-only authorization by default; SSH, Kubernetes, AI secrets and approvals, imports and exports, backups and dumps, plugin lifecycle, host logs and tasks, global settings, and other local-administrator operations remain denied unless `--allow-high-risk` is explicitly accepted. MCP host operations remain unavailable remotely even with that opt-in.
 
-See [Remote Web UI security and reverse-proxy deployment](./WEB_REMOTE_SECURITY.md) for Nginx, systemd, firewall, origin, audit, rate-limit, and verification examples. That guide is the normative remote threat model. For the official Docker images, Docker Compose, and the Helm chart, see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md).
+See [Remote Web UI security and reverse-proxy deployment](./WEB_REMOTE_SECURITY.md) for Nginx, systemd, firewall, origin, audit, rate-limit, and verification examples. That guide is the normative remote threat model. For the official Docker image, Docker Compose, and the Helm chart, see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md).
 
 ## Data, configuration, and credential locations
 
@@ -122,7 +122,7 @@ Important configuration content includes:
 
 Important data content includes `plugins/`, `connection-icons/`, and session-owned Web transfer/job directories. `web-file-transfers/`, `web-uploads/`, and export/import job directories are temporary operational state, not durable backup inputs.
 
-Passwords, connection URIs, SSH passphrases, AI provider keys, backup encryption passwords, and backup-target credentials are stored under the `tabularis` service in the OS credential store. They are not recoverable by copying `config.json` or `connections.json`, and the browser never receives raw stored credentials. A headless service must run as the same dedicated account on every start and must have a functioning keyring backend, or set `TABULARIS_SECRET_STORE=file` to keep them in an encrypted file instead (the default in the container images; see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md#stored-credentials)).
+Passwords, connection URIs, SSH passphrases, AI provider keys, backup encryption passwords, and backup-target credentials are stored under the `tabularis` service in the OS credential store. They are not recoverable by copying `config.json` or `connections.json`, and the browser never receives raw stored credentials. A headless service must run as the same dedicated account on every start and must have a functioning keyring backend, or set `TABULARIS_SECRET_STORE=file` to keep them in an encrypted file instead (the default in the container image; see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md#stored-credentials)).
 
 For backup or migration:
 

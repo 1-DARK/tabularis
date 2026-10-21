@@ -1,15 +1,10 @@
 # Running Tabularis Web in containers
 
-Official images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64`:
+The official image `ghcr.io/tabularisdb/tabularis` is published to the GitHub Container Registry for `linux/amd64` and `linux/arm64`, tagged `latest`, `0.30` and `0.30.0`. Prereleases get only their exact version tag (`0.30.0-beta.1`).
 
-| Tag | Base | Notes |
-| --- | --- | --- |
-| `ghcr.io/tabularisdb/tabularis:latest`, `:0.30`, `:0.30.0`, `:debian`, `:0.30.0-debian` | Debian slim | Default. glibc, so registry driver plugins run unchanged. |
-| `ghcr.io/tabularisdb/tabularis:alpine`, `:0.30-alpine`, `:0.30.0-alpine` | Alpine | musl. Driver plugins built for glibc run through `gcompat`; prefer Debian if a plugin misbehaves. |
+It is based on Debian slim, so registry driver plugins (built for glibc) run unchanged. It runs as UID `10001`, keeps all state in `/data`, and includes `ssh` for SSH tunnels. `kubectl` and the AWS CLI are not included; extend the image if you use Kubernetes or SSM tunnels.
 
-Prereleases get only their exact version tag (`:0.30.0-beta.1`, `:0.30.0-beta.1-alpine`). Both images run as UID `10001`, keep all state in `/data`, and include `ssh` for SSH tunnels. `kubectl` and the AWS CLI are not included; extend the image if you use Kubernetes or SSM tunnels.
-
-The server binary still links WebKitGTK because the desktop and Web modes ship as one executable, so the images are larger than a typical web service. `tabularis web` never opens a window and needs no display.
+The server binary still links WebKitGTK because the desktop and Web modes ship as one executable, so the image is larger than a typical web service. `tabularis web` never opens a window and needs no display.
 
 ## Quick start on your machine
 
@@ -47,7 +42,7 @@ helm install tabularis oci://ghcr.io/tabularisdb/charts/tabularis \
   --set ingress.enabled=true --set ingress.className=nginx
 ```
 
-The chart runs one replica with a `Recreate` strategy, because sessions and the data volume belong to one process. It creates a Secret with the login password, the proxy secret and the secret-store key (generated when not set and kept across upgrades), mounts it as files, runs read-only as non-root, and sends the public `Host` header in its probes. Use `auth.existingSecret` to bring your own Secret with the keys `web-password`, `proxy-secret` and `secret-key`, and `image.flavor=alpine` for the Alpine image. See `charts/tabularis/values.yaml` for every option.
+The chart runs one replica with a `Recreate` strategy, because sessions and the data volume belong to one process. It creates a Secret with the login password, the proxy secret and the secret-store key (generated when not set and kept across upgrades), mounts it as files, runs read-only as non-root, and sends the public `Host` header in its probes. Use `auth.existingSecret` to bring your own Secret with the keys `web-password`, `proxy-secret` and `secret-key`. See `charts/tabularis/values.yaml` for every option.
 
 ## Environment variables
 
@@ -71,7 +66,7 @@ The entrypoint translates these into `tabularis web` flags. Arguments after the 
 
 ## Stored credentials
 
-Containers have no OS keychain. The images set `TABULARIS_SECRET_STORE=file`, which keeps every secret the desktop app would put in the keychain (database and SSH passwords, connection URIs, plugin secrets, AI keys) in `/data/secrets.enc.json`, encrypted with AES-256-GCM under a key derived from `TABULARIS_SECRET_KEY` with Argon2id.
+Containers have no OS keychain. The image sets `TABULARIS_SECRET_STORE=file`, which keeps every secret the desktop app would put in the keychain (database and SSH passwords, connection URIs, plugin secrets, AI keys) in `/data/secrets.enc.json`, encrypted with AES-256-GCM under a key derived from `TABULARIS_SECRET_KEY` with Argon2id.
 
 Without `TABULARIS_SECRET_KEY`, a random key is generated in `/data/secrets.key`. Secrets then survive restarts and upgrades, but anyone who can read the volume can read them. Set your own key in production and back it up separately from the volume: a lost key makes the stored credentials unrecoverable, and a wrong key stops the container at startup instead of silently starting empty.
 
@@ -81,12 +76,11 @@ Without `TABULARIS_SECRET_KEY`, a random key is generated in `/data/secrets.key`
 
 `GET /healthz` is a liveness check. It still enforces the `Host` allowlist, so the image's `HEALTHCHECK` sends the public host. Logs go to stderr (`docker logs`), and audit events use the `tabularis::web_audit` target. `docker stop` sends `SIGTERM`; the server finishes requests, closes pools and tunnels, and stops driver plugins before exiting.
 
-## Building the images yourself
+## Building the image yourself
 
 ```bash
-docker build -f docker/Dockerfile --target debian -t tabularis:debian .
-docker build -f docker/Dockerfile --target alpine -t tabularis:alpine .
-docker/smoke-test.sh tabularis:debian
+docker build -f docker/Dockerfile -t tabularis .
+docker/smoke-test.sh tabularis
 ```
 
-The build compiles the frontend once on the build platform and the Rust server for the target platform. Release images are built on native `amd64` and `arm64` runners by `.github/workflows/docker.yml`, which also publishes the Helm chart.
+The build compiles the frontend once on the build platform and the Rust server for the target platform. Release builds run on native `amd64` and `arm64` runners by `.github/workflows/docker.yml`, which also publishes the Helm chart.
