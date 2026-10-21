@@ -1,0 +1,15 @@
+Tabularis Web is starting at {{ include "tabularis.publicUrl" . }}
+{{- if not .Values.ingress.enabled }}
+
+No ingress is enabled. Route {{ include "tabularis.publicHost" . }} to the service
+{{ include "tabularis.fullname" . }}:{{ .Values.service.port }} and keep the original Host header.
+{{- end }}
+{{- if eq .Values.auth.mode "password" }}
+
+Login password:
+  kubectl get secret -n {{ .Release.Namespace }} {{ include "tabularis.secretName" . }} \
+    -o jsonpath='{.data.web-password}' | base64 -d; echo
+{{- end }}
+
+Back up the `secret-key` of that secret together with the data volume: the
+saved connection credentials cannot be decrypted without it.

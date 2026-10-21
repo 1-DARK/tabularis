@@ -21,8 +21,8 @@ The Web-specific options are:
 | `--no-open` | Do not launch a browser. Use this for services, remote deployments, and liveness-only automation. For an interactive local session, let Tabularis open the one-time bootstrap URL. |
 | `--web-root` | Development or test override for a directory containing a built `index.html`. Packaged installations locate their matching Web UI resources automatically. |
 | `--auth` | Remote authentication mode: `password` or `proxy`. It requires `--public-url` and at least one `--allowed-origin`. |
-| `--public-url` | Public HTTPS origin seen by browsers, for example `https://tabularis.example.com`. It must not contain a path, query, fragment, or credentials. |
-| `--allowed-origin` | Allowed HTTPS browser origin. Repeat the option for additional origins; the public URL must be included. |
+| `--public-url` | Public HTTPS origin seen by browsers, for example `https://tabularis.example.com`. Plain HTTP is accepted only for a loopback host such as `http://localhost:8080` (a container published on `127.0.0.1`). It must not contain a path, query, fragment, or credentials. |
+| `--allowed-origin` | Allowed HTTPS (or loopback HTTP) browser origin. Repeat the option for additional origins; the public URL must be included. |
 | `--allow-high-risk` | Give remote sessions `local-admin` authority. Without it, remote sessions are restricted to database operations. Do not enable it for shared deployments. |
 | `--server-file-browser-root` | Allow the Web UI to browse one server directory. Repeat it to expose additional roots. Paths outside these roots remain inaccessible; remote sessions also require `--allow-high-risk`. |
 
@@ -57,7 +57,7 @@ Local mode is authenticated even though it listens only on loopback:
 4. The server validates the request `Host` and `Origin`. State-changing requests also require the session CSRF token.
 5. Bootstrap tokens, session credentials, request bodies, SQL text, and result payloads are not written to Web audit records. `/healthz` reports liveness only.
 
-The local cookie is sent over loopback HTTP and is not marked `Secure`; remote cookies are always `Secure` because their public origin must be HTTPS. Closing a browser tab does not stop the server. Stop the foreground process with `Ctrl+C`, or stop its service unit. Sessions, active jobs, pools, tunnels, and temporary transfer state are cleaned up on logout, expiry, disconnect where applicable, or process shutdown.
+The local cookie is sent over loopback HTTP and is not marked `Secure`; remote cookies are `Secure` whenever their public origin is HTTPS, which it must be except on a loopback host. Closing a browser tab does not stop the server. Stop the foreground process with `Ctrl+C`, or stop its service unit. Sessions, active jobs, pools, tunnels, and temporary transfer state are cleaned up on logout, expiry, disconnect where applicable, or process shutdown.
 
 `--no-open` intentionally does not print the secret bootstrap URL. It is therefore unsuitable for creating a new interactive loopback session by hand. If browser launch fails, configure a working system browser opener and restart `tabularis web` to obtain a fresh one-time bootstrap.
 
@@ -100,7 +100,7 @@ tabularis web \
 
 Remote login attempts are rate-limited. Remote sessions receive database-only authorization by default; SSH, Kubernetes, AI secrets and approvals, imports and exports, backups and dumps, plugin lifecycle, host logs and tasks, global settings, and other local-administrator operations remain denied unless `--allow-high-risk` is explicitly accepted. MCP host operations remain unavailable remotely even with that opt-in.
 
-See [Remote Web UI security and reverse-proxy deployment](./WEB_REMOTE_SECURITY.md) for Nginx, systemd, container, firewall, origin, audit, rate-limit, and verification examples. That guide is the normative remote threat model.
+See [Remote Web UI security and reverse-proxy deployment](./WEB_REMOTE_SECURITY.md) for Nginx, systemd, firewall, origin, audit, rate-limit, and verification examples. That guide is the normative remote threat model. For the official Docker images, Docker Compose, and the Helm chart, see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md).
 
 ## Data, configuration, and credential locations
 
@@ -122,7 +122,7 @@ Important configuration content includes:
 
 Important data content includes `plugins/`, `connection-icons/`, and session-owned Web transfer/job directories. `web-file-transfers/`, `web-uploads/`, and export/import job directories are temporary operational state, not durable backup inputs.
 
-Passwords, connection URIs, SSH passphrases, AI provider keys, backup encryption passwords, and backup-target credentials are stored under the `tabularis` service in the OS credential store. They are not recoverable by copying `config.json` or `connections.json`, and the browser never receives raw stored credentials. A headless service must run as the same dedicated account on every start and must have a functioning keyring backend. Container keyring integration is deployment-specific.
+Passwords, connection URIs, SSH passphrases, AI provider keys, backup encryption passwords, and backup-target credentials are stored under the `tabularis` service in the OS credential store. They are not recoverable by copying `config.json` or `connections.json`, and the browser never receives raw stored credentials. A headless service must run as the same dedicated account on every start and must have a functioning keyring backend, or set `TABULARIS_SECRET_STORE=file` to keep them in an encrypted file instead (the default in the container images; see [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md#stored-credentials)).
 
 For backup or migration:
 
