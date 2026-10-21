@@ -24,7 +24,9 @@ import {
   getColumnLayoutKey,
   resolveLockedColumnWidths,
   isUuidColumnType,
+  isOriginalCellValue,
 } from '../../src/utils/dataGrid';
+import { rowsToCSV, rowsToCSVWithHeaders } from '../../src/utils/clipboard';
 
 describe('createDataGridResultCommands', () => {
   const callbacks = () => ({
@@ -851,6 +853,19 @@ describe('dataGrid utils', () => {
       expect(parsePasteMatrix('a\t\n\nb')).toEqual([['a', ''], [''], ['b']]);
     });
 
+    it('unquotes a tab-delimited field that the CSV copy quoted', () => {
+      // A cell `say "hi"` copied as CSV and pasted back with a tab delimiter.
+      expect(parsePasteMatrix('"say ""hi"""\tplain')).toEqual([['say "hi"', 'plain']]);
+    });
+
+    it('keeps a tab inside a quoted field', () => {
+      expect(parsePasteMatrix('"a\tb"\tc')).toEqual([['a\tb', 'c']]);
+    });
+
+    it('leaves a field that only starts with a quote as written', () => {
+      expect(parsePasteMatrix('He said "x"\tb')).toEqual([['He said "x"', 'b']]);
+    });
+
     it('returns an empty matrix for empty or whitespace-only text', () => {
       expect(parsePasteMatrix('')).toEqual([]);
       expect(parsePasteMatrix('\n')).toEqual([]);
@@ -896,12 +911,100 @@ describe('dataGrid utils', () => {
       expect(parsePasteMatrix('alpha\nbeta')).toEqual([['alpha'], ['beta']]);
     });
 
+    it('unquotes a one-column copy of a single quoted value', () => {
+      expect(parsePasteMatrix('"say ""hi"""')).toEqual([['say "hi"']]);
+    });
+
+    it('unquotes a one-column copy of a single value that contains the delimiter', () => {
+      expect(parsePasteMatrix('"Rome, Italy"')).toEqual([['Rome, Italy']]);
+      expect(parsePasteMatrix('"Rome, Italy"', ',')).toEqual([['Rome, Italy']]);
+    });
+
+    it('unquotes each line of a one-column copy with no delimiter', () => {
+      expect(parsePasteMatrix('"say ""hi"""\nplain')).toEqual([['say "hi"'], ['plain']]);
+    });
+
+    it('unquotes a one-column copy that starts with a header line', () => {
+      expect(parsePasteMatrix('note\n"say ""hi"""\n"Rome, Italy"', ',')).toEqual([
+        ['note'],
+        ['say "hi"'],
+        ['Rome, Italy'],
+      ]);
+    });
+
     it('lets tabs win over commas', () => {
       expect(parsePasteMatrix('a,b\tc\nd\te')).toEqual([
         ['a,b', 'c'],
         ['d', 'e'],
       ]);
     });
+
+    it('unquotes a line that is just "" to an empty string', () => {
+      expect(parsePasteMatrix('""')).toEqual([['']]);
+      expect(parsePasteMatrix('""\tb')).toEqual([['', 'b']]);
+    });
+
+    describe('JSON columns', () => {
+      const json = () => true;
+
+      it('keeps the quotes of a pasted JSON string', () => {
+        expect(parsePasteMatrix('"abc"', ',', json)).toEqual([['"abc"']]);
+        expect(parsePasteMatrix('""', ',', json)).toEqual([['""']]);
+      });
+
+      it('unquotes a JSON value the grid copied as CSV', () => {
+        // `{"a":"x,y"}` and the JSON string `"abc"`, as csvField quotes them.
+        expect(parsePasteMatrix('"{""a"":""x,y""}"', ',', json)).toEqual([
+          ['{"a":"x,y"}'],
+        ]);
+        expect(parsePasteMatrix('"""abc"""', ',', json)).toEqual([['"abc"']]);
+      });
+
+      it('keeps quotes around a field that is not valid JSON', () => {
+        expect(parsePasteMatrix('"say ""hi"""', ',', json)).toEqual([
+          ['"say ""hi"""'],
+        ]);
+      });
+
+      it('only keeps the quotes of cells that land in a JSON column', () => {
+        const secondIsJson = (colIndex: number) => colIndex === 1;
+        expect(parsePasteMatrix('"abc"\t"abc"\n"x"\t"[1]"', ',', secondIsJson)).toEqual([
+          ['abc', '"abc"'],
+          ['x', '"[1]"'],
+        ]);
+      });
+
+      it('applies to each line of a one-column copy', () => {
+        expect(parsePasteMatrix('"abc"\n"{""a"":1}"', ',', json)).toEqual([
+          ['"abc"'],
+          ['{"a":1}'],
+        ]);
+      });
+    });
+  });
+
+  describe('parsePasteMatrix round-trip of a CSV copy', () => {
+    const rows = [
+      ['Rome, Italy', 'say "hi"', 'a;b|c', 'plain'],
+      ['', '"quoted"', 'x', 'end'],
+    ];
+    const columns = ['city', 'note', 'mixed', 'other'];
+
+    for (const delimiter of [',', ';', '|', '\t']) {
+      for (const withHeaders of [false, true]) {
+        it(`round-trips text columns with ${JSON.stringify(delimiter)}${withHeaders ? ' and the header line' : ''}`, () => {
+          const copied = withHeaders
+            ? rowsToCSVWithHeaders(rows, columns, 'null', delimiter)
+            : rowsToCSV(rows, 'null', delimiter);
+          const pasted = stripHeaderRow(
+            parsePasteMatrix(copied, delimiter, () => false),
+            columns,
+            0,
+          );
+          expect(pasted).toEqual(rows);
+        });
+      }
+    }
   });
 
   describe('stripHeaderRow', () => {
@@ -1229,3 +1332,31 @@ describe('resolveLockedColumnWidths', () => {
     ).toBeNull();
   });
 });
+
+describe('isOriginalCellValue', () => {
+  it('matches pasted text against the stored value by its text', () => {
+    expect(isOriginalCellValue('5', 5)).toBe(true);
+    expect(isOriginalCellValue('true', true)).toBe(true);
+    expect(isOriginalCellValue('Rome', 'Rome')).toBe(true);
+    expect(isOriginalCellValue('Rome ', 'Rome')).toBe(false);
+  });
+
+  it('matches a written NULL only with NULL', () => {
+    expect(isOriginalCellValue(null, 'null')).toBe(false);
+    expect(isOriginalCellValue(null, '')).toBe(false);
+    expect(isOriginalCellValue(null, null)).toBe(true);
+    expect(isOriginalCellValue(null, undefined)).toBe(true);
+  });
+
+  it('still matches pasted "null" text over NULL, as a copied NULL reads', () => {
+    expect(isOriginalCellValue('null', null)).toBe(true);
+  });
+
+  it('matches structured values only when they are the same value', () => {
+    const settings = { theme: 'dark' };
+    expect(isOriginalCellValue(settings, settings)).toBe(true);
+    expect(isOriginalCellValue({ theme: 'light' }, settings)).toBe(false);
+    expect(isOriginalCellValue('[object Object]', settings)).toBe(false);
+  });
+});
+

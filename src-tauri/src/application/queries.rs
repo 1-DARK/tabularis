@@ -467,14 +467,19 @@ pub async fn explain_query_plan(
     database: Option<String>,
 ) -> Result<ExplainQueryOutput, String> {
     let sanitized_query = sanitize_user_query(&query);
-    if !crate::drivers::common::is_explainable_query(&sanitized_query) {
+    let (driver, params) =
+        driver_and_params(runtime, scope.session_id, &connection_id, database).await?;
+    // Leading comments are skipped with the driver's own comment rules, so a
+    // `# note` header on MySQL does not hide an explainable statement.
+    let hash_comments =
+        crate::drivers::sql_syntax::SqlSyntax::resolve(&driver.manifest().capabilities)
+            .hash_comments;
+    if !crate::drivers::common::is_explainable_query_for(&sanitized_query, hash_comments) {
         return Err(
             "EXPLAIN is only supported for DML statements (SELECT, INSERT, UPDATE, DELETE, REPLACE). DDL statements like CREATE, DROP, or ALTER cannot be explained."
                 .to_string(),
         );
     }
-    let (driver, params) =
-        driver_and_params(runtime, scope.session_id, &connection_id, database).await?;
 
     let task = tokio::spawn(async move {
         driver

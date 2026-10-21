@@ -11,7 +11,7 @@ import {
 } from "@tauri-apps/plugin-dialog";
 import { readFile, writeFile } from "@tauri-apps/plugin-fs";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText, writeHtml, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   isPermissionGranted,
   requestPermission,
@@ -67,6 +67,7 @@ export interface TauriPlatformOperations {
   showMessageDialog(request: PlatformDialogRequest): Promise<void>;
   readClipboardText(): Promise<string>;
   writeClipboardText(text: string): Promise<void>;
+  writeClipboardHtml(html: string, altText: string): Promise<void>;
   writeFileContents(reference: string, contents: Uint8Array): Promise<void>;
   readFileContents(reference: string): Promise<Uint8Array>;
   openUrl(url: string): Promise<void>;
@@ -262,6 +263,7 @@ const defaultTauriOperations: TauriPlatformOperations = {
   },
   readClipboardText: readText,
   writeClipboardText: writeText,
+  writeClipboardHtml: writeHtml,
   writeFileContents: writeFile,
   readFileContents: readFile,
   openUrl,
@@ -456,6 +458,11 @@ export class TauriPlatformCapabilities implements PlatformCapabilities {
   async writeClipboard(text: string): Promise<void> {
     this.require("writeClipboard");
     await this.operations.writeClipboardText(text);
+  }
+
+  async writeClipboardHtml(html: string, altText: string): Promise<void> {
+    this.require("writeClipboard");
+    await this.operations.writeClipboardHtml(html, altText);
   }
 
   async downloadFile(request: DownloadFileRequest): Promise<boolean> {

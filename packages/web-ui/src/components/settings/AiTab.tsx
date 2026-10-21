@@ -39,6 +39,7 @@ import {
   AnthropicIcon,
   MiniMaxIcon,
   OpenRouterIcon,
+  RequestyIcon,
   OllamaIcon,
 } from "../icons/ClientIcons";
 
@@ -71,6 +72,11 @@ const PROVIDERS: Array<{
     id: "openrouter",
     label: "OpenRouter",
     icon: <OpenRouterIcon size={18} className="text-[#9b6dff]" />,
+  },
+  {
+    id: "requesty",
+    label: "Requesty",
+    icon: <RequestyIcon size={18} className="text-current" />,
   },
   {
     id: "ollama",
@@ -139,17 +145,23 @@ export function AiTab() {
 
   const checkKeys = useCallback(async () => {
     try {
-      const [openai, anthropic, openrouter, minimax, customOpenai] =
+      const [openai, anthropic, openrouter, requesty, minimax, customOpenai] =
         await Promise.all(
-          ["openai", "anthropic", "openrouter", "minimax", "custom-openai"].map(
-            (provider) => client.call("check_ai_key_status", { provider }),
-          ),
+          [
+            "openai",
+            "anthropic",
+            "openrouter",
+            "requesty",
+            "minimax",
+            "custom-openai",
+          ].map((provider) => client.call("check_ai_key_status", { provider })),
         );
       const ollama = { configured: true, fromEnv: false };
       setAiKeyStatus({
         openai,
         anthropic,
         openrouter,
+        requesty,
         minimax,
         "custom-openai": customOpenai,
         ollama,

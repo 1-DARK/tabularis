@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSqlFileTab,
+  getSavedQueryExportFileName,
   getSqlFileName,
   hasUnsavedSqlFileTabs,
   isSqlFileDirty,
@@ -91,4 +92,40 @@ describe("sqlFile", () => {
       expect(hasUnsavedSqlFileTabs(tabs, ["clean", "console"])).toBe(false);
     });
   });
+
+  describe("getSavedQueryExportFileName", () => {
+    it("appends .sql to standard query names", () => {
+      expect(getSavedQueryExportFileName("Active Users")).toBe("Active Users.sql");
+      expect(getSavedQueryExportFileName("monthly_revenue")).toBe("monthly_revenue.sql");
+    });
+
+    it("preserves existing .sql, .psql and .pgsql extensions without duplicating them", () => {
+      expect(getSavedQueryExportFileName("report.sql")).toBe("report.sql");
+      expect(getSavedQueryExportFileName("REPORT.SQL")).toBe("REPORT.sql");
+      expect(getSavedQueryExportFileName("schema.pgsql")).toBe("schema.pgsql");
+      expect(getSavedQueryExportFileName("trigger.psql")).toBe("trigger.psql");
+    });
+
+    it("sanitizes invalid and reserved characters across platforms", () => {
+      expect(getSavedQueryExportFileName("sales/2026:report*")).toBe("sales_2026_report_.sql");
+      expect(getSavedQueryExportFileName("CON")).toBe("CON_.sql");
+      expect(getSavedQueryExportFileName("nul.sql")).toBe("nul_.sql");
+      expect(getSavedQueryExportFileName("query\nwith\ttab")).toBe("query_with_tab.sql");
+    });
+
+    it("supports Unicode characters in query names", () => {
+      expect(getSavedQueryExportFileName("用户查询")).toBe("用户查询.sql");
+      expect(getSavedQueryExportFileName("クエリ")).toBe("クエリ.sql");
+    });
+
+    it("falls back to a default name for empty, blank, or invalid names", () => {
+      expect(getSavedQueryExportFileName("")).toBe("query.sql");
+      expect(getSavedQueryExportFileName("   ")).toBe("query.sql");
+      expect(getSavedQueryExportFileName(null)).toBe("query.sql");
+      expect(getSavedQueryExportFileName(undefined)).toBe("query.sql");
+      expect(getSavedQueryExportFileName(".sql")).toBe("query.sql");
+      expect(getSavedQueryExportFileName("///:::***")).toBe("query.sql");
+    });
+  });
 });
+

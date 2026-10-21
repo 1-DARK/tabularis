@@ -26,6 +26,7 @@ import {
   downloadNotebook,
   downloadNotebookHtml,
 } from "../../utils/notebookTransfer";
+import { isTypingTarget } from "../../utils/keyboardEvents";
 import {
   getExecutableCells,
   createRunAllResult,
@@ -33,7 +34,11 @@ import {
   addFailure,
   addSkipped,
 } from "../../utils/notebookRunAll";
-import { resolveQueryVariables, findUnresolvedDependencies } from "../../utils/notebookVariables";
+import {
+  resolveQueryVariables,
+  findUnresolvedDependencies,
+  variableOptionsForDriver,
+} from "../../utils/notebookVariables";
 import { resolveParams } from "../../utils/notebookParams";
 import {
   addHistoryEntry,
@@ -94,10 +99,8 @@ export function NotebookView({
   const { activeSchema, activeCapabilities, selectedDatabases, activeDriver } =
     useDatabase();
   const variableOptions = useMemo(
-    () => ({
-      escapeBackslashes: activeDriver === "mysql" || activeDriver === "mariadb",
-    }),
-    [activeDriver],
+    () => variableOptionsForDriver(activeCapabilities ?? activeDriver, activeDriver),
+    [activeCapabilities, activeDriver],
   );
   const isMultiDb = usesMultiDatabaseLayout(activeCapabilities, selectedDatabases);
   const effectiveSchema =
@@ -750,13 +753,7 @@ export function NotebookView({
 
       // Defer to a focused cell editor / input so their own undo keeps working.
       const el = document.activeElement as HTMLElement | null;
-      if (
-        el &&
-        (el.closest(".monaco-editor") ||
-          el.tagName === "INPUT" ||
-          el.tagName === "TEXTAREA" ||
-          el.isContentEditable)
-      ) {
+      if (el && (el.closest(".monaco-editor") || isTypingTarget(el))) {
         return;
       }
 

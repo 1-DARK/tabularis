@@ -16,6 +16,14 @@ import {
 import type { DialectOptions, Statement } from './index';
 import type { TokenizerState } from './tokenizer';
 import { scanToken } from './tokenizer';
+import {
+  createScriptBlockState,
+  isInsideBlock,
+  onScriptPunctuation,
+  onStatementDelimiter,
+  resetScriptBlockState,
+  scanScriptWord,
+} from './scriptBlocks';
 
 interface RawSegment {
   readonly start: number;
@@ -53,7 +61,7 @@ export function splitInto(
   const segments = collectSegments(sql, options, batchOnly);
   const foldedBlocks = options.plsqlBlocks ? foldBlocks(sql, segments) : segments;
   const folded = foldComments(foldedBlocks);
-  return folded.map((group) => buildStatement(sql, group));
+  return folded.map((group) => buildStatement(sql, group, options));
 }
 
 function collectSegments(
@@ -62,6 +70,7 @@ function collectSegments(
   batchOnly: boolean,
 ): RawSegment[] {
   const state: TokenizerState = { delimiter: ';', lineLeading: true };
+  const blocks = options.scriptBlocks ? createScriptBlockState() : null;
   const segments: RawSegment[] = [];
   let segStart = 0;
   let hasMeaningful = false;
@@ -81,11 +90,17 @@ function collectSegments(
       case 'goDelimiter':
       case 'slashDelimiter':
         // Batch mode: `;` ends a statement, not a batch — keep it inline.
-        if (batchOnly && token.kind === 'delimiter') {
+        // Same for a `;` inside an open GoogleSQL procedural block.
+        if (
+          token.kind === 'delimiter' &&
+          (batchOnly || (blocks !== null && isInsideBlock(blocks)))
+        ) {
+          if (blocks !== null) onStatementDelimiter(blocks);
           position += token.length;
           state.lineLeading = false;
           break;
         }
+        if (blocks !== null) resetScriptBlockState(blocks);
         pushSegment(position, token.kind);
         position += token.length;
         segStart = position;
@@ -101,11 +116,23 @@ function collectSegments(
         state.lineLeading = false;
         break;
       case 'string':
-      case 'data':
+      case 'data': {
         hasMeaningful = true;
-        position += token.length;
         state.lineLeading = false;
+        if (blocks !== null) {
+          const wordLength =
+            token.kind === 'data'
+              ? scanScriptWord(sql, position, options, blocks)
+              : 0;
+          if (wordLength > 0) {
+            position += wordLength;
+            break;
+          }
+          onScriptPunctuation(blocks, sql[position]);
+        }
+        position += token.length;
         break;
+      }
       case 'lineComment':
       case 'blockComment':
         position += token.length;
@@ -333,12 +360,18 @@ function foldComments(segments: ReadonlyArray<RawSegment>): FoldedGroup[] {
   return output;
 }
 
-function buildStatement(sql: string, group: FoldedGroup): Statement {
+function buildStatement(
+  sql: string,
+  group: FoldedGroup,
+  options: DialectOptions,
+): Statement {
   const text = group.spans
     .map((s) => sql.slice(s.start, s.end))
     .join('')
     .trim();
-  const keyword = leadingKeyword(text);
+  // A leading `#` line is a comment only where the dialect lexes it as one
+  // (MySQL/MariaDB); elsewhere it is code, e.g. PostgreSQL's `#` operator.
+  const keyword = leadingKeyword(text, { hashComments: options.hashComments });
   const [start, end] = trimRange(sql, group.meaningful.start, group.meaningful.end);
   return {
     text,

@@ -1,7 +1,27 @@
 import type { Tab } from "../types/editor";
+import { sanitizeFileNamePart } from "./exportFileName";
 
 export function getSqlFileName(filePath: string): string {
   return filePath.split(/[/\\]/).filter(Boolean).pop() ?? "SQL File";
+}
+
+/**
+ * Derives a safe, filesystem-friendly suggested filename for exporting a saved
+ * query as a SQL file. Strips any existing .sql, .psql, or .pgsql extension,
+ * sanitizes invalid and reserved characters across Windows, macOS, and Linux,
+ * and preserves valid extensions (defaulting to .sql).
+ */
+export function getSavedQueryExportFileName(name?: string | null): string {
+  if (!name) return "query.sql";
+  const trimmed = name.trim();
+  const extMatch = trimmed.match(/\.(sql|psql|pgsql)$/i);
+  const ext = extMatch ? extMatch[1].toLowerCase() : "sql";
+  const baseName = extMatch ? trimmed.slice(0, extMatch.index) : trimmed;
+  const safeBase = sanitizeFileNamePart(baseName);
+  if (!safeBase) {
+    return `query.${ext}`;
+  }
+  return `${safeBase}.${ext}`;
 }
 
 export function createSqlFileTab(

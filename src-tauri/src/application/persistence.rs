@@ -288,6 +288,7 @@ fn merge_config(existing: &mut AppConfig, update: AppConfig) {
         column_masking_patterns,
         result_zebra_stripes,
         row_editor_follow_selection,
+        group_sidebar_connections_by_folder,
         sticky_column_headers,
         default_sort_direction,
         plugin_shutdown_grace_seconds,

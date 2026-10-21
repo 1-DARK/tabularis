@@ -24,8 +24,23 @@ export const QueryHistoryProvider = ({
   activeConnectionIdRef.current = activeConnectionId;
   const [entries, setEntries] = useState<QueryHistoryEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  // Session-only pause toggle: survives opening/closing the history section
+  // within the same provider session, and restores capture on app restart.
+  const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
   const [recoveryNotice, setRecoveryNotice] =
     useState<QueryHistoryRecoveryNotice | null>(null);
+
+  const setPaused = useCallback((paused: boolean) => {
+    isPausedRef.current = paused;
+    setIsPaused(paused);
+  }, []);
+
+  const togglePaused = useCallback(() => {
+    const next = !isPausedRef.current;
+    isPausedRef.current = next;
+    setIsPaused(next);
+  }, []);
 
   const refreshHistory = useCallback(async () => {
     const connectionId = activeConnectionIdRef.current;
@@ -74,7 +89,7 @@ export const QueryHistoryProvider = ({
       database?: string | null,
     ) => {
       const connectionId = activeConnectionId;
-      if (!connectionId) return;
+      if (!connectionId || isPausedRef.current) return;
       try {
         const entry = await client.call("add_query_history_entry", {
           connectionId,
@@ -137,6 +152,9 @@ export const QueryHistoryProvider = ({
       value={{
         entries,
         isLoading,
+        isPaused,
+        setPaused,
+        togglePaused,
         recoveryNotice,
         dismissRecoveryNotice,
         addEntry,

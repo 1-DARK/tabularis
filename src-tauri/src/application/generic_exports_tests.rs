@@ -80,6 +80,7 @@ async fn large_query_exports_stream_through_disk_backed_single_use_downloads() {
                 id: "large-export".to_string(),
                 name: "Large export".to_string(),
                 params,
+                plugin_secret_keys: Vec::new(),
                 group_id: None,
                 sort_order: None,
                 detect_json_in_text_columns: None,

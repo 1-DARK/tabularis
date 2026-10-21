@@ -12,6 +12,7 @@ import { useEditor } from "../../../src/hooks/useEditor";
 import { useSettings } from "../../../src/hooks/useSettings";
 import { useDatabaseObjectNavigation } from "../../../src/hooks/useDatabaseObjectNavigation";
 import { openEditor } from "../../../src/utils/editorNavigation";
+import { FOLDERS_FILE_UNREADABLE } from "../../../src/utils/savedQueryFolders";
 
 const translateMock = vi.hoisted(() => (key: string) => key);
 const toastSpy = vi.hoisted(() => vi.fn());
@@ -163,6 +164,7 @@ describe("ExplorerSidebar — schema load error block", () => {
 
     vi.mocked(useSavedQueries).mockReturnValue({
       queries: [],
+      folders: [],
       deleteQuery: vi.fn(),
       updateQuery: vi.fn(),
       saveQuery: vi.fn(),
@@ -299,6 +301,7 @@ describe("ExplorerSidebar — database object navigation", () => {
 
     vi.mocked(useSavedQueries).mockReturnValue({
       queries: [],
+      folders: [],
       deleteQuery: vi.fn(),
       updateQuery: vi.fn(),
       saveQuery: vi.fn(),
@@ -742,6 +745,7 @@ describe("ExplorerSidebar — capabilities threading (issue #614)", () => {
 
     vi.mocked(useSavedQueries).mockReturnValue({
       queries: [],
+      folders: [],
       deleteQuery: vi.fn(),
       updateQuery: vi.fn(),
       saveQuery: vi.fn(),
@@ -844,6 +848,7 @@ describe("ExplorerSidebar — saved query actions", () => {
     } as unknown as ReturnType<typeof useDatabase>);
     vi.mocked(useSavedQueries).mockReturnValue({
       queries: [savedQuery],
+      folders: [],
       saveQuery,
       deleteQuery: vi.fn(),
       updateQuery: vi.fn(),
@@ -986,5 +991,327 @@ describe("ExplorerSidebar — saved query actions", () => {
       });
       expect(request.schema).toBeUndefined();
     }
+  });
+
+  describe("folders", () => {
+    const folderRef = { id: "f1", connection_id: "c1", name: "Reports", created_at: null };
+    const filed = { ...savedQuery, id: "q2", name: "Monthly", sql: "SELECT 1 AS monthly", folder_id: "f1" };
+    const createFolder = vi.fn();
+    const deleteFolder = vi.fn();
+    const renameFolder = vi.fn();
+    const moveQuery = vi.fn();
+
+    const renderWithFolders = (
+      queries: unknown[] = [savedQuery, filed],
+      folders: unknown[] = [folderRef],
+    ) => {
+      vi.mocked(useSavedQueries).mockReturnValue({
+        queries,
+        folders,
+        saveQuery,
+        deleteQuery: vi.fn(),
+        updateQuery: vi.fn(),
+        createFolder,
+        renameFolder,
+        deleteFolder,
+        moveQuery,
+      } as unknown as ReturnType<typeof useSavedQueries>);
+      renderFavorites();
+    };
+
+    beforeEach(() => {
+      createFolder.mockReset().mockResolvedValue(undefined);
+      deleteFolder.mockReset().mockResolvedValue(undefined);
+      renameFolder.mockReset().mockResolvedValue(undefined);
+      moveQuery.mockReset().mockResolvedValue(undefined);
+    });
+
+    it("keeps the flat unfiled list when there are no folders", () => {
+      renderWithFolders([savedQuery], []);
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+      expect(screen.queryByText("sidebar.unfiled")).toBeNull();
+      expect(screen.getByLabelText("sidebar.newFolder")).toBeTruthy();
+    });
+
+    it("groups queries under their folder and leaves the rest unfiled", () => {
+      renderWithFolders();
+      const header = screen.getByRole("button", { name: /^Reports/, expanded: true });
+      expect(header.textContent).toContain("1");
+      expect(screen.getByText("Monthly")).toBeTruthy();
+      expect(screen.getByText("sidebar.unfiled")).toBeTruthy();
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+    });
+
+    it("collapses and expands a folder", () => {
+      renderWithFolders();
+      fireEvent.click(screen.getByRole("button", { name: /^Reports/, expanded: true }));
+      expect(screen.queryByText("Monthly")).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: /^Reports/, expanded: false }));
+      expect(screen.getByText("Monthly")).toBeTruthy();
+    });
+
+    it("shows a folder that only exists as an empty folder", () => {
+      renderWithFolders([], [folderRef]);
+      expect(screen.getByRole("button", { name: /^Reports/ })).toBeTruthy();
+      expect(screen.queryByText("sidebar.noSavedQueries")).toBeNull();
+    });
+
+    it("treats a query pointing at a missing folder as unfiled", () => {
+      renderWithFolders([{ ...savedQuery, folder_id: "gone" }], [folderRef]);
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+    });
+
+    it("searches across folders and shows each result's location", () => {
+      renderWithFolders();
+      fireEvent.change(screen.getByPlaceholderText("sidebar.searchFavorites"), {
+        target: { value: "select 1" },
+      });
+      expect(screen.getByText("Monthly")).toBeTruthy();
+      expect(screen.queryByText("Cleanup")).toBeNull();
+      expect(screen.getAllByText("Reports").length).toBe(1);
+
+      fireEvent.change(screen.getByPlaceholderText("sidebar.searchFavorites"), {
+        target: { value: "audit" },
+      });
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+      expect(screen.getByText("sidebar.unfiled")).toBeTruthy();
+    });
+
+    it("refuses to delete a non-empty folder and explains why", () => {
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.deleteFolder: Reports"));
+      expect(toastSpy).toHaveBeenCalledWith("sidebar.folderNotEmpty", { kind: "error" });
+      expect(screen.queryByText("sidebar.confirmDeleteFolder")).toBeNull();
+      expect(deleteFolder).not.toHaveBeenCalled();
+    });
+
+    it("deletes an empty folder after confirmation", async () => {
+      renderWithFolders([savedQuery], [folderRef]);
+      fireEvent.click(screen.getByLabelText("sidebar.deleteFolder: Reports"));
+      expect(deleteFolder).not.toHaveBeenCalled();
+      expect(screen.getByText("sidebar.confirmDeleteFolder")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+      await waitFor(() => expect(deleteFolder).toHaveBeenCalledWith("f1"));
+    });
+
+    it("creates a folder from the name dialog and validates the name first", async () => {
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      const input = screen.getByLabelText("sidebar.folderName");
+
+      fireEvent.change(input, { target: { value: "   " } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+      expect(screen.getByRole("alert").textContent).toBe("sidebar.folderNameEmpty");
+      expect(createFolder).not.toHaveBeenCalled();
+
+      fireEvent.change(input, { target: { value: "reports" } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+      expect(screen.getByRole("alert").textContent).toBe("sidebar.folderNameDuplicate");
+
+      fireEvent.change(input, { target: { value: "  Ops  " } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+      await waitFor(() => expect(createFolder).toHaveBeenCalledWith("Ops"));
+    });
+
+    it("renames a folder, prefilling the dialog and showing backend errors", async () => {
+      renameFolder.mockRejectedValueOnce(new Error("Folder not found"));
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.renameFolder: Reports"));
+      const input = screen.getByLabelText("sidebar.folderName") as HTMLInputElement;
+      expect(input.value).toBe("Reports");
+
+      fireEvent.change(input, { target: { value: "Ops" } });
+      fireEvent.click(screen.getByText("sidebar.renameFolderAction"));
+      await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("Folder not found"));
+      expect(renameFolder).toHaveBeenCalledWith("f1", "Ops");
+
+      fireEvent.click(screen.getByText("sidebar.renameFolderAction"));
+      await waitFor(() => expect(renameFolder).toHaveBeenCalledTimes(2));
+    });
+
+    it("titles the delete-folder confirmation for folders, not queries", () => {
+      renderWithFolders([savedQuery], [folderRef]);
+      fireEvent.click(screen.getByLabelText("sidebar.deleteFolder: Reports"));
+      expect(screen.getByText("sidebar.confirmDeleteFolderTitle")).toBeTruthy();
+      expect(screen.queryByText("sidebar.confirmDeleteTitle")).toBeNull();
+    });
+
+    it("starts the folder dialog fresh each time it opens", () => {
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      fireEvent.change(screen.getByLabelText("sidebar.folderName"), { target: { value: "Draft" } });
+      fireEvent.click(screen.getByText("common.cancel"));
+
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      expect((screen.getByLabelText("sidebar.folderName") as HTMLInputElement).value).toBe("");
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("shows the backend's message when creating a folder fails", async () => {
+      createFolder.mockRejectedValueOnce(new Error("The saved query folders file is unreadable."));
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      fireEvent.change(screen.getByLabelText("sidebar.folderName"), { target: { value: "Ops" } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toBe("The saved query folders file is unreadable."),
+      );
+    });
+
+    it("shows a translated message when the folders file is unreadable", async () => {
+      createFolder.mockRejectedValueOnce(FOLDERS_FILE_UNREADABLE);
+      renderWithFolders();
+      fireEvent.click(screen.getByLabelText("sidebar.newFolder"));
+      fireEvent.change(screen.getByLabelText("sidebar.folderName"), { target: { value: "Ops" } });
+      fireEvent.click(screen.getByText("sidebar.createFolderAction"));
+
+      await waitFor(() =>
+        expect(screen.getByRole("alert").textContent).toBe("sidebar.foldersFileUnreadable"),
+      );
+    });
+
+    it("shows a translated message when deleting fails on an unreadable folders file", async () => {
+      deleteFolder.mockRejectedValueOnce(FOLDERS_FILE_UNREADABLE);
+      renderWithFolders([savedQuery], [folderRef]);
+      fireEvent.click(screen.getByLabelText("sidebar.deleteFolder: Reports"));
+      fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+
+      await waitFor(() =>
+        expect(toastSpy).toHaveBeenCalledWith(
+          "sidebar.folderActionFailed: sidebar.foldersFileUnreadable",
+          { kind: "error" },
+        ),
+      );
+    });
+
+    it("preselects the query's current folder when the move dialog opens", () => {
+      renderWithFolders();
+      fireEvent.contextMenu(screen.getByText("Monthly"));
+      fireEvent.click(screen.getByText("sidebar.moveToFolder"));
+      expect(screen.getByText("sidebar.moveAction").closest("button")!.disabled).toBe(true);
+      fireEvent.click(screen.getByText("common.cancel"));
+
+      fireEvent.contextMenu(screen.getByText("Cleanup"));
+      fireEvent.click(screen.getByText("sidebar.moveToFolder"));
+      expect(screen.getByText("sidebar.unfiledFolderOption")).toBeTruthy();
+    });
+
+    it("moves a query from its context menu", async () => {
+      renderWithFolders();
+      fireEvent.contextMenu(screen.getByText("Cleanup"));
+      fireEvent.click(screen.getByText("sidebar.moveToFolder"));
+
+      fireEvent.click(screen.getByText("sidebar.unfiledFolderOption"));
+      fireEvent.click(screen.getAllByText("Reports").at(-1)!);
+      fireEvent.click(screen.getByText("sidebar.moveAction"));
+
+      await waitFor(() => expect(moveQuery).toHaveBeenCalledWith("q1", "f1"));
+    });
+
+    it("shows the SQL excerpt on rows that also show their folder location", () => {
+      const deep = {
+        ...filed,
+        sql: "SELECT id\nFROM orders\nWHERE status = 'shipped'",
+      };
+      renderWithFolders([savedQuery, deep], [folderRef]);
+      fireEvent.change(screen.getByPlaceholderText("sidebar.searchFavorites"), {
+        target: { value: "SHIPPED" },
+      });
+
+      const row = screen.getByText("Monthly").closest("button")!;
+      expect(row.textContent).toContain("Reports");
+      const mark = row.querySelector("mark");
+      expect(mark?.textContent).toBe("shipped");
+      expect(mark?.parentElement?.textContent).toBe("WHERE status = 'shipped'");
+
+      const unfiledRow = screen.queryByText("Cleanup");
+      expect(unfiledRow).toBeNull();
+    });
+
+    it("shows the excerpt on unfiled results next to their Unfiled label", () => {
+      renderWithFolders();
+      fireEvent.change(screen.getByPlaceholderText("sidebar.searchFavorites"), {
+        target: { value: "archived" },
+      });
+      const row = screen.getByText("Cleanup").closest("button")!;
+      expect(row.textContent).toContain("sidebar.unfiled");
+      expect(row.querySelector("mark")?.textContent).toBe("archived");
+    });
+
+    it("does not show an excerpt on folder rows when not searching", () => {
+      renderWithFolders();
+      expect(document.querySelector("mark")).toBeNull();
+    });
+
+    it("replays a filed query with its saved database", () => {
+      renderWithFolders();
+      fireEvent.doubleClick(screen.getByText("Monthly").closest("button")!);
+      expect(openEditor).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          initialQuery: "SELECT 1 AS monthly",
+          database: "analytics",
+          preventAutoRun: false,
+        }),
+      );
+    });
+  });
+
+  describe("favorites search excerpt", () => {
+    const multiline = {
+      ...savedQuery,
+      id: "q2",
+      name: "Report",
+      sql: "SELECT id\nFROM orders\nWHERE note = '<img src=x onerror=alert(1)>'",
+    };
+
+    const renderWithQueries = () => {
+      vi.mocked(useSavedQueries).mockReturnValue({
+        queries: [savedQuery, multiline],
+        folders: [],
+        saveQuery,
+        deleteQuery: vi.fn(),
+        updateQuery: vi.fn(),
+      } as unknown as ReturnType<typeof useSavedQueries>);
+      renderFavorites();
+    };
+
+    const search = (value: string) =>
+      fireEvent.change(screen.getByPlaceholderText("sidebar.searchFavorites"), {
+        target: { value },
+      });
+
+    it("shows the matching line, highlighted and as plain text", () => {
+      renderWithQueries();
+      search("<IMG SRC");
+
+      const mark = screen.getByText("<img src", { selector: "mark" });
+      expect(mark.tagName).toBe("MARK");
+      expect(mark.parentElement?.textContent).toContain(
+        "WHERE note = '<img src=x onerror=alert(1)>'",
+      );
+      expect(document.querySelector("img")).toBeNull();
+      expect(screen.queryByText("Cleanup")).toBeNull();
+    });
+
+    it("keeps name-only matches with their default preview", () => {
+      renderWithQueries();
+      search("cleanup");
+
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+      expect(document.querySelector("mark")).toBeNull();
+    });
+
+    it("restores the default list when the search is cleared", () => {
+      renderWithQueries();
+      search("orders");
+      expect(document.querySelector("mark")).not.toBeNull();
+
+      search("");
+      expect(document.querySelector("mark")).toBeNull();
+      expect(screen.getByText("Cleanup")).toBeTruthy();
+      expect(screen.getByText("Report")).toBeTruthy();
+    });
   });
 });

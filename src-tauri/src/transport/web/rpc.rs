@@ -300,6 +300,11 @@ enum ProductivityRpcCommand {
     SaveQuery,
     UpdateSavedQuery,
     DeleteSavedQuery,
+    GetSavedQueryFolders,
+    CreateSavedQueryFolder,
+    RenameSavedQueryFolder,
+    DeleteSavedQueryFolder,
+    MoveSavedQuery,
     GetQueryHistory,
     AddQueryHistoryEntry,
     DeleteQueryHistoryEntry,
@@ -352,6 +357,8 @@ enum RecordRpcCommand {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DatabaseObjectRpcCommand {
     GetTableQueryTemplate,
+    GetColumnStats,
+    GetDropTableSql,
     GetDataTypes,
     MapInferredColumnTypes,
     ExecuteClipboardImport,
@@ -907,6 +914,7 @@ struct RoutineTemplateRequest {
     connection_id: String,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -935,6 +943,7 @@ struct CreateTableSqlRequest {
     table_name: String,
     columns: Vec<ColumnDefinition>,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -944,6 +953,7 @@ struct AddColumnSqlRequest {
     table: String,
     column: ColumnDefinition,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -954,6 +964,7 @@ struct AlterColumnSqlRequest {
     old_column: ColumnDefinition,
     new_column: ColumnDefinition,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -965,6 +976,7 @@ struct CreateIndexSqlRequest {
     columns: Vec<String>,
     is_unique: bool,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -979,6 +991,7 @@ struct CreateForeignKeySqlRequest {
     on_delete: Option<String>,
     on_update: Option<String>,
     schema: Option<String>,
+    database: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1175,6 +1188,7 @@ struct DetectMimeTypeRequest {
 struct SaveConnectionRequest {
     name: String,
     params: ConnectionParams,
+    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
     detect_json_in_text_columns: Option<bool>,
     environment: Option<String>,
 }
@@ -1185,6 +1199,7 @@ struct UpdateConnectionRequest {
     id: String,
     name: String,
     params: ConnectionParams,
+    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
     detect_json_in_text_columns: Option<bool>,
     environment: Option<String>,
 }
@@ -1742,6 +1757,7 @@ impl RpcDispatcher {
                         ConnectionCommand::SaveConnection {
                             name,
                             params,
+                            plugin_secret_changes: None,
                             detect_json_in_text_columns: None,
                             environment: None,
                         },
@@ -2350,6 +2366,11 @@ impl ProductivityRpcCommand {
             "save_query" => Self::SaveQuery,
             "update_saved_query" => Self::UpdateSavedQuery,
             "delete_saved_query" => Self::DeleteSavedQuery,
+            "get_saved_query_folders" => Self::GetSavedQueryFolders,
+            "create_saved_query_folder" => Self::CreateSavedQueryFolder,
+            "rename_saved_query_folder" => Self::RenameSavedQueryFolder,
+            "delete_saved_query_folder" => Self::DeleteSavedQueryFolder,
+            "move_saved_query" => Self::MoveSavedQuery,
             "get_query_history" => Self::GetQueryHistory,
             "add_query_history_entry" => Self::AddQueryHistoryEntry,
             "delete_query_history_entry" => Self::DeleteQueryHistoryEntry,
@@ -2444,6 +2465,8 @@ impl DatabaseObjectRpcCommand {
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "get_table_query_template" => Self::GetTableQueryTemplate,
+            "get_column_stats" => Self::GetColumnStats,
+            "get_drop_table_sql" => Self::GetDropTableSql,
             "get_data_types" => Self::GetDataTypes,
             "map_inferred_column_types" => Self::MapInferredColumnTypes,
             "execute_clipboard_import" => Self::ExecuteClipboardImport,
@@ -3078,6 +3101,42 @@ fn decode_productivity_command(
                 id: request.id,
             }
         }
+        ProductivityRpcCommand::GetSavedQueryFolders => {
+            let request: ConnectionIdRequest = decode_payload(body)?;
+            ProductivityCommand::GetSavedQueryFolders {
+                connection_id: request.connection_id,
+            }
+        }
+        ProductivityRpcCommand::CreateSavedQueryFolder => {
+            let request: CreateSavedQueryFolderRequest = decode_payload(body)?;
+            ProductivityCommand::CreateSavedQueryFolder {
+                connection_id: request.connection_id,
+                name: request.name,
+            }
+        }
+        ProductivityRpcCommand::RenameSavedQueryFolder => {
+            let request: RenameSavedQueryFolderRequest = decode_payload(body)?;
+            ProductivityCommand::RenameSavedQueryFolder {
+                connection_id: Some(request.connection_id),
+                id: request.id,
+                name: request.name,
+            }
+        }
+        ProductivityRpcCommand::DeleteSavedQueryFolder => {
+            let request: ConnectionItemRequest = decode_payload(body)?;
+            ProductivityCommand::DeleteSavedQueryFolder {
+                connection_id: Some(request.connection_id),
+                id: request.id,
+            }
+        }
+        ProductivityRpcCommand::MoveSavedQuery => {
+            let request: MoveSavedQueryRequest = decode_payload(body)?;
+            ProductivityCommand::MoveSavedQuery {
+                connection_id: Some(request.connection_id),
+                id: request.id,
+                folder_id: request.folder_id,
+            }
+        }
         ProductivityRpcCommand::GetQueryHistory => {
             let request: ConnectionIdRequest = decode_payload(body)?;
             ProductivityCommand::GetQueryHistory {
@@ -3325,6 +3384,23 @@ fn decode_database_object_command(
     body: &[u8],
 ) -> Result<DatabaseObjectCommand, String> {
     Ok(match command {
+        DatabaseObjectRpcCommand::GetColumnStats => {
+            let request: ColumnStatsRpcRequest = decode_payload(body)?;
+            DatabaseObjectCommand::GetColumnStats {
+                connection_id: request.connection_id,
+                request: request.request,
+                database: request.database,
+            }
+        }
+        DatabaseObjectRpcCommand::GetDropTableSql => {
+            let request: DropTableSqlRequest = decode_payload(body)?;
+            DatabaseObjectCommand::GetDropTableSql {
+                connection_id: request.connection_id,
+                table: request.table,
+                schema: request.schema,
+                database: request.database,
+            }
+        }
         DatabaseObjectRpcCommand::GetTableQueryTemplate => {
             let request: TableQueryTemplateRequest = decode_payload(body)?;
             DatabaseObjectCommand::GetTableQueryTemplate {
@@ -3463,6 +3539,7 @@ fn decode_database_object_command(
                 connection_id: request.connection_id,
                 routine_type: request.routine_type,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetTriggerDefinition | DatabaseObjectRpcCommand::DropTrigger => {
@@ -3501,6 +3578,7 @@ fn decode_database_object_command(
                 table_name: request.table_name,
                 columns: request.columns,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetAddColumnSql => {
@@ -3510,6 +3588,7 @@ fn decode_database_object_command(
                 table: request.table,
                 column: request.column,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetAlterColumnSql => {
@@ -3520,6 +3599,7 @@ fn decode_database_object_command(
                 old_column: request.old_column,
                 new_column: request.new_column,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetCreateIndexSql => {
@@ -3531,6 +3611,7 @@ fn decode_database_object_command(
                 columns: request.columns,
                 is_unique: request.is_unique,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::GetCreateForeignKeySql => {
@@ -3545,6 +3626,7 @@ fn decode_database_object_command(
                 on_delete: request.on_delete,
                 on_update: request.on_update,
                 schema: request.schema,
+                database: request.database,
             }
         }
         DatabaseObjectRpcCommand::DropIndex => {
@@ -3960,6 +4042,7 @@ fn decode_connection_command(
             ConnectionCommand::SaveConnection {
                 name: request.name,
                 params: request.params,
+                plugin_secret_changes: request.plugin_secret_changes,
                 detect_json_in_text_columns: request.detect_json_in_text_columns,
                 environment: request.environment,
             }
@@ -3970,6 +4053,7 @@ fn decode_connection_command(
                 id: request.id,
                 name: request.name,
                 params: request.params,
+                plugin_secret_changes: request.plugin_secret_changes,
                 detect_json_in_text_columns: request.detect_json_in_text_columns,
                 environment: request.environment,
             }
@@ -4249,6 +4333,46 @@ fn failure(
 #[cfg(test)]
 #[path = "rpc_tests.rs"]
 mod tests;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CreateSavedQueryFolderRequest {
+    connection_id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RenameSavedQueryFolderRequest {
+    connection_id: String,
+    id: String,
+    name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct MoveSavedQueryRequest {
+    connection_id: String,
+    id: String,
+    folder_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ColumnStatsRpcRequest {
+    connection_id: String,
+    request: crate::models::ColumnStatsRequest,
+    database: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DropTableSqlRequest {
+    connection_id: String,
+    table: String,
+    schema: Option<String>,
+    database: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

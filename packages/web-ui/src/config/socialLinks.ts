@@ -6,6 +6,7 @@ import {
   XIcon,
   BlueskyIcon,
   MastodonIcon,
+  LinkedInIcon,
 } from "../components/icons/BrandIcons";
 
 interface SocialIconProps {
@@ -29,4 +30,5 @@ export const SOCIAL_LINKS: SocialLink[] = [
   { label: "X", href: LINKS.X, Icon: XIcon },
   { label: "Bluesky", href: LINKS.BLUESKY, Icon: BlueskyIcon },
   { label: "Mastodon", href: LINKS.MASTODON, Icon: MastodonIcon },
+  { label: "LinkedIn", href: LINKS.LINKEDIN, Icon: LinkedInIcon },
 ];

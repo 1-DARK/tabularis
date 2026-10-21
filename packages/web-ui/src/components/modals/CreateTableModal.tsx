@@ -81,12 +81,13 @@ export const CreateTableModal = ({ isOpen, onClose, onSuccess, schema, database 
         tableName,
         columns: colDefs,
         ...(targetSchema ? { schema: targetSchema } : {}),
+        ...(database ? { database } : {}),
       });
       setSqlPreview(stmts.map(s => s + ';').join('\n'));
     } catch (e) {
       setSqlPreview('-- ' + String(e));
     }
-  }, [client, tableName, columns, activeConnectionId, targetSchema, t]);
+  }, [client, tableName, columns, activeConnectionId, targetSchema, database, t]);
 
   useEffect(() => {
     const timer = setTimeout(generatePreview, 300);
@@ -141,6 +142,7 @@ export const CreateTableModal = ({ isOpen, onClose, onSuccess, schema, database 
           tableName,
           columns: colDefs,
           ...(targetSchema ? { schema: targetSchema } : {}),
+          ...(database ? { database } : {}),
         });
 
         for (const sql of stmts) {

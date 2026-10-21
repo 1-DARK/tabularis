@@ -56,11 +56,11 @@
     "literalCommandCount": 15,
     "literalCallSiteCount": 16,
     "dynamicCallSiteCount": 0,
-    "handlerRegistrationCount": 301,
-    "registeredCommandCount": 301,
+    "handlerRegistrationCount": 308,
+    "registeredCommandCount": 308,
     "duplicateHandlerRegistrations": [],
     "frontendCommandsMissingRegistration": [],
-    "registeredCommandsWithoutFrontendCall": 286
+    "registeredCommandsWithoutFrontendCall": 293
   },
   "commands": [
     {
@@ -115,7 +115,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 430
+          "line": 432
         }
       ]
     },
@@ -129,7 +129,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 106
+          "line": 107
         }
       ]
     },
@@ -143,7 +143,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 122
+          "line": 123
         }
       ]
     },
@@ -171,7 +171,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 407
+          "line": 409
         }
       ]
     },
@@ -199,7 +199,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 273
+          "line": 275
         }
       ]
     },
@@ -213,7 +213,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 290
+          "line": 292
         }
       ]
     },
@@ -227,7 +227,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 415
+          "line": 417
         }
       ]
     },
@@ -241,7 +241,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 289
+          "line": 291
         }
       ]
     },
@@ -255,7 +255,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 398
+          "line": 400
         }
       ]
     },
@@ -269,11 +269,11 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/contexts/DatabaseProvider.tsx",
-          "line": 171
+          "line": 181
         },
         {
           "file": "packages/web-ui/src/pages/Editor.tsx",
-          "line": 703
+          "line": 768
         }
       ]
     }
@@ -311,6 +311,7 @@
     "create_notebook",
     "create_personal_snapshot",
     "create_personal_theme",
+    "create_saved_query_folder",
     "create_sqlite_database",
     "create_sqlite_file",
     "create_trigger",
@@ -330,6 +331,7 @@
     "delete_query_history_entry",
     "delete_record",
     "delete_saved_query",
+    "delete_saved_query_folder",
     "delete_ssh_connection",
     "delete_ui_state",
     "detect_blob_mime",
@@ -382,6 +384,7 @@
     "get_cellname_prompt",
     "get_chatgpt_models",
     "get_chatgpt_session",
+    "get_column_stats",
     "get_columns",
     "get_config",
     "get_config_json",
@@ -400,6 +403,7 @@
     "get_db_user_privileges",
     "get_db_users",
     "get_driver_manifest",
+    "get_drop_table_sql",
     "get_explain_prompt",
     "get_explainplan_prompt",
     "get_file_stats",
@@ -435,6 +439,7 @@
     "get_routine_parameters",
     "get_routines",
     "get_saved_queries",
+    "get_saved_query_folders",
     "get_schema_preference",
     "get_schema_snapshot",
     "get_schemas",
@@ -479,6 +484,7 @@
     "map_inferred_column_types",
     "move_connection_to_group",
     "move_group_to_parent",
+    "move_saved_query",
     "open_chatgpt_usage",
     "open_devtools",
     "open_er_diagram_window",
@@ -500,6 +506,7 @@
     "register_active_connection",
     "release_query_session",
     "rename_notebook",
+    "rename_saved_query_folder",
     "reorder_connections_in_group",
     "reorder_groups",
     "reset_cellname_prompt",

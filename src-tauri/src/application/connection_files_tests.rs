@@ -47,6 +47,7 @@ fn fixture() -> (tempfile::TempDir, RuntimeContext, Arc<TestSecrets>) {
             id: "connection-1".to_string(),
             name: "Fixture".to_string(),
             params,
+            plugin_secret_keys: Vec::new(),
             group_id: None,
             sort_order: None,
             detect_json_in_text_columns: None,

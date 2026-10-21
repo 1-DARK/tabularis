@@ -29,103 +29,6 @@ impl crate::runtime::events::RuntimeEvents for RecordingEvents {
 }
 
 #[test]
-fn test_escape_sql_value() {
-    for driver in ["mysql", "postgres", "sqlite"] {
-        assert_eq!(escape_sql_value(driver, json!(null)), "NULL");
-        assert_eq!(escape_sql_value(driver, json!(123)), "123");
-        assert_eq!(escape_sql_value(driver, json!(12.34)), "12.34");
-        assert_eq!(escape_sql_value(driver, json!("hello")), "'hello'");
-        assert_eq!(escape_sql_value(driver, json!("O'Reilly")), "'O''Reilly'");
-        assert_eq!(
-            escape_sql_value(driver, json!("Multi\nLine")),
-            "'Multi\nLine'"
-        );
-    }
-}
-
-#[test]
-fn test_escape_sql_value_mysql_doubles_backslashes_and_escapes_nul() {
-    assert_eq!(
-        escape_sql_value("mysql", json!("Back\\slash")),
-        "'Back\\\\slash'"
-    );
-    assert_eq!(escape_sql_value("mysql", json!("a\u{0}b")), "'a\\0b'");
-    // A backslash followed by a quote must not collapse into `\'`.
-    assert_eq!(escape_sql_value("mysql", json!("\\'")), "'\\\\'''");
-}
-
-#[test]
-fn test_escape_sql_value_postgres_and_sqlite_keep_backslashes_literal() {
-    // With standard_conforming_strings (PostgreSQL) and in SQLite a
-    // backslash is an ordinary character; doubling it would re-import
-    // as two backslashes.
-    assert_eq!(
-        escape_sql_value("postgres", json!("Back\\slash")),
-        "'Back\\slash'"
-    );
-    assert_eq!(
-        escape_sql_value("sqlite", json!("Back\\slash")),
-        "'Back\\slash'"
-    );
-}
-
-#[test]
-fn test_escape_sql_value_nested_values_are_escaped_like_text() {
-    assert_eq!(
-        escape_sql_value("mysql", json!({"path": "a\\b"})),
-        r#"'{"path":"a\\\\b"}'"#
-    );
-    assert_eq!(
-        escape_sql_value("postgres", json!({"path": "a\\b"})),
-        r#"'{"path":"a\\b"}'"#
-    );
-}
-
-#[test]
-fn test_escape_json_column_value_mysql() {
-    // JSON escape sequences must survive MySQL's string-literal parser.
-    assert_eq!(
-        escape_json_column_value("mysql", json!({"html": "<a target=\"_blank\">"})),
-        r#"'{"html":"<a target=\\"_blank\\">"}'"#
-    );
-    assert_eq!(
-        escape_json_column_value("mysql", json!({"class": "App\\Jobs\\Foo"})),
-        r#"'{"class":"App\\\\Jobs\\\\Foo"}'"#
-    );
-    // A JSON string value keeps its quotes instead of degrading to its content.
-    assert_eq!(
-        escape_json_column_value("mysql", json!("\"[151, 152, 153]\"")),
-        r#"'"\\"[151, 152, 153]\\""'"#
-    );
-    // Scalars stay JSON scalars rather than becoming SQL 1/0.
-    assert_eq!(escape_json_column_value("mysql", json!(true)), "'true'");
-    assert_eq!(escape_json_column_value("mysql", json!(42)), "'42'");
-    assert_eq!(escape_json_column_value("mysql", json!(null)), "NULL");
-    // Non-ASCII is written as UTF-8 rather than \uXXXX, so nothing is
-    // left for escape processing to mangle on re-import.
-    assert_eq!(
-        escape_json_column_value("mysql", json!({"name": "中文"})),
-        r#"'{"name":"中文"}'"#
-    );
-}
-
-#[test]
-fn test_escape_json_column_value_postgres() {
-    assert_eq!(
-        escape_json_column_value("postgres", json!({"html": "<a target=\"_blank\">"})),
-        r#"'{"html":"<a target=\"_blank\">"}'"#
-    );
-    assert_eq!(
-        escape_json_column_value("postgres", json!("it's")),
-        r#"'"it''s"'"#
-    );
-    assert_eq!(
-        escape_json_column_value("postgres", json!(false)),
-        "'false'"
-    );
-}
-
-#[test]
 fn streams_sql_statements_and_ignores_line_comments() {
     let input = Cursor::new(
         b"-- dump header\nCREATE TABLE users (id INTEGER);\n\nINSERT INTO users VALUES (1);\n"
@@ -243,6 +146,11 @@ async fn session_cleanup_only_aborts_jobs_owned_by_that_session() {
     other_task.abort();
 }
 
+fn postgres_dialect() -> DumpDialect {
+    let pg = crate::drivers::postgres::PostgresDriver::new();
+    DumpDialect::from_capabilities("postgres", &pg.manifest().capabilities)
+}
+
 fn column(name: &str, data_type: &str) -> TableColumn {
     TableColumn {
         name: name.to_string(),
@@ -295,7 +203,7 @@ fn test_format_row_values_escapes_json_column_differently_from_plain_text() {
 
     let row = vec![json!("hi"), json!("hi")];
     assert_eq!(
-        format_row_values(row, &columns, &json_cols, "postgres"),
+        format_row_values(row, &columns, &json_cols, &postgres_dialect()),
         r#"('hi', '"hi"')"#
     );
 }
@@ -308,7 +216,7 @@ fn test_format_row_values_regression_json_object_and_null_round_trip() {
 
     let row = vec![json!(1), json!({"a": 1}), serde_json::Value::Null];
     assert_eq!(
-        format_row_values(row, &columns, &json_cols, "postgres"),
+        format_row_values(row, &columns, &json_cols, &postgres_dialect()),
         r#"(1, '{"a":1}', NULL)"#
     );
 }
@@ -348,28 +256,4 @@ fn test_plugin_dump_has_more_a_short_page_without_pagination_ends_the_fetch() {
 #[test]
 fn test_plugin_dump_has_more_an_empty_page_without_pagination_ends_the_fetch() {
     assert!(!plugin_dump_has_more(None, 0, 1000));
-}
-
-#[test]
-fn test_is_postgres_driver_matches_builtin_and_plugin_ids() {
-    assert!(is_postgres_driver("postgres"));
-    assert!(is_postgres_driver("postgresql"));
-}
-
-#[test]
-fn test_is_postgres_driver_rejects_other_drivers() {
-    assert!(!is_postgres_driver("mysql"));
-    assert!(!is_postgres_driver("sqlite"));
-    assert!(!is_postgres_driver("some-other-plugin"));
-}
-#[test]
-fn boolean_literals_match_the_target_dialect() {
-    for driver in ["postgres", "postgresql"] {
-        assert_eq!(escape_sql_value(driver, json!(true)), "TRUE");
-        assert_eq!(escape_sql_value(driver, json!(false)), "FALSE");
-    }
-    for driver in ["mysql", "sqlite"] {
-        assert_eq!(escape_sql_value(driver, json!(true)), "1");
-        assert_eq!(escape_sql_value(driver, json!(false)), "0");
-    }
 }

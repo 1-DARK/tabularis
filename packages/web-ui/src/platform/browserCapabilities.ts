@@ -254,6 +254,26 @@ export class BrowserPlatformCapabilities implements PlatformCapabilities {
     }
   }
 
+  async writeClipboardHtml(html: string, altText: string): Promise<void> {
+    if (typeof ClipboardItem === "undefined" || !navigator.clipboard?.write) {
+      return this.writeClipboard(altText);
+    }
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([altText], { type: "text/plain" }),
+        }),
+      ]);
+    } catch (error) {
+      throw new PlatformCapabilityPermissionError(
+        "writeClipboard",
+        "browser",
+        error,
+      );
+    }
+  }
+
   async downloadFile(request: DownloadFileRequest): Promise<boolean> {
     const bytes = new ArrayBuffer(request.contents.byteLength);
     new Uint8Array(bytes).set(request.contents);

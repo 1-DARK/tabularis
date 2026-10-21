@@ -32,7 +32,8 @@ import type {
 import type { ForeignKey, Index } from "../types/schema";
 import type { MonacoThemeDefinition, Theme } from "../types/theme";
 import type { Settings } from "../contexts/SettingsContext";
-import type { SavedQuery } from "../contexts/SavedQueriesContext";
+import type { SavedQuery, SavedQueryFolder } from "../contexts/SavedQueriesContext";
+import type { ColumnStatsRequest, PluginColumnStats } from "../utils/columnStats";
 import type {
   QueryHistoryEntry,
   QueryHistoryResponse,
@@ -188,10 +189,14 @@ export interface ConnectionParameters {
   connection_id?: string;
 }
 
+/** Per-field plugin secret mutations: a string sets, null clears, a missing key keeps. */
+export type PluginSecretChanges = Record<string, string | null>;
+
 export interface TestConnectionRequest {
   params: ConnectionParameters;
   connection_id?: string;
   progress_id?: string;
+  plugin_secret_changes?: PluginSecretChanges;
 }
 
 export interface SshConnection {
@@ -252,8 +257,9 @@ export interface K8sCommandRequest {
 export interface SaveConnectionRequest {
   name: string;
   params: ConnectionParameters;
-  detectJsonInTextColumns?: boolean;
-  environment?: string;
+  pluginSecretChanges?: PluginSecretChanges;
+  detectJsonInTextColumns?: boolean | null;
+  environment?: string | null;
 }
 
 export interface UpdateConnectionRequest extends SaveConnectionRequest {
@@ -1019,6 +1025,16 @@ export interface CommandMap {
     string[],
     "database"
   >;
+  get_drop_table_sql: CommandDefinition<
+    MetadataRequest & { table: string },
+    string | null,
+    "database"
+  >;
+  get_column_stats: CommandDefinition<
+    ConnectionIdRequest & { request: ColumnStatsRequest; database?: string },
+    PluginColumnStats | null,
+    "database"
+  >;
   drop_index_action: CommandDefinition<
     MetadataRequest & { table: string; indexName: string },
     void,
@@ -1105,6 +1121,31 @@ export interface CommandMap {
   >;
   delete_saved_query: CommandDefinition<
     ConnectionIdRequest & { id: string },
+    void,
+    "database"
+  >;
+  get_saved_query_folders: CommandDefinition<
+    ConnectionIdRequest,
+    SavedQueryFolder[],
+    "database"
+  >;
+  create_saved_query_folder: CommandDefinition<
+    ConnectionIdRequest & { name: string },
+    SavedQueryFolder,
+    "database"
+  >;
+  rename_saved_query_folder: CommandDefinition<
+    ConnectionIdRequest & { id: string; name: string },
+    SavedQueryFolder,
+    "database"
+  >;
+  delete_saved_query_folder: CommandDefinition<
+    ConnectionIdRequest & { id: string },
+    void,
+    "database"
+  >;
+  move_saved_query: CommandDefinition<
+    ConnectionIdRequest & { id: string; folderId: string | null },
     void,
     "database"
   >;

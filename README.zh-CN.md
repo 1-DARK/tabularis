@@ -6,7 +6,7 @@
 
 # Tabularis
 
-Tabularis 是一款开源的桌面 SQL 工作台，内置 3 种数据库驱动，并提供 21 个已发布插件，包括 DuckDB、ClickHouse、Redis 和 Firestore。其内置的 MCP 服务器可让 Claude、Cursor 和 Devin（原 Windsurf）在你日常使用的同一款应用中读取数据库结构并执行查询。
+Tabularis 是一款开源的桌面 SQL 工作台，内置 3 种数据库驱动，并提供 24 个已发布插件，包括 DuckDB、ClickHouse、Redis 和 Firestore。其内置的 MCP 服务器可让 Claude、Cursor 和 Devin（原 Windsurf）在你日常使用的同一款应用中读取数据库结构并执行查询。
 
 <p align="center">
   <b><a href="https://tabularis.dev">官网</a></b> ·
@@ -70,11 +70,11 @@ sudo snap install tabularis       # Linux
 
 或直接下载安装包：
 
-- **Windows:** &nbsp;[![Windows](https://img.shields.io/badge/Windows-Download-blue?logo=windows)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis_0.28.0_x64-setup.exe)
+- **Windows:** &nbsp;[![Windows](https://img.shields.io/badge/Windows-Download-blue?logo=windows)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis_0.29.0_x64-setup.exe)
 
-- **macOS:** &nbsp;[![macOS (Apple Silicon)](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis_0.28.0_aarch64.dmg)&nbsp;[![macOS (Intel)](https://img.shields.io/badge/macOS-Intel-black?logo=apple)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis_0.28.0_x64.dmg)
+- **macOS:** &nbsp;[![macOS (Apple Silicon)](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis_0.29.0_aarch64.dmg)&nbsp;[![macOS (Intel)](https://img.shields.io/badge/macOS-Intel-black?logo=apple)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis_0.29.0_x64.dmg)
 
-- **Linux:** &nbsp;[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-green?logo=linux)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis_0.28.0_amd64.AppImage)&nbsp;[![Linux .deb](https://img.shields.io/badge/Linux-.deb-orange?logo=debian)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis_0.28.0_amd64.deb)&nbsp;[![Linux .rpm](https://img.shields.io/badge/Linux-.rpm-red?logo=redhat)](https://github.com/TabularisDB/tabularis/releases/download/v0.28.0/tabularis-0.28.0-1.x86_64.rpm)
+- **Linux:** &nbsp;[![Linux AppImage](https://img.shields.io/badge/Linux-AppImage-green?logo=linux)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis_0.29.0_amd64.AppImage)&nbsp;[![Linux .deb](https://img.shields.io/badge/Linux-.deb-orange?logo=debian)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis_0.29.0_amd64.deb)&nbsp;[![Linux .rpm](https://img.shields.io/badge/Linux-.rpm-red?logo=redhat)](https://github.com/TabularisDB/tabularis/releases/download/v0.29.0/tabularis-0.29.0-1.x86_64.rpm)
 
 应用界面支持英语、意大利语、西班牙语、简体中文、法语、德语、日语、俄语、韩语、他加禄语和巴西葡萄牙语。
 
@@ -91,7 +91,7 @@ sudo snap install tabularis       # Linux
 | 支持**任意语言**编写插件（基于 stdio 的 JSON-RPC）  |            ✅            |       Java/Eclipse 插件        | JavaScript 插件 |        ❌         |
 | 支持**本地模型**（Ollama）的 AI text-to-SQL         |            ✅            |       基于云端的 AI 助手       |       ❌        |        ❌         |
 | 带交互式计划图的可视化 EXPLAIN                      |            ✅            |               ✅               |       ❌        |        ❌         |
-| 开箱即用支持的数据库                                | 3 种内置 + 21 个官方插件 |              100+              |       20+       |     约 10 种      |
+| 开箱即用支持的数据库                                | 3 种内置 + 24 个官方插件 |              100+              |       20+       |     约 10 种      |
 
 > [!NOTE]
 > 对比数据截至 2026 年 6 月，其他工具的功能此后可能已有变化。如果你需要几十种驱动，请使用 DBeaver。tabularis 专注于把少数几种数据库做好。
@@ -114,15 +114,17 @@ PostgreSQL、MySQL/MariaDB 和 SQLite 为内置支持。内置 PostgreSQL 驱动
 | Firestore                | [firestore-tabularis](https://codeberg.org/NewtTheWolf/firestore-tabularis)                     | CSV Folder     | [tabularis-csv-plugin](https://github.com/TabularisDB/tabularis-csv-plugin)                     |
 | IBM Db2                  | [tabularis-db2-plugin](https://github.com/TabularisDB/tabularis-db2-plugin)                     | Google Sheets  | [tabularis-google-sheets-plugin](https://github.com/TabularisDB/tabularis-google-sheets-plugin) |
 | IBM Informix             | [tabularis-informix-plugin](https://github.com/danielnuld/tabularis-informix-plugin)            | HackerNews     | [tabularis-hackernews-plugin](https://github.com/TabularisDB/tabularis-hackernews-plugin)       |
+| Cassandra / ScyllaDB     | [tabularis-cassandra-plugin](https://github.com/TabularisDB/tabularis-cassandra-plugin)         | Harper         | [tabularis-harper-plugin](https://github.com/HarperFast/tabularis-harper-plugin)                |
+| PostgreSQL               | [tabularis-postgresql-plugin](https://github.com/TabularisDB/tabularis-postgresql-plugin)       | Trino          | [tabularis-trino-plugin](https://github.com/TabularisDB/tabularis-trino-plugin)                 |
 
 **悬赏看板中**
 
 | 状态     | 数据库                                                                       |
 | -------- | ---------------------------------------------------------------------------- |
-| 已认领   | Google BigQuery, Meilisearch                                                 |
-| 已规划   | Amazon Redshift, CockroachDB, TiDB                                           |
-| 即将推出 | Snowflake                                                                    |
-| 开放中   | Cassandra, Etcd, Firebird, ScyllaDB, SQL Anywhere, SurrealDB, Trino / Presto |
+| 开发中      | Amazon Redshift, Google BigQuery, Meilisearch                                |
+| 已规划      | CockroachDB, TiDB                                                            |
+| 即将推出     | Snowflake                                                                    |
+| 开放中      | Etcd, Firebird, SQL Anywhere, SurrealDB                                      |
 
 > [!NOTE]
 > 标记为**已发布**的驱动可从[插件注册表](https://tabularis.dev/plugins)安装。其余均在[悬赏看板](https://tabularis.dev/plugins/bounties)上：你可以认领、赞助，或[申请新数据库](https://github.com/TabularisDB/tabularis/discussions)。
@@ -314,6 +316,7 @@ yay -S tabularis-bin
 - Anthropic
 - MiniMax
 - OpenRouter
+- Requesty
 - Ollama
 - 兼容 OpenAI 的 API
 

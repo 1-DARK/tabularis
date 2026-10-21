@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::saved_query_folders::{self, SavedQueryFolder};
 use chrono::Utc;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,7 @@ use uuid::Uuid;
 const DEFAULT_MAX_HISTORY_ENTRIES: u32 = 500;
 const SAVED_QUERIES_DIR: &str = "saved_queries";
 const SAVED_QUERIES_META_FILE: &str = "meta.json";
+const SAVED_QUERY_FOLDERS_FILE: &str = "folders.json";
 const QUERY_HISTORY_DIR: &str = "query_history";
 
 static PRODUCTIVITY_STORAGE_LOCK: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
@@ -27,6 +29,10 @@ pub struct SavedQueryMeta {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    /// `None` means Unfiled. Omitted from meta.json when unset so files from
+    /// before folders existed keep their exact shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -41,6 +47,8 @@ pub struct SavedQuery {
     pub created_at: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+    #[serde(default)]
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -85,6 +93,27 @@ pub enum ProductivityCommand {
     DeleteSavedQuery {
         connection_id: Option<String>,
         id: String,
+    },
+    GetSavedQueryFolders {
+        connection_id: String,
+    },
+    CreateSavedQueryFolder {
+        connection_id: String,
+        name: String,
+    },
+    RenameSavedQueryFolder {
+        connection_id: Option<String>,
+        id: String,
+        name: String,
+    },
+    DeleteSavedQueryFolder {
+        connection_id: Option<String>,
+        id: String,
+    },
+    MoveSavedQuery {
+        connection_id: Option<String>,
+        id: String,
+        folder_id: Option<String>,
     },
     GetQueryHistory {
         connection_id: String,
@@ -139,6 +168,61 @@ pub async fn execute(config_dir: &Path, command: ProductivityCommand) -> Result<
         )?),
         ProductivityCommand::DeleteSavedQuery { connection_id, id } => {
             delete_saved_query(config_dir, connection_id.as_deref(), &id)?;
+            Ok(Value::Null)
+        }
+        ProductivityCommand::GetSavedQueryFolders { connection_id } => {
+            json(saved_query_folders::list_folders_for_connection(
+                &saved_query_folders_path(config_dir)?,
+                &connection_id,
+            ))
+        }
+        ProductivityCommand::CreateSavedQueryFolder {
+            connection_id,
+            name,
+        } => {
+            let path = saved_query_folders_path(config_dir)?;
+            let mut folders = saved_query_folders::read_folders_file(&path)?;
+            let folder = saved_query_folders::create_folder(
+                &mut folders,
+                &connection_id,
+                &name,
+                &Utc::now().to_rfc3339(),
+            )?;
+            saved_query_folders::write_folders_file(&path, &folders)?;
+            json(folder)
+        }
+        ProductivityCommand::RenameSavedQueryFolder {
+            connection_id,
+            id,
+            name,
+        } => {
+            let path = saved_query_folders_path(config_dir)?;
+            let mut folders = saved_query_folders::read_folders_file(&path)?;
+            ensure_folder_owner(&folders, connection_id.as_deref(), &id)?;
+            let folder = saved_query_folders::rename_folder(&mut folders, &id, &name)?;
+            saved_query_folders::write_folders_file(&path, &folders)?;
+            json(folder)
+        }
+        ProductivityCommand::DeleteSavedQueryFolder { connection_id, id } => {
+            let path = saved_query_folders_path(config_dir)?;
+            let mut folders = saved_query_folders::read_folders_file(&path)?;
+            ensure_folder_owner(&folders, connection_id.as_deref(), &id)?;
+            let meta = read_saved_query_meta(config_dir)?;
+            saved_query_folders::delete_folder(&mut folders, &meta, &id)?;
+            saved_query_folders::write_folders_file(&path, &folders)?;
+            Ok(Value::Null)
+        }
+        ProductivityCommand::MoveSavedQuery {
+            connection_id,
+            id,
+            folder_id,
+        } => {
+            let mut meta = read_saved_query_meta(config_dir)?;
+            find_saved_query(&meta, connection_id.as_deref(), &id)?;
+            let folders =
+                saved_query_folders::read_folders_file(&saved_query_folders_path(config_dir)?)?;
+            saved_query_folders::move_query(&mut meta, &folders, &id, folder_id.as_deref())?;
+            write_saved_query_meta(config_dir, &meta)?;
             Ok(Value::Null)
         }
         ProductivityCommand::GetQueryHistory { connection_id } => {
@@ -245,6 +329,9 @@ pub fn remove_query_history_for_connection(
 
 fn get_saved_queries(config_dir: &Path, connection_id: &str) -> Result<Vec<SavedQuery>, String> {
     let meta = read_saved_query_meta(config_dir)?;
+    let folders = saved_query_folders::read_folders_file_lenient(&saved_query_folders_path(
+        config_dir,
+    )?);
     let directory = saved_queries_dir(config_dir)?;
     meta.into_iter()
         .filter(|item| item.connection_id == connection_id)
@@ -256,6 +343,7 @@ fn get_saved_queries(config_dir: &Path, connection_id: &str) -> Result<Vec<Saved
             } else {
                 String::new()
             };
+            let folder_id = saved_query_folders::resolve_folder_id(&item, &folders);
             Ok(SavedQuery {
                 id: item.id,
                 name: item.name,
@@ -264,6 +352,7 @@ fn get_saved_queries(config_dir: &Path, connection_id: &str) -> Result<Vec<Saved
                 database: item.database,
                 created_at: item.created_at,
                 updated_at: item.updated_at,
+                folder_id,
             })
         })
         .collect()
@@ -292,6 +381,7 @@ fn save_query(
         database: database.clone(),
         created_at: Some(now.clone()),
         updated_at: Some(now.clone()),
+        folder_id: None,
     });
     if let Err(error) = write_saved_query_meta(config_dir, &meta) {
         let _ = fs::remove_file(path);
@@ -306,6 +396,7 @@ fn save_query(
         database,
         created_at: Some(now.clone()),
         updated_at: Some(now),
+        folder_id: None,
     })
 }
 
@@ -328,6 +419,9 @@ fn update_saved_query(
     meta[index].database = database.clone();
     meta[index].updated_at = Some(now.clone());
     write_saved_query_meta(config_dir, &meta)?;
+    let folders = saved_query_folders::read_folders_file_lenient(&saved_query_folders_path(
+        config_dir,
+    )?);
 
     Ok(SavedQuery {
         id: meta[index].id.clone(),
@@ -337,6 +431,7 @@ fn update_saved_query(
         database,
         created_at: meta[index].created_at.clone(),
         updated_at: Some(now),
+        folder_id: saved_query_folders::resolve_folder_id(&meta[index], &folders),
     })
 }
 
@@ -355,6 +450,26 @@ fn delete_saved_query(
         let _ = fs::remove_file(path);
     }
     Ok(())
+}
+
+/// Web sessions name the connection they act on; a folder of another
+/// connection is reported as missing rather than touched.
+fn ensure_folder_owner(
+    folders: &[SavedQueryFolder],
+    connection_id: Option<&str>,
+    id: &str,
+) -> Result<(), String> {
+    let Some(expected) = connection_id else {
+        return Ok(());
+    };
+    if folders
+        .iter()
+        .any(|folder| folder.id == id && folder.connection_id == expected)
+    {
+        Ok(())
+    } else {
+        Err("Folder not found".to_string())
+    }
 }
 
 fn find_saved_query(
@@ -513,6 +628,10 @@ fn saved_queries_dir(config_dir: &Path) -> Result<PathBuf, String> {
     let path = config_dir.join(SAVED_QUERIES_DIR);
     fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     Ok(path)
+}
+
+fn saved_query_folders_path(config_dir: &Path) -> Result<PathBuf, String> {
+    Ok(saved_queries_dir(config_dir)?.join(SAVED_QUERY_FOLDERS_FILE))
 }
 
 fn saved_query_meta_path(config_dir: &Path) -> Result<PathBuf, String> {

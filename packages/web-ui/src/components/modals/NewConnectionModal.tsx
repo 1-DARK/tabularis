@@ -10,6 +10,7 @@ import {
   Settings,
   XCircle,
   FolderOpen,
+  MemoryStick,
   CheckSquare,
   Square,
   Plug,
@@ -42,6 +43,7 @@ import { SshConnectionsModal } from "./SshConnectionsModal";
 import { K8sConnectionsModal } from "./K8sConnectionsModal";
 import { Select } from "../ui/Select";
 import { SlotAnchor } from "../ui/SlotAnchor";
+import type { PluginSecretFieldState } from "../../types/pluginSlots";
 import { useAlert } from "../../hooks/useAlert";
 import { useDrivers } from "../../hooks/useDrivers";
 import { useSettings } from "../../hooks/useSettings";
@@ -70,7 +72,11 @@ import { DefaultDatabaseSelect } from "./NewConnectionModal/DefaultDatabaseSelec
 import { isMultiDatabaseCapable, isSchemaBasedMultiDbCapable, hasOptedIntoDatabaseSelection } from "../../utils/database";
 import { updateExtraField, withoutBlankSslMode } from "../../utils/connections";
 import { normalizeLocalDatabasePath, sanitizeLocalFilePath } from "../../utils/fsPath";
-import { isLocalDriver } from "../../utils/driverCapabilities";
+import {
+  IN_MEMORY_DATABASE,
+  isLocalDriver,
+  supportsInMemoryDatabase,
+} from "../../utils/driverCapabilities";
 import { toErrorMessage } from "../../utils/errors";
 import {
   classifyConnectionError,
@@ -171,6 +177,8 @@ interface ConnectionParams {
   ssm_region?: string;
   // SQL run on every new connection (e.g. SET / set_config)
   startup_script?: string;
+  /** Connection pooler mode for PgBouncer / transaction-mode poolers. */
+  pooler_mode?: string;
   // Opaque plugin-specific connection fields, forwarded verbatim to the
   // driver/plugin and persisted as-is in connections.json.
   extra?: Record<string, string>;
@@ -182,6 +190,7 @@ interface SavedConnection {
   id: string;
   name: string;
   params: ConnectionParams;
+  plugin_secret_keys?: string[];
   detect_json_in_text_columns?: boolean;
   appearance?: ConnectionAppearance;
   tag_ids?: string[];
@@ -413,6 +422,9 @@ export const NewConnectionModal = ({
   const [detectJsonInTextColumns, setDetectJsonInTextColumns] = useState(false);
   const [passwordDirty, setPasswordDirty] = useState(false);
   const [sshPasswordDirty, setSshPasswordDirty] = useState(false);
+  const [pluginSecretChanges, setPluginSecretChanges] = useState<
+    Record<string, string | null>
+  >({});
   const [connectionString, setConnectionString] = useState("");
   const [connectionStringError, setConnectionStringError] = useState<
     string | null
@@ -724,6 +736,11 @@ export const NewConnectionModal = ({
   // Flat single-database store (e.g. Meilisearch): no database to select or name.
   const singleDatabase =
     activeDriver?.capabilities?.single_database === true;
+  const hostField = activeDriver?.connection_fields?.host;
+  const portField = activeDriver?.connection_fields?.port;
+  const usernameField = activeDriver?.connection_fields?.username;
+  const passwordField = activeDriver?.connection_fields?.password;
+  const databaseField = activeDriver?.connection_fields?.database;
 
   // ── plugin slot: connection-modal.connection_content ──
   const slotRegistry = usePluginSlotRegistry();
@@ -768,6 +785,34 @@ export const NewConnectionModal = ({
       setFormData((prev) => ({ ...prev, username: "", password: "" }));
     }
   }, []);
+  const setSecretField = useCallback((key: string, value: string) => {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) return;
+    setPluginSecretChanges((previous) => ({
+      ...previous,
+      [normalizedKey]: value === "" ? null : value,
+    }));
+  }, []);
+  const secretFields = useMemo(() => {
+    const storedKeys =
+      initialConnection?.params.driver === driver
+        ? (initialConnection.plugin_secret_keys ?? [])
+        : [];
+    const keys = new Set([...storedKeys, ...Object.keys(pluginSecretChanges)]);
+    return Object.fromEntries(
+      Array.from(keys).map((key): [string, PluginSecretFieldState] => {
+        const pendingValue = pluginSecretChanges[key];
+        return [
+          key,
+          {
+            value: typeof pendingValue === "string" ? pendingValue : "",
+            hasStoredValue: storedKeys.includes(key),
+            dirty: Object.hasOwn(pluginSecretChanges, key),
+          },
+        ];
+      }),
+    );
+  }, [driver, initialConnection, pluginSecretChanges]);
   const extraFieldsSlotContext = useMemo(
     () => ({
       driver,
@@ -775,6 +820,8 @@ export const NewConnectionModal = ({
       setExtraField,
       credentialFieldsHidden,
       setCredentialFieldsHidden,
+      secretFields,
+      setSecretField,
     }),
     [
       driver,
@@ -782,6 +829,8 @@ export const NewConnectionModal = ({
       setExtraField,
       credentialFieldsHidden,
       setCredentialFieldsHidden,
+      secretFields,
+      setSecretField,
     ],
   );
 
@@ -1798,6 +1847,10 @@ export const NewConnectionModal = ({
         request: {
           params: { ...listParams, driver: effectiveDriver, database: listParams.database ?? "" },
           connection_id: initialConnection?.id,
+          // Pending plugin secrets belong to the driver being edited; stored
+          // ones are resolved by the backend from `connection_id`.
+          plugin_secret_changes:
+            effectiveDriver === driver ? pluginSecretChanges : {},
         },
       });
       if (!shouldApply()) return;
@@ -1844,6 +1897,7 @@ export const NewConnectionModal = ({
       setPasswordDirty(false);
       setSshPasswordDirty(false);
       setCredentialFieldsHiddenState(false);
+      setPluginSecretChanges({});
       setDbSearchQuery("");
       setConnectionString("");
       setConnectionStringError(null);
@@ -2020,6 +2074,7 @@ export const NewConnectionModal = ({
   const handleDriverChange = (newDriver: string) => {
     setDriver(newDriver);
     setCredentialFieldsHiddenState(false);
+    setPluginSecretChanges({});
     setFormData({
       driver: newDriver,
       host: "",
@@ -2050,6 +2105,7 @@ export const NewConnectionModal = ({
       ssm_target: undefined,
       ssm_profile: undefined,
       ssm_region: undefined,
+      pooler_mode: undefined,
     });
     invalidateK8sDiscovery();
     invalidateInlineK8sTest();
@@ -2192,6 +2248,7 @@ export const NewConnectionModal = ({
               },
               connection_id: initialConnection?.id,
               progress_id: progressId,
+              plugin_secret_changes: pluginSecretChanges,
             },
           });
 
@@ -2363,6 +2420,7 @@ export const NewConnectionModal = ({
       } else if (
         !noConnectionRequired &&
         !singleDatabase &&
+        !databaseField?.hidden &&
         !hasConnectionUri &&
         (!formData.database ||
           (typeof formData.database === "string" && !formData.database.trim()))
@@ -2447,8 +2505,9 @@ export const NewConnectionModal = ({
             id: initialConnection.id,
             name,
             params,
-            detectJsonInTextColumns: detectJsonInTextColumns || undefined,
-            environment: environment || undefined,
+            pluginSecretChanges,
+            detectJsonInTextColumns: detectJsonInTextColumns ? true : null,
+            environment: environment || null,
           });
           persistedInKeychain = updated?.params?.save_in_keychain;
           savedConnectionId = initialConnection.id;
@@ -2460,8 +2519,9 @@ export const NewConnectionModal = ({
           const saved = await client.call("save_connection", {
             name,
             params,
-            detectJsonInTextColumns: detectJsonInTextColumns || undefined,
-            environment: environment || undefined,
+            pluginSecretChanges,
+            detectJsonInTextColumns: detectJsonInTextColumns ? true : null,
+            environment: environment || null,
           });
           persistedInKeychain = saved.params?.save_in_keychain;
           savedConnectionId = saved.id;
@@ -2659,6 +2719,7 @@ export const NewConnectionModal = ({
       if (driverChanged) {
         setDriver(newDriver);
         setCredentialFieldsHiddenState(false);
+        setPluginSecretChanges({});
       }
 
       setFormData((prev) => ({
@@ -2772,6 +2833,23 @@ export const NewConnectionModal = ({
             >
               <FolderOpen size={15} />
             </button>
+            {supportsInMemoryDatabase(activeDriver.capabilities) && (
+              <button
+                type="button"
+                onClick={() => updateField("database", IN_MEMORY_DATABASE)}
+                aria-pressed={formData.database === IN_MEMORY_DATABASE}
+                className={clsx(
+                  "flex items-center gap-1.5 px-3 py-2 border rounded-md text-sm font-medium transition-colors",
+                  formData.database === IN_MEMORY_DATABASE
+                    ? "bg-accent-primary/10 border-accent-primary text-primary"
+                    : "bg-base hover:bg-surface-secondary border-strong text-muted hover:text-primary",
+                )}
+                title={t("newConnection.inMemoryDatabaseHint")}
+              >
+                <MemoryStick size={15} />
+                {t("newConnection.inMemoryDatabase")}
+              </button>
+            )}
             {driver === "sqlite" &&
               activeDriver.capabilities.file_based === true && (
                 <button
@@ -2864,29 +2942,41 @@ export const NewConnectionModal = ({
             </div>
           )}
 
-          {!isUriPassthrough && (
+          {!isUriPassthrough &&
+            (!hostField?.hidden || !portField?.hidden) && (
             <div
               className={clsx(
                 "grid gap-3",
-                isPostgresDialect ? "grid-cols-4" : "grid-cols-3",
+                !hostField?.hidden && !portField?.hidden
+                  ? isPostgresDialect
+                    ? "grid-cols-4"
+                    : "grid-cols-3"
+                  : "grid-cols-1",
               )}
             >
-              <FieldInput
-                className="col-span-2"
-                label={t("newConnection.host")}
-                value={formData.host}
-                onChange={(v) => updateField("host", v)}
-                placeholder="localhost"
-              />
-              <FieldInput
-                label={t("newConnection.port")}
-                value={formData.port}
-                onChange={(v) =>
-                  updateField("port", v === "" ? undefined : Number(v))
-                }
-                type="number"
-                placeholder={driver === "mysql" ? "3306" : "5432"}
-              />
+              {!hostField?.hidden && (
+                <FieldInput
+                  className={!portField?.hidden ? "col-span-2" : undefined}
+                  label={hostField?.label ?? t("newConnection.host")}
+                  value={formData.host}
+                  onChange={(v) => updateField("host", v)}
+                  placeholder={hostField?.placeholder ?? "localhost"}
+                />
+              )}
+              {!portField?.hidden && (
+                <FieldInput
+                  label={portField?.label ?? t("newConnection.port")}
+                  value={formData.port}
+                  onChange={(v) =>
+                    updateField("port", v === "" ? undefined : Number(v))
+                  }
+                  type="number"
+                  placeholder={
+                    portField?.placeholder ??
+                    (driver === "mysql" ? "3306" : "5432")
+                  }
+                />
+              )}
             </div>
           )}
 
@@ -2897,64 +2987,83 @@ export const NewConnectionModal = ({
             className="flex flex-col gap-3"
           />
 
-          {/* User + Password (a plugin may hide them via the extra_fields slot) */}
-          {!credentialFieldsHidden && (
+          {/* User + Password (a plugin may hide them via the extra_fields
+              slot or per field through its manifest `connection_fields`) */}
+          {!credentialFieldsHidden &&
+            (!passwordField?.hidden ||
+              (!isUriPassthrough && !usernameField?.hidden)) && (
             <div
               className={clsx(
                 "grid gap-3",
-                isUriPassthrough ? "grid-cols-1" : "grid-cols-2",
+                !passwordField?.hidden &&
+                  !isUriPassthrough &&
+                  !usernameField?.hidden
+                  ? "grid-cols-2"
+                  : "grid-cols-1",
               )}
             >
-              {!isUriPassthrough && (
+              {!isUriPassthrough && !usernameField?.hidden && (
                 <FieldInput
-                  label={t("newConnection.username")}
+                  label={usernameField?.label ?? t("newConnection.username")}
                   value={formData.username}
                   onChange={(v) => updateField("username", v)}
-                  placeholder={t("newConnection.usernamePlaceholder")}
+                  placeholder={
+                    usernameField?.placeholder ??
+                    t("newConnection.usernamePlaceholder")
+                  }
                 />
               )}
-              <FieldInput
-                label={t("newConnection.password")}
-                value={formData.password}
-                onChange={(v) => {
-                  setPasswordDirty(true);
-                  updateField("password", v);
-                }}
-                type="password"
-                placeholder={
-                  initialConnection && !passwordDirty && !formData.password
-                    ? "••••••••"
-                    : t("newConnection.passwordPlaceholder")
-                }
-              />
+              {!passwordField?.hidden && (
+                <FieldInput
+                  label={passwordField?.label ?? t("newConnection.password")}
+                  value={formData.password}
+                  onChange={(v) => {
+                    setPasswordDirty(true);
+                    updateField("password", v);
+                  }}
+                  type="password"
+                  placeholder={
+                    initialConnection && !passwordDirty && !formData.password
+                      ? "••••••••"
+                      : passwordField?.placeholder ??
+                        t("newConnection.passwordPlaceholder")
+                  }
+                />
+              )}
             </div>
           )}
 
           {/* Database (single) — shown unless the connection has opted into
-              multi-database selection (flat drivers are always opted in) */}
-          {!isUriPassthrough && !isOptedInMultiDb && !singleDatabase && (
+              multi-database selection (flat drivers are always opted in) or
+              the plugin hides it through its manifest `connection_fields` */}
+          {!isUriPassthrough &&
+            !isOptedInMultiDb &&
+            !singleDatabase &&
+            !databaseField?.hidden && (
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between">
                 <label className="text-[10px] uppercase font-semibold tracking-wider text-muted">
-                  {t("newConnection.dbName")}
+                  {databaseField?.label ?? t("newConnection.dbName")}
                 </label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void loadDatabases();
-                  }}
-                  disabled={loadingDatabases || !formData.host}
-                  className="flex items-center gap-1 text-xs text-accent disabled:text-muted disabled:cursor-not-allowed transition-colors"
-                >
-                  {loadingDatabases ? (
-                    <Loader2 size={11} className="animate-spin" />
-                  ) : (
-                    <Database size={11} />
-                  )}
-                  {loadingDatabases
-                    ? t("newConnection.loadingDatabases")
-                    : t("newConnection.loadDatabases")}
-                </button>
+                {!hostField?.hidden && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void loadDatabases();
+                    }}
+                    disabled={loadingDatabases || !formData.host}
+                    className="flex items-center gap-1 text-xs text-accent disabled:text-muted disabled:cursor-not-allowed transition-colors"
+                  >
+                    {loadingDatabases ? (
+                      <Loader2 size={11} className="animate-spin" />
+                    ) : (
+                      <Database size={11} />
+                    )}
+                    {loadingDatabases
+                      ? t("newConnection.loadingDatabases")
+                      : t("newConnection.loadDatabases")}
+                  </button>
+                )}
               </div>
               {availableDatabases.length > 0 ? (
                 <Select
@@ -2983,7 +3092,10 @@ export const NewConnectionModal = ({
                   autoComplete="off"
                   spellCheck={false}
                   className="w-full px-3 py-2 bg-base border border-strong rounded-md text-sm text-primary placeholder:text-muted placeholder:italic focus:border-focus focus:outline-none transition-colors"
-                  placeholder={t("newConnection.dbNamePlaceholder")}
+                  placeholder={
+                    databaseField?.placeholder ??
+                    t("newConnection.dbNamePlaceholder")
+                  }
                 />
               )}
               {databaseLoadError && (
@@ -3171,6 +3283,31 @@ export const NewConnectionModal = ({
         />
         </div>
       </div>
+
+      {/* PostgreSQL: pooler mode (PgBouncer transaction/session) */}
+      {isPostgresDialect && (
+        <div className="flex flex-col gap-1">
+          <label className="text-[10px] uppercase font-semibold tracking-wider text-muted block">
+            {t("newConnection.poolerMode")}
+          </label>
+          <Select
+            value={formData.pooler_mode ?? "none"}
+            options={["none", "transaction", "session"]}
+            labels={{
+              none: t("newConnection.poolerModes.none"),
+              transaction: t("newConnection.poolerModes.transaction"),
+              session: t("newConnection.poolerModes.session"),
+            }}
+            onChange={(v) => updateField("pooler_mode", v === "none" ? undefined : v)}
+            searchable={false}
+          />
+          {formData.pooler_mode === "transaction" && (
+            <p className="text-xs text-muted leading-snug">
+              {t("newConnection.poolerModeTransactionHint")}
+            </p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-2 border-t border-default pt-4">
         <label className="text-[10px] uppercase font-semibold tracking-wider text-muted block">

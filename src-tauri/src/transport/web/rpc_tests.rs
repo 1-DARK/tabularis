@@ -1020,6 +1020,11 @@ fn registers_saved_query_and_history_commands_with_database_authorization() {
         "save_query",
         "update_saved_query",
         "delete_saved_query",
+        "get_saved_query_folders",
+        "create_saved_query_folder",
+        "rename_saved_query_folder",
+        "delete_saved_query_folder",
+        "move_saved_query",
         "get_query_history",
         "add_query_history_entry",
         "delete_query_history_entry",
@@ -1354,7 +1359,15 @@ async fn routes_database_object_commands_through_the_shared_application_api() {
         ),
         (
             "get_create_table_sql",
-            serde_json::json!({"connectionId": connection, "tableName": "users", "columns": []}),
+            serde_json::json!({"connectionId": connection, "tableName": "users", "columns": [], "database": "app_db"}),
+        ),
+        (
+            "get_drop_table_sql",
+            serde_json::json!({"connectionId": connection, "table": "users", "schema": null, "database": "app_db"}),
+        ),
+        (
+            "get_column_stats",
+            serde_json::json!({"connectionId": connection, "request": {"table": "users", "column": "email", "top_values_limit": 5, "include": {"distinct": true, "min_max": true, "top_values": true}}, "database": "app_db"}),
         ),
         (
             "get_add_column_sql",

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { GOOGLESQL_CAPS } from "../../../../tests/fixtures/sql-syntax/googlesql";
 import type { ForeignKey } from "../../src/types/schema";
 import type { DriverCapabilities, PluginManifest } from "../../src/types/plugins";
 import {
@@ -116,6 +117,27 @@ describe("foreignKeys", () => {
       expect(buildForeignKeyFilterClause(orgFk, 42, "sqlite")).toBe(
         '"id" = 42',
       );
+    });
+
+    it("backslash-escapes string values for a GoogleSQL plugin", () => {
+      const bq = GOOGLESQL_CAPS;
+      expect(buildForeignKeyFilterClause(orgFk, "O'Brien\\", bq)).toBe(
+        "`id` = 'O\\'Brien\\\\'",
+      );
+      expect(buildForeignKeyFilterClause(orgFk, "O'Brien", "postgres")).toBe(
+        `"id" = 'O''Brien'`,
+      );
+    });
+
+    it("writes booleans in the declared boolean_literals style", () => {
+      const numeric = {
+        ...GOOGLESQL_CAPS,
+        sql_syntax: { ...GOOGLESQL_CAPS.sql_syntax, boolean_literals: "numeric" as const },
+      };
+      expect(buildForeignKeyFilterClause(orgFk, true, GOOGLESQL_CAPS)).toBe("`id` = TRUE");
+      expect(buildForeignKeyFilterClause(orgFk, false, numeric)).toBe("`id` = 0");
+      expect(buildForeignKeyFilterClause(orgFk, true, "mysql")).toBe("`id` = TRUE");
+      expect(buildForeignKeyFilterClause(orgFk, false, "postgres")).toBe('"id" = FALSE');
     });
 
     it("treats bigint values as numeric", () => {

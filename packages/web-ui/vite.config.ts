@@ -14,6 +14,7 @@ export default defineConfig({
   css: {
     postcss: webUiRoot,
   },
+  server: { watch: { ignored: ['**/src-tauri/**'] } },
   resolve: {
     alias: {
       // Polyfills for browser environment (needed by wkx library)

@@ -176,6 +176,8 @@ export interface PlatformCapabilities {
   resolveAppAsset(relativePath: string): Promise<string>;
   readClipboard(): Promise<string>;
   writeClipboard(text: string): Promise<void>;
+  /** Writes an HTML flavor with `altText` as the plain-text flavor (same capability as writeClipboard). */
+  writeClipboardHtml(html: string, altText: string): Promise<void>;
   downloadFile(request: DownloadFileRequest): Promise<boolean>;
   openExternalUrl(url: string): Promise<void>;
   notify(notification: PlatformNotification): Promise<NotificationOutcome>;

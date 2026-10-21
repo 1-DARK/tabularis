@@ -16,6 +16,17 @@ pub enum DatabaseObjectCommand {
         request: crate::models::TableQueryTemplateRequest,
         database: Option<String>,
     },
+    GetColumnStats {
+        connection_id: String,
+        request: crate::models::ColumnStatsRequest,
+        database: Option<String>,
+    },
+    GetDropTableSql {
+        connection_id: String,
+        table: String,
+        schema: Option<String>,
+        database: Option<String>,
+    },
     GetDataTypes {
         driver: String,
     },
@@ -85,6 +96,7 @@ pub enum DatabaseObjectCommand {
         connection_id: String,
         routine_type: String,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetRoutineEditScript {
         connection_id: String,
@@ -127,12 +139,14 @@ pub enum DatabaseObjectCommand {
         table_name: String,
         columns: Vec<ColumnDefinition>,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetAddColumnSql {
         connection_id: String,
         table: String,
         column: ColumnDefinition,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetAlterColumnSql {
         connection_id: String,
@@ -140,6 +154,7 @@ pub enum DatabaseObjectCommand {
         old_column: ColumnDefinition,
         new_column: ColumnDefinition,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetCreateIndexSql {
         connection_id: String,
@@ -148,6 +163,7 @@ pub enum DatabaseObjectCommand {
         columns: Vec<String>,
         is_unique: bool,
         schema: Option<String>,
+        database: Option<String>,
     },
     GetCreateForeignKeySql {
         connection_id: String,
@@ -159,6 +175,7 @@ pub enum DatabaseObjectCommand {
         on_delete: Option<String>,
         on_update: Option<String>,
         schema: Option<String>,
+        database: Option<String>,
     },
     DropIndex {
         connection_id: String,
@@ -232,6 +249,17 @@ pub async fn execute(
             get_table_query_template(runtime, session_id, &connection_id, request, database)
                 .await?,
         ),
+        DatabaseObjectCommand::GetColumnStats {
+            connection_id,
+            request,
+            database,
+        } => json(get_column_stats(runtime, session_id, &connection_id, request, database).await?),
+        DatabaseObjectCommand::GetDropTableSql {
+            connection_id,
+            table,
+            schema,
+            database,
+        } => json(get_drop_table_sql(runtime, &connection_id, table, schema, database).await?),
         DatabaseObjectCommand::GetDataTypes { driver } => {
             json(crate::commands::get_data_types(driver).await?)
         }
@@ -393,9 +421,11 @@ pub async fn execute(
             connection_id,
             routine_type,
             schema,
-        } => {
-            json(get_routine_create_template(runtime, &connection_id, routine_type, schema).await?)
-        }
+            database,
+        } => json(
+            get_routine_create_template(runtime, &connection_id, routine_type, schema, database)
+                .await?,
+        ),
         DatabaseObjectCommand::GetRoutineEditScript {
             connection_id,
             routine_name,
@@ -496,21 +526,27 @@ pub async fn execute(
             table_name,
             columns,
             schema,
-        } => {
-            json(get_create_table_sql(runtime, &connection_id, table_name, columns, schema).await?)
-        }
+            database,
+        } => json(
+            get_create_table_sql(runtime, &connection_id, table_name, columns, schema, database)
+                .await?,
+        ),
         DatabaseObjectCommand::GetAddColumnSql {
             connection_id,
             table,
             column,
             schema,
-        } => json(get_add_column_sql(runtime, &connection_id, table, column, schema).await?),
+            database,
+        } => json(
+            get_add_column_sql(runtime, &connection_id, table, column, schema, database).await?,
+        ),
         DatabaseObjectCommand::GetAlterColumnSql {
             connection_id,
             table,
             old_column,
             new_column,
             schema,
+            database,
         } => json(
             get_alter_column_sql(
                 runtime,
@@ -519,6 +555,7 @@ pub async fn execute(
                 old_column,
                 new_column,
                 schema,
+                database,
             )
             .await?,
         ),
@@ -529,6 +566,7 @@ pub async fn execute(
             columns,
             is_unique,
             schema,
+            database,
         } => json(
             get_create_index_sql(
                 runtime,
@@ -538,6 +576,7 @@ pub async fn execute(
                 columns,
                 is_unique,
                 schema,
+                database,
             )
             .await?,
         ),
@@ -551,6 +590,7 @@ pub async fn execute(
             on_delete,
             on_update,
             schema,
+            database,
         } => json(
             get_create_foreign_key_sql(
                 runtime,
@@ -563,6 +603,7 @@ pub async fn execute(
                 on_delete,
                 on_update,
                 schema,
+                database,
             )
             .await?,
         ),
@@ -700,6 +741,31 @@ async fn saved_driver_and_params(
     .map_err(|error| error.to_string())??;
     let driver = crate::drivers::registry::get_connection_driver(&params).await?;
     Ok((driver, saved.params))
+}
+
+/// Driver and params for the SQL-preview builders. Built-in drivers build SQL
+/// without credentials, so they keep the registered instance and the saved
+/// params. Plugin drivers get the saved params (secrets read leniently, the
+/// browsed `database` applied) bound to a driver snapshot. No tunnel is
+/// opened, so a preview works while the server is unreachable.
+async fn sql_builder_driver_and_params(
+    runtime: &RuntimeContext,
+    connection_id: &str,
+    database: Option<String>,
+) -> Result<(Arc<dyn DatabaseDriver>, ConnectionParams), String> {
+    let mut saved =
+        crate::application::connections::load_connections(&runtime.paths.connections_file())?
+            .into_iter()
+            .find(|connection| connection.id == connection_id)
+            .ok_or_else(|| "Connection not found".to_string())?;
+    let driver = driver_for(&saved.params.driver).await?;
+    if driver.manifest().is_builtin {
+        return Ok((driver, saved.params));
+    }
+    crate::application::connections::bind_sql_builder_secrets(runtime, &mut saved);
+    let params = crate::commands::sql_builder_params(&saved, database);
+    let driver = driver.bind_connection_params(&params).unwrap_or(driver);
+    Ok((driver, params))
 }
 
 async fn connected_driver_and_params(
@@ -884,8 +950,9 @@ pub async fn get_routine_create_template(
     connection_id: &str,
     routine_type: String,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<String, String> {
-    let (driver, _) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, _) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .routine_create_template(&routine_type, schema.as_deref())
         .await
@@ -995,8 +1062,9 @@ pub async fn get_create_table_sql(
     table_name: String,
     columns: Vec<ColumnDefinition>,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let (driver, _) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, _) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .get_create_table_sql(&table_name, columns, schema.as_deref())
         .await
@@ -1008,8 +1076,9 @@ pub async fn get_add_column_sql(
     table: String,
     column: ColumnDefinition,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let (driver, _) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, _) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .get_add_column_sql(&table, column, schema.as_deref())
         .await
@@ -1022,8 +1091,9 @@ pub async fn get_alter_column_sql(
     old_column: ColumnDefinition,
     new_column: ColumnDefinition,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let (driver, _) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, _) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .get_alter_column_sql(&table, old_column, new_column, schema.as_deref())
         .await
@@ -1037,8 +1107,9 @@ pub async fn get_create_index_sql(
     columns: Vec<String>,
     is_unique: bool,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let (driver, _) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, _) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .get_create_index_sql(&table, &index_name, columns, is_unique, schema.as_deref())
         .await
@@ -1056,8 +1127,9 @@ pub async fn get_create_foreign_key_sql(
     on_delete: Option<String>,
     on_update: Option<String>,
     schema: Option<String>,
+    database: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let (driver, params) = saved_driver_and_params(runtime, connection_id).await?;
+    let (driver, params) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
     driver
         .get_create_foreign_key_sql(
             &params,
@@ -1220,6 +1292,41 @@ pub async fn apply_db_user_privileges(
 
 fn json(value: impl Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|error| error.to_string())
+}
+
+/// Column statistics through the optional plugin RPC. `None` means the driver
+/// doesn't provide them; the frontend then falls back to its generic SQL.
+pub async fn get_column_stats(
+    runtime: &RuntimeContext,
+    session_id: Option<Uuid>,
+    connection_id: &str,
+    request: crate::models::ColumnStatsRequest,
+    database: Option<String>,
+) -> Result<Option<crate::models::ColumnStatsResult>, String> {
+    let (driver, params) =
+        connected_driver_and_params(runtime, session_id, connection_id, database).await?;
+    driver.get_column_stats(&params, &request).await
+}
+
+/// Plugin-provided statement for dropping a table, or `None` to let the
+/// explorer build its generic `DROP TABLE`. Only plugins declaring
+/// `capabilities.drop_table_sql` are asked.
+pub async fn get_drop_table_sql(
+    runtime: &RuntimeContext,
+    connection_id: &str,
+    table: String,
+    schema: Option<String>,
+    database: Option<String>,
+) -> Result<Option<String>, String> {
+    let driver_id = crate::application::connections::saved_connection_driver(runtime, connection_id)?;
+    let driver = driver_for(&driver_id).await?;
+    if driver.manifest().is_builtin || !driver.manifest().capabilities.drop_table_sql {
+        return Ok(None);
+    }
+    let (driver, params) = sql_builder_driver_and_params(runtime, connection_id, database).await?;
+    driver
+        .get_drop_table_sql(&params, &table, schema.as_deref())
+        .await
 }
 
 pub async fn get_table_query_template(

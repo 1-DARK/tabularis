@@ -1,15 +1,18 @@
 import { describe, it, expect } from "vitest";
+import { GOOGLESQL_CAPS } from "../../../../tests/fixtures/sql-syntax/googlesql";
 import {
   filterColumnSuggestions,
   getCurrentWordPrefix,
   replaceCurrentWord,
   getOperatorsForType,
   buildSingleFilterClause,
+  declaredBooleanFilterLiteral,
   buildStructuredFilterClause,
   isFilterComplete,
   NO_VALUE_OPS,
   createEmptyFilter,
   isValuePickerSupported,
+  isNestedColumnType,
   buildDistinctValuesQuery,
   buildValuePickerWhere,
   parseDistinctValues,
@@ -87,6 +90,121 @@ describe("filter string literals with backslashes", () => {
     expect(buildSingleFilterClause({ ...filter("a\\"), operator: "BETWEEN", value2: "C:\\new" }, driver))
       .toBe("name BETWEEN 'a\\\\' AND 'C:\\\\new'");
     expect(buildSingleFilterClause(filter("123"), driver)).toBe("name = 123");
+  });
+});
+
+describe("declared boolean_literals filter literals", () => {
+  const filter = (value: string, operator: StructuredFilter["operator"] = "="): StructuredFilter => ({
+    id: "f", column: "active", operator, value,
+  });
+  const numeric = {
+    ...GOOGLESQL_CAPS,
+    sql_syntax: { ...GOOGLESQL_CAPS.sql_syntax, boolean_literals: "numeric" as const },
+  };
+
+  it("writes boolean literals for a BOOL column", () => {
+    expect(buildSingleFilterClause(filter("true"), GOOGLESQL_CAPS, "always", "BOOL")).toBe(
+      "`active` = TRUE",
+    );
+    expect(buildSingleFilterClause(filter("0"), GOOGLESQL_CAPS, "always", "BOOL")).toBe(
+      "`active` = FALSE",
+    );
+    expect(buildSingleFilterClause(filter("'False'"), GOOGLESQL_CAPS, "always", "bool")).toBe(
+      "`active` = FALSE",
+    );
+    expect(buildSingleFilterClause(filter("true, false", "IN"), numeric, "always", "BOOLEAN")).toBe(
+      "`active` IN (1, 0)",
+    );
+  });
+
+  it("leaves other columns, other values and undeclared drivers alone", () => {
+    expect(buildSingleFilterClause(filter("true"), GOOGLESQL_CAPS, "always", "STRING")).toBe(
+      "`active` = 'true'",
+    );
+    expect(buildSingleFilterClause(filter("maybe"), GOOGLESQL_CAPS, "always", "BOOL")).toBe(
+      "`active` = 'maybe'",
+    );
+    for (const driver of ["postgres", "mysql", "sqlite"]) {
+      expect(declaredBooleanFilterLiteral("true", "boolean", driver)).toBeUndefined();
+    }
+    expect(buildSingleFilterClause(filter("true"), "postgres", "always", "boolean")).toBe(
+      `"active" = 'true'`,
+    );
+  });
+});
+
+describe("declared GoogleSQL syntax filter literals", () => {
+  // The BigQuery plugin: `mysql` fallback plus the GoogleSQL `sql_syntax`.
+  const bq = GOOGLESQL_CAPS;
+  const filter = (value: string, operator: StructuredFilter["operator"] = "="): StructuredFilter => ({
+    id: "f", column: "name", operator, value,
+  });
+
+  it("backslash-escapes quotes and backslashes instead of doubling quotes", () => {
+    expect(buildSingleFilterClause(filter("O'Brien C:\\x"), bq, "always")).toBe(
+      "`name` = 'O\\'Brien C:\\\\x'",
+    );
+  });
+
+  it("re-quotes picked values stored in the standard form", () => {
+    const picked = formatPickedValue("O'Brien", "STRING");
+    expect(picked).toBe("'O''Brien'");
+    expect(buildSingleFilterClause(filter(picked), bq, "always")).toBe(
+      "`name` = 'O\\'Brien'",
+    );
+    expect(buildSingleFilterClause(filter("''"), bq, "always")).toBe("`name` = ''");
+  });
+
+  it("quotes IN lists and BETWEEN bounds", () => {
+    expect(buildSingleFilterClause(filter(`"a'b", 'c''d', 3`, "IN"), bq, "always")).toBe(
+      "`name` IN ('a\\'b', 'c\\'d', 3)",
+    );
+    expect(
+      buildSingleFilterClause({ ...filter("a'", "BETWEEN"), value2: "z" }, bq, "always"),
+    ).toBe("`name` BETWEEN 'a\\'' AND 'z'");
+  });
+
+  it("escapes LIKE wildcards with backslashes and no ESCAPE clause", () => {
+    expect(buildSingleFilterClause(filter("50%_a\\b'", "contains"), bq, "always")).toBe(
+      "`name` LIKE '%50\\\\%\\\\_a\\\\\\\\b\\'%'",
+    );
+    expect(buildSingleFilterClause(filter("ab", "starts with"), bq, "always")).toBe(
+      "`name` LIKE 'ab%'",
+    );
+    expect(buildSingleFilterClause(filter("ab", "ends with"), bq, "always")).toBe(
+      "`name` LIKE '%ab'",
+    );
+  });
+
+  it("follows like_escape and string_escape independently", () => {
+    const standardNoEscape = {
+      identifier_quote: '"',
+      sql_dialect: "postgres",
+      sql_syntax: { like_escape: false },
+    } as DriverCapabilities;
+    expect(buildSingleFilterClause(filter("a%'", "contains"), standardNoEscape, "always")).toBe(
+      `"name" LIKE '%a\\%''%'`,
+    );
+    const backslashWithEscape = {
+      identifier_quote: '"',
+      sql_dialect: "postgres",
+      sql_syntax: { string_escape: "backslash" },
+    } as DriverCapabilities;
+    expect(
+      buildSingleFilterClause(filter("a%'", "contains"), backslashWithEscape, "always"),
+    ).toBe(`"name" LIKE '%a!%\\'%' ESCAPE '!'`);
+  });
+
+  it("keeps the ESCAPE clause for other dialects", () => {
+    expect(buildSingleFilterClause(filter("a%", "contains"), "postgres", "always")).toBe(
+      `"name" LIKE '%a!%%' ESCAPE '!'`,
+    );
+    // The mysql fallback alone (an older plugin, or a host that ignores
+    // `sql_syntax`) keeps the MySQL form.
+    const mysqlOnly = { identifier_quote: "`", sql_dialect: "mysql" } as DriverCapabilities;
+    expect(buildSingleFilterClause(filter("a\\%", "contains"), mysqlOnly, "always")).toBe(
+      "`name` LIKE '%a\\\\!%%' ESCAPE '!'",
+    );
   });
 });
 
@@ -891,6 +1009,43 @@ describe("filterBar utils", () => {
         "does not offer the picker for %s",
         (type) => expect(isValuePickerSupported(type)).toBe(false)
       );
+
+      it.each([
+        "ARRAY<INT64>",
+        "array<string>",
+        "STRUCT<a STRING, b INT64>",
+        "ARRAY<STRUCT<id INT64>>",
+        "MAP<STRING, INT>",
+        "STRUCT",
+        "RECORD",
+        "STRING REPEATED",
+        "RECORD (REPEATED)",
+      ])("does not offer the picker for the nested type %s", (type) =>
+        expect(isValuePickerSupported(type)).toBe(false)
+      );
+
+      it.each(["ARRAY", "integer[]", "_int4", "text[]", "structure_code", "record_id"])(
+        "still offers the picker for %s",
+        (type) => expect(isValuePickerSupported(type)).toBe(true)
+      );
+    });
+
+    describe("isNestedColumnType", () => {
+      it("matches parameterized containers, records and repeated fields", () => {
+        expect(isNestedColumnType("ARRAY<STRING>")).toBe(true);
+        expect(isNestedColumnType(" Struct < x INT64 >")).toBe(true);
+        expect(isNestedColumnType("record")).toBe(true);
+        expect(isNestedColumnType("INT64 REPEATED")).toBe(true);
+      });
+
+      it("leaves scalar and PostgreSQL array types alone", () => {
+        expect(isNestedColumnType("ARRAY")).toBe(false);
+        expect(isNestedColumnType("integer[]")).toBe(false);
+        expect(isNestedColumnType("GEOGRAPHY")).toBe(false);
+        expect(isNestedColumnType("")).toBe(false);
+        expect(isNestedColumnType(null)).toBe(false);
+        expect(isNestedColumnType(undefined)).toBe(false);
+      });
     });
 
     describe("buildDistinctValuesQuery", () => {

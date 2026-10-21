@@ -2,6 +2,8 @@ pub mod ai;
 pub mod ai_activity;
 #[cfg(test)]
 pub mod ai_activity_tests;
+#[cfg(test)]
+pub mod ai_activity_lexer_tests;
 pub mod ai_approval;
 #[cfg(test)]
 pub mod ai_approval_tests;
@@ -75,6 +77,7 @@ pub mod paths_tests;
 pub mod persistence;
 #[cfg(test)]
 pub mod persistence_tests;
+pub mod plugin_secrets;
 pub mod plugins;
 pub mod pool_manager;
 #[cfg(test)]
@@ -96,6 +99,9 @@ pub mod sql_database_statements;
 pub mod sql_file;
 #[cfg(test)]
 pub mod sql_file_tests;
+pub mod saved_query_folders;
+#[cfg(test)]
+pub mod saved_query_folders_tests;
 pub mod sqlite_database;
 #[cfg(test)]
 pub mod sqlite_database_tests;
@@ -106,6 +112,7 @@ pub mod storage_location;
 pub mod storage_location_tests;
 mod system_theme;
 pub mod task_manager;
+pub mod team_share;
 pub mod theme_commands;
 pub mod theme_models;
 pub mod theme_packages;
@@ -129,6 +136,12 @@ pub mod drivers {
     pub mod mysql;
     pub mod postgres;
     pub mod registry;
+    pub mod sql_dialect;
+    #[cfg(test)]
+    pub mod sql_dialect_tests;
+    pub mod sql_syntax;
+    #[cfg(test)]
+    pub mod sql_syntax_tests;
     pub mod sqlite;
 }
 
@@ -639,6 +652,11 @@ pub fn run() {
             saved_queries::save_query,
             saved_queries::update_saved_query,
             saved_queries::delete_saved_query,
+            saved_queries::get_saved_query_folders,
+            saved_queries::create_saved_query_folder,
+            saved_queries::rename_saved_query_folder,
+            saved_queries::delete_saved_query_folder,
+            saved_queries::move_saved_query,
             query_history::get_query_history,
             query_history::add_query_history_entry,
             query_history::delete_query_history_entry,
@@ -709,11 +727,13 @@ pub fn run() {
             commands::get_schema_snapshot,
             // DDL generation
             commands::get_table_query_template,
+            commands::get_column_stats,
             commands::get_create_table_sql,
             commands::get_add_column_sql,
             commands::get_alter_column_sql,
             commands::get_create_index_sql,
             commands::get_create_foreign_key_sql,
+            commands::get_drop_table_sql,
             commands::drop_index_action,
             commands::drop_foreign_key_action,
             // Routines

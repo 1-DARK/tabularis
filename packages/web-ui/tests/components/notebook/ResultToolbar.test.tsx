@@ -6,16 +6,25 @@ import { ResultToolbar } from "../../../src/components/notebook/ResultToolbar";
 import { AlertContext } from "../../../src/contexts/AlertContext";
 import type { AlertContextType } from "../../../src/contexts/AlertContext";
 import type { QueryResult } from "../../../src/types/editor";
+import { useSettings } from "../../../src/hooks/useSettings";
 
 vi.mock("../../../src/hooks/useTabularisClient", () => import("../../support/tauriBackedHooks"));
 vi.mock("../../../src/hooks/usePlatformCapabilities", () => import("../../support/tauriBackedHooks"));
 // Keep exports in memory; never call the native dialog or filesystem.
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), readFile: vi.fn(), writeFile: vi.fn() }));
+vi.mock("../../../src/hooks/useSettings", () => ({ useSettings: vi.fn() }));
 
 const mockSave = vi.mocked(save);
 // Exports go through the platform download, which writes the encoded bytes.
 const mockWriteFile = vi.mocked(writeFile);
+const mockUseSettings = vi.mocked(useSettings);
+
+function useCsvDelimiter(csvDelimiter?: string) {
+  mockUseSettings.mockReturnValue({
+    settings: { csvDelimiter },
+  } as unknown as ReturnType<typeof useSettings>);
+}
 const showAlert = vi.fn<AlertContextType["showAlert"]>();
 
 const result: QueryResult = {
@@ -32,7 +41,7 @@ const formats = [
     format: "csv",
     label: "CSV",
     output:
-      'id,name,active,note\n1,"Ada, ""Lovelace""",true,\n2,"Grace\nHopper",false,',
+      'id,name,active,note\n1,"Ada, ""Lovelace""",true,NULL\n2,"Grace\nHopper",false,\n',
   },
   {
     format: "json",
@@ -59,6 +68,7 @@ describe("ResultToolbar", () => {
     const filePath = `/exports/result.${format}`;
 
     beforeEach(() => {
+      useCsvDelimiter(",");
       mockSave.mockReset().mockResolvedValue(filePath);
       mockWriteFile.mockReset().mockResolvedValue(undefined);
       showAlert.mockReset();
@@ -162,5 +172,26 @@ describe("ResultToolbar", () => {
       );
       expect(console.error).not.toHaveBeenCalled();
     });
+  });
+});
+describe("ResultToolbar CSV delimiter", () => {
+  it("writes the CSV with the configured delimiter, like the editor export", async () => {
+    useCsvDelimiter(";");
+    mockSave.mockReset().mockResolvedValue("/exports/result.csv");
+    mockWriteFile.mockReset().mockResolvedValue(undefined);
+    render(
+      <AlertContext.Provider value={{ showAlert }}>
+        <ResultToolbar result={result} executionTime={1} />
+      </AlertContext.Provider>,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "CSV" }));
+    });
+
+    expect(mockWriteFile).toHaveBeenCalledExactlyOnceWith(
+      "/exports/result.csv",
+      new TextEncoder().encode('id;name;active;note\n1;"Ada, ""Lovelace""";true;NULL\n2;"Grace\nHopper";false;\n'),
+    );
   });
 });

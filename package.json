@@ -1,7 +1,7 @@
 {
   "name": "tabularis",
   "private": true,
-  "version": "0.28.0",
+  "version": "0.29.0",
   "type": "module",
   "links": {
     "discord": "https://discord.com/invite/K2hmhfHRSt",
@@ -9,7 +9,8 @@
     "github-issues": "https://github.com/TabularisDB/tabularis/issues",
     "x": "https://x.com/tabularisdb",
     "bluesky": "https://bsky.app/profile/tabularis.bsky.social",
-    "mastodon": "https://mastodon.social/@tabularis"
+    "mastodon": "https://mastodon.social/@tabularis",
+    "linkedin": "https://www.linkedin.com/company/tabularisdb"
   },
   "scripts": {
     "dev": "pnpm --filter @tabularis/web-ui dev",

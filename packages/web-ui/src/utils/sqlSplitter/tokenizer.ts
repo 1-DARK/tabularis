@@ -32,6 +32,77 @@ export function scanToken(
     return { kind: 'whitespace', length: 1 };
   }
 
+  const comment = scanComment(source, position, options);
+  if (comment) return comment;
+
+  if (
+    options.eString &&
+    (ch === 'E' || ch === 'e') &&
+    source[position + 1] === "'" &&
+    !isIdentBoundary(source, position - 1)
+  ) {
+    return scanEString(source, position);
+  }
+
+  if (options.dollarQuoting && ch === '$') {
+    const dollarToken = scanDollarQuoted(source, position);
+    if (dollarToken) return dollarToken;
+  }
+
+  if (
+    options.qQuoting &&
+    (ch === 'Q' || ch === 'q' || ch === 'N' || ch === 'n')
+  ) {
+    const qQuoteToken = scanQQuoted(source, position);
+    if (qQuoteToken) return qQuoteToken;
+  }
+
+  if (options.tripleQuotedStrings || options.stringPrefixes.length > 0) {
+    const literalToken = scanPrefixedOrTripleString(source, position, options);
+    if (literalToken) return literalToken;
+  }
+
+  for (const rule of options.quotes) {
+    if (source.startsWith(rule.open, position)) {
+      return scanQuoted(source, position, rule);
+    }
+  }
+
+  if (state.lineLeading) {
+    if (
+      options.customDelimiter &&
+      matchesKeyword(source, position, 'DELIMITER')
+    ) {
+      const token = readCustomDelimiter(source, position);
+      if (token) return token;
+    }
+    if (options.goDelimiter && matchesKeyword(source, position, 'GO')) {
+      const token = readGoDelimiter(source, position);
+      if (token) return token;
+    }
+    if (options.slashDelimiter && ch === '/') {
+      const token = readSlashDelimiter(source, position);
+      if (token) return token;
+    }
+  }
+
+  return { kind: 'data', length: 1 };
+}
+
+/**
+ * Scans a comment starting at `position` with the dialect's comment rules
+ * (`--` with the optional space rule, `#`, nested or flat block comments).
+ * Returns null when no comment starts here. A `--` that is an operator and
+ * a MySQL executable comment (`/*!` ...) come back as `data`: callers that
+ * skip trivia (see `scriptBlocks.ts`) must treat those as code.
+ */
+export function scanComment(
+  source: string,
+  position: number,
+  options: DialectOptions,
+): Token | null {
+  const ch = source[position];
+
   if (options.lineComments && ch === '-' && source[position + 1] === '-') {
     // MySQL/MariaDB require a whitespace (or EOF) after `--` for it to
     // be a comment; otherwise it is the binary subtraction operator
@@ -75,53 +146,7 @@ export function scanToken(
     return { kind: isExecutable ? 'data' : 'blockComment', length };
   }
 
-  if (
-    options.eString &&
-    (ch === 'E' || ch === 'e') &&
-    source[position + 1] === "'" &&
-    !isIdentBoundary(source, position - 1)
-  ) {
-    return scanEString(source, position);
-  }
-
-  if (options.dollarQuoting && ch === '$') {
-    const dollarToken = scanDollarQuoted(source, position);
-    if (dollarToken) return dollarToken;
-  }
-
-  if (
-    options.qQuoting &&
-    (ch === 'Q' || ch === 'q' || ch === 'N' || ch === 'n')
-  ) {
-    const qQuoteToken = scanQQuoted(source, position);
-    if (qQuoteToken) return qQuoteToken;
-  }
-
-  for (const rule of options.quotes) {
-    if (source.startsWith(rule.open, position)) {
-      return scanQuoted(source, position, rule);
-    }
-  }
-
-  if (state.lineLeading) {
-    if (
-      options.customDelimiter &&
-      matchesKeyword(source, position, 'DELIMITER')
-    ) {
-      const token = readCustomDelimiter(source, position);
-      if (token) return token;
-    }
-    if (options.goDelimiter && matchesKeyword(source, position, 'GO')) {
-      const token = readGoDelimiter(source, position);
-      if (token) return token;
-    }
-    if (options.slashDelimiter && ch === '/') {
-      const token = readSlashDelimiter(source, position);
-      if (token) return token;
-    }
-  }
-
-  return { kind: 'data', length: 1 };
+  return null;
 }
 
 function isIdentBoundary(source: string, prevIndex: number): boolean {
@@ -222,6 +247,84 @@ function scanDollarQuoted(source: string, position: number): Token | null {
     p++;
   }
   return { kind: 'string', length: source.length - position };
+}
+
+/**
+ * A string literal with one of the dialect's `stringPrefixes` (matched
+ * case-insensitively, longest first, e.g. GoogleSQL `r` / `b` / `rb` /
+ * `br`) and/or triple quotes (`'''…'''`, `"""…"""`) when
+ * `tripleQuotedStrings` is on. Only quotes of kind `string` qualify.
+ * Returns null for a plain literal without prefix or triple quote, which
+ * the ordinary quote rules handle.
+ *
+ * Escapes follow the quote's own rule. With a backslash escape, a
+ * backslash pairs with the next character even in a raw literal: the
+ * backslash is kept as text there, but it still cannot end the literal
+ * (`r'\''` is the two characters `\'`), which is why a GoogleSQL raw
+ * literal can't end in an odd number of backslashes.
+ */
+function scanPrefixedOrTripleString(
+  source: string,
+  position: number,
+  options: DialectOptions,
+): Token | null {
+  let p = position;
+  if (!isIdentBoundary(source, position - 1)) {
+    p += matchStringPrefix(source, position, options.stringPrefixes);
+  }
+  const rule = options.quotes.find(
+    (q) =>
+      q.kind === 'string' &&
+      q.open.length === 1 &&
+      q.open === q.close &&
+      source.startsWith(q.open, p),
+  );
+  if (!rule) return null;
+  const triple = rule.open.repeat(3);
+  const isTriple =
+    options.tripleQuotedStrings &&
+    (rule.open === "'" || rule.open === '"') &&
+    source.startsWith(triple, p);
+  if (p === position && !isTriple) return null;
+  if (!isTriple) {
+    const token = scanQuoted(source, p, rule);
+    return { kind: 'string', length: token.length + p - position };
+  }
+
+  p += triple.length;
+  while (p < source.length) {
+    if (
+      rule.escape !== undefined &&
+      source[p] === rule.escape &&
+      p + 1 < source.length
+    ) {
+      p += 2;
+      continue;
+    }
+    if (source.startsWith(triple, p)) {
+      return { kind: 'string', length: p + triple.length - position };
+    }
+    p++;
+  }
+  return { kind: 'string', length: source.length - position };
+}
+
+/** Length of the longest of `prefixes` at `position` (any case), or 0. */
+function matchStringPrefix(
+  source: string,
+  position: number,
+  prefixes: ReadonlyArray<string>,
+): number {
+  let longest = 0;
+  for (const prefix of prefixes) {
+    if (
+      prefix.length > longest &&
+      source.slice(position, position + prefix.length).toLowerCase() === prefix
+    ) {
+      longest = prefix.length;
+    }
+  }
+  return longest;
 }
 
 function scanQQuoted(source: string, position: number): Token | null {

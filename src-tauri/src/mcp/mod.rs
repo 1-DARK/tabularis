@@ -42,6 +42,7 @@ struct CallAudit {
     tool: String,
     connection_id: Option<String>,
     connection_name: Option<String>,
+    database: Option<String>,
     query: Option<String>,
     query_kind: Option<String>,
     rows: Option<usize>,
@@ -56,6 +57,7 @@ impl CallAudit {
             tool: tool.to_string(),
             connection_id: None,
             connection_name: None,
+            database: None,
             query: None,
             query_kind: None,
             rows: None,
@@ -303,6 +305,22 @@ async fn resolve_db_params(
         if let Ok(Some(value)) = uri {
             conn.params.connection_uri = Some(value);
         }
+    }
+
+    // Plugin-owned secrets live only in the keychain and must reach the
+    // plugin driver through `params.extra`, exactly as in the app.
+    if !conn.plugin_secret_keys.is_empty() {
+        conn = tokio::task::spawn_blocking(move || {
+            let cache = credential_cache::CredentialCache::default();
+            crate::plugin_secrets::hydrate_connection(&cache, &mut conn);
+            conn
+        })
+        .await
+        .map_err(|e| JsonRpcError {
+            code: -32000,
+            message: e.to_string(),
+            data: None,
+        })?;
     }
 
     let expanded = expand_ssh_params_for_mcp(&conn.params).await?;
@@ -847,6 +865,7 @@ fn emit_audit(
         tool: audit.tool.clone(),
         connection_id: audit.connection_id.clone(),
         connection_name: audit.connection_name.clone(),
+        database: audit.database.clone(),
         query: audit.query.clone(),
         query_kind: audit.query_kind.clone(),
         duration_ms: start.elapsed().as_millis() as u64,
@@ -1017,7 +1036,9 @@ async fn tool_list_tables(
     let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
     audit.connection_name = Some(conn.name.clone());
-    apply_database_override(&mut db_params, database_arg(args));
+    let database = database_arg(args);
+    audit.database = database.map(str::to_string);
+    apply_database_override(&mut db_params, database);
 
     let effective_schema = resolve_default_schema(&driver, schema);
     let tables = driver
@@ -1097,7 +1118,9 @@ async fn tool_describe_table(
     let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
     audit.connection_name = Some(conn.name.clone());
-    apply_database_override(&mut db_params, database_arg(args));
+    let database = database_arg(args);
+    audit.database = database.map(str::to_string);
+    apply_database_override(&mut db_params, database);
 
     let effective_schema = resolve_default_schema(&driver, schema);
     // Run the three metadata fetches concurrently so a slow driver costs one
@@ -1150,13 +1173,19 @@ async fn tool_run_query(
 
     audit.connection_id = Some(conn_id.to_string());
     audit.query = Some(query.to_string());
-    let kind = ai_activity::classify_query_kind(query);
-    audit.query_kind = Some(kind.to_string());
+    // Dialect-agnostic first, so the audit entry has a kind even when the
+    // connection cannot be resolved; refined below once the driver's
+    // `sql_dialect` / `sql_syntax` are known.
+    audit.query_kind = Some(ai_activity::classify_query_kind(query).to_string());
 
     let (conn, mut db_params, driver) =
         resolve_db_driver(conn_id, config.active_external_drivers.as_deref()).await?;
+    let capabilities = driver.manifest().capabilities.clone();
+    let kind = ai_activity::classify_query_kind_for_capabilities(query, Some(&capabilities));
+    audit.query_kind = Some(kind.to_string());
     audit.connection_name = Some(conn.name.clone());
     let database = database_arg(args);
+    audit.database = database.map(str::to_string);
     apply_database_override(&mut db_params, database);
 
     // Read-only enforcement (fail-closed: unknown counts as write).
@@ -1266,7 +1295,10 @@ async fn tool_run_query(
                         // payload) and slip past the gate that runs against
                         // the *original* query above.
                         effective_query = edited.to_string();
-                        let new_kind = ai_activity::classify_query_kind(&effective_query);
+                        let new_kind = ai_activity::classify_query_kind_for_capabilities(
+                            &effective_query,
+                            Some(&capabilities),
+                        );
                         audit.query = Some(effective_query.clone());
                         audit.query_kind = Some(new_kind.to_string());
 

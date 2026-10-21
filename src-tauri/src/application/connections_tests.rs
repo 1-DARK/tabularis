@@ -88,6 +88,7 @@ async fn browser_connection_responses_keep_stored_secrets_write_only() {
         ConnectionCommand::SaveConnection {
             name: "Browser connection".to_string(),
             params: connection_params("stored-secret"),
+            plugin_secret_changes: None,
             detect_json_in_text_columns: None,
             environment: Some("development".to_string()),
         },
@@ -126,6 +127,7 @@ async fn connection_groups_tags_ordering_and_duplication_share_one_service() {
         ConnectionCommand::SaveConnection {
             name: "Original".to_string(),
             params,
+            plugin_secret_changes: None,
             detect_json_in_text_columns: Some(true),
             environment: Some("staging".to_string()),
         },
@@ -234,6 +236,7 @@ async fn connection_test_failures_emit_correlated_progress() {
             request: TestConnectionRequest {
                 params,
                 connection_id: None,
+                plugin_secret_changes: Default::default(),
                 progress_id: Some("progress-1".to_string()),
             },
         },
@@ -412,7 +415,7 @@ fn keychain_failure_persists_passwords_and_reports_fallback_without_exposing_the
     );
     let mut params = connection_params("db-secret");
     params.ssh_password = Some("ssh-secret".into());
-    let saved = save_connection(&runtime, &state, "Fallback".into(), params, None, None).unwrap();
+    let saved = save_connection(&runtime, &state, "Fallback".into(), params, Default::default(), None, None).unwrap();
     assert_eq!(saved.params.save_in_keychain, Some(false));
     assert_eq!(saved.params.password, None);
     let persisted = find_connection(&load_file(&runtime).unwrap(), &saved.id).unwrap();
@@ -442,6 +445,7 @@ fn failed_config_save_rolls_back_new_credentials() {
         &state,
         "Failure".into(),
         connection_params("secret"),
+        Default::default(),
         None,
         None
     )
@@ -455,7 +459,7 @@ fn duplicate_clears_a_missing_uri_marker() {
     let mut params = connection_params("secret");
     params.connection_uri = Some("postgres://user:secret@localhost/db".into());
     let original =
-        save_connection(&runtime, &state, "Original".into(), params, None, None).unwrap();
+        save_connection(&runtime, &state, "Original".into(), params, Default::default(), None, None).unwrap();
     runtime
         .secrets
         .delete(&secret_account(&original.id, CONNECTION_URI_SUFFIX))
@@ -472,6 +476,7 @@ fn update_omitted_password_retains_the_secret_when_disabling_keychain() {
         &state,
         "Original".into(),
         connection_params("secret"),
+        Default::default(),
         None,
         None,
     )
@@ -484,6 +489,7 @@ fn update_omitted_password_retains_the_secret_when_disabling_keychain() {
         saved.id.clone(),
         "Edited".into(),
         params,
+        Default::default(),
         None,
         None,
     )
@@ -508,6 +514,7 @@ async fn switching_to_multiple_databases_backfills_saved_queries_and_history() {
         &state,
         "Original".into(),
         connection_params("secret"),
+        Default::default(),
         None,
         None,
     )
@@ -547,6 +554,7 @@ async fn switching_to_multiple_databases_backfills_saved_queries_and_history() {
         saved.id.clone(),
         "Edited".into(),
         params,
+        Default::default(),
         None,
         None,
     )
@@ -576,7 +584,7 @@ fn switching_driver_does_not_keep_the_previous_drivers_uri() {
     let (_temp, runtime, state) = fixture();
     let mut params = connection_params("secret");
     params.connection_uri = Some("postgres://user:secret@localhost/db".into());
-    let saved = save_connection(&runtime, &state, "Original".into(), params, None, None).unwrap();
+    let saved = save_connection(&runtime, &state, "Original".into(), params, Default::default(), None, None).unwrap();
     let mut params = saved.params;
     params.driver = "mysql".into();
     let updated = update_connection(
@@ -585,6 +593,7 @@ fn switching_driver_does_not_keep_the_previous_drivers_uri() {
         saved.id.clone(),
         "Edited".into(),
         params,
+        Default::default(),
         None,
         None,
     )
@@ -631,4 +640,101 @@ fn unreadable_existing_secret_is_not_overwritten_or_deleted() {
         .is_err());
     writes.rollback(&runtime);
     assert!(secrets.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn plugin_secrets_live_in_the_keychain_for_the_whole_connection_lifecycle() {
+    let (_temp, runtime, state) = fixture();
+    let mut params = connection_params("db-secret");
+    params.driver = "test-plugin".to_string();
+    params
+        .extra
+        .insert("token".to_string(), "inline-token".to_string());
+    let changes = HashMap::from([("token".to_string(), Some("stored-token".to_string()))]);
+    let saved =
+        save_connection(&runtime, &state, "Plugin".into(), params, changes, None, None).unwrap();
+    let account = |id: &str| format!("{id}:plugin:test-plugin:token");
+
+    assert_eq!(saved.plugin_secret_keys, vec!["token"]);
+    let persisted = find_connection(&load_file(&runtime).unwrap(), &saved.id).unwrap();
+    assert!(!persisted.params.extra.contains_key("token"));
+    assert_eq!(
+        runtime.secrets.get(&account(&saved.id)).unwrap().as_deref(),
+        Some("stored-token")
+    );
+    assert_eq!(
+        load_plugin_secrets(&runtime, &persisted)
+            .get("token")
+            .map(String::as_str),
+        Some("stored-token")
+    );
+
+    let duplicate = duplicate_connection(&runtime, &state, &saved.id).unwrap();
+    assert_eq!(duplicate.plugin_secret_keys, vec!["token"]);
+    assert_eq!(
+        runtime
+            .secrets
+            .get(&account(&duplicate.id))
+            .unwrap()
+            .as_deref(),
+        Some("stored-token")
+    );
+
+    let cleared = HashMap::from([("token".to_string(), None)]);
+    let updated = update_connection(
+        &runtime,
+        &state,
+        saved.id.clone(),
+        "Plugin".into(),
+        persisted.params,
+        cleared,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(updated.plugin_secret_keys.is_empty());
+    assert_eq!(runtime.secrets.get(&account(&saved.id)).unwrap(), None);
+
+    delete_connection(&runtime, &state, &duplicate.id).unwrap();
+    assert_eq!(runtime.secrets.get(&account(&duplicate.id)).unwrap(), None);
+}
+
+#[test]
+fn sql_builder_secrets_bind_stored_plugin_secrets_and_tolerate_missing_ones() {
+    let (_temp, runtime, _state) = fixture();
+    runtime
+        .secrets
+        .set("conn-1:plugin:test-plugin:credential", "stored-credential")
+        .unwrap();
+    let mut connection = SavedConnection {
+        id: "conn-1".to_string(),
+        name: "Plugin".to_string(),
+        params: ConnectionParams {
+            driver: "test-plugin".to_string(),
+            host: Some("db.internal".to_string()),
+            ssh_enabled: Some(true),
+            ..ConnectionParams::default()
+        },
+        plugin_secret_keys: vec!["credential".to_string(), "missing".to_string()],
+        group_id: None,
+        sort_order: None,
+        detect_json_in_text_columns: None,
+        appearance: None,
+        tag_ids: None,
+        environment: None,
+    };
+
+    bind_sql_builder_secrets(&runtime, &mut connection);
+    let built = crate::commands::sql_builder_params(&connection, Some("analytics".into()));
+
+    assert_eq!(
+        built.extra.get("credential").map(String::as_str),
+        Some("stored-credential")
+    );
+    assert!(!built.extra.contains_key("missing"));
+    assert_eq!(built.host.as_deref(), Some("db.internal"));
+    assert_eq!(
+        built.database,
+        DatabaseSelection::Single("analytics".to_string())
+    );
 }

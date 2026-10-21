@@ -15,6 +15,26 @@ vi.mock('../../src/hooks/useDatabase', () => ({
   useDatabase: vi.fn(),
 }));
 
+type Backend = {
+  queries?: unknown[];
+  folders?: unknown[];
+  fail?: Record<string, Error>;
+  /** Runs when a command is invoked, to simulate the backend changing state. */
+  effects?: Record<string, () => void>;
+};
+
+// Routes by command so tests don't depend on how many reads a refresh makes.
+const mockBackend = (backend: Backend) => {
+  mockClient.call.mockImplementation(async (cmd: string) => {
+    if (backend.fail?.[cmd]) throw backend.fail[cmd];
+    backend.effects?.[cmd]?.();
+    if (cmd === 'get_saved_queries') return backend.queries ?? [];
+    if (cmd === 'get_saved_query_folders') return backend.folders ?? [];
+    return undefined;
+  });
+  return backend;
+};
+
 describe('SavedQueriesProvider', () => {
   const mockQueries = [
     { id: 'query-1', name: 'All Users', sql: 'SELECT * FROM users', connection_id: 'conn-123' },
@@ -29,7 +49,7 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should provide initial empty state', () => {
-    mockClient.call.mockResolvedValue([]);
+    mockBackend({});
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -41,7 +61,7 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should load saved queries on mount', async () => {
-    mockClient.call.mockResolvedValue(mockQueries);
+    mockBackend({ queries: mockQueries });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -59,7 +79,7 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should clear queries when disconnected', async () => {
-    mockClient.call.mockResolvedValue(mockQueries);
+    mockBackend({ queries: mockQueries });
     vi.mocked(useDatabase).mockReturnValue({
       activeConnectionId: null,
     } as ReturnType<typeof useDatabase>);
@@ -76,10 +96,14 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should save a new query', async () => {
-    mockClient.call
-      .mockResolvedValueOnce(mockQueries) // Initial load
-      .mockResolvedValueOnce(undefined) // save_query
-      .mockResolvedValueOnce([...mockQueries, { id: 'query-3', name: 'New Query', sql: 'SELECT 1', connection_id: 'conn-123' }]);
+    const backend: Backend = mockBackend({
+      queries: mockQueries,
+      effects: {
+        save_query: () => {
+          backend.queries = [...mockQueries, { id: 'query-3', name: 'New Query', sql: 'SELECT 1', connection_id: 'conn-123' }];
+        },
+      },
+    });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -118,13 +142,17 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should update an existing query', async () => {
-    mockClient.call
-      .mockResolvedValueOnce(mockQueries)
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce([
-        { ...mockQueries[0], name: 'Updated Users', sql: 'SELECT id, name FROM users' },
-        mockQueries[1],
-      ]);
+    const backend: Backend = mockBackend({
+      queries: mockQueries,
+      effects: {
+        update_saved_query: () => {
+          backend.queries = [
+            { ...mockQueries[0], name: 'Updated Users', sql: 'SELECT id, name FROM users' },
+            mockQueries[1],
+          ];
+        },
+      },
+    });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -149,10 +177,14 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should delete a query', async () => {
-    mockClient.call
-      .mockResolvedValueOnce(mockQueries)
-      .mockResolvedValueOnce(undefined)
-      .mockResolvedValueOnce([mockQueries[1]]);
+    const backend: Backend = mockBackend({
+      queries: mockQueries,
+      effects: {
+        delete_saved_query: () => {
+          backend.queries = [mockQueries[1]];
+        },
+      },
+    });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -172,9 +204,7 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should handle save error', async () => {
-    mockClient.call
-      .mockResolvedValueOnce(mockQueries)
-      .mockRejectedValueOnce(new Error('Save failed'));
+    mockBackend({ queries: mockQueries, fail: { save_query: new Error('Save failed') } });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -187,9 +217,7 @@ describe('SavedQueriesProvider', () => {
   });
 
   it('should refresh queries manually', async () => {
-    mockClient.call
-      .mockResolvedValueOnce(mockQueries)
-      .mockResolvedValueOnce([...mockQueries, { id: 'query-3', name: 'Another Query', sql: 'SELECT 2', connection_id: 'conn-123' }]);
+    const backend = mockBackend({ queries: mockQueries });
 
     const wrapper = ({ children }: { children: React.ReactNode }) =>
       React.createElement(SavedQueriesProvider, null, children);
@@ -198,10 +226,91 @@ describe('SavedQueriesProvider', () => {
 
     await waitFor(() => expect(result.current.queries).toHaveLength(2));
 
+    backend.queries = [...mockQueries, { id: 'query-3', name: 'Another Query', sql: 'SELECT 2', connection_id: 'conn-123' }];
     await result.current.refreshQueries();
 
     await waitFor(() => {
       expect(result.current.queries).toHaveLength(3);
+    });
+  });
+
+  describe('folders', () => {
+    const folder = { id: 'f1', connection_id: 'conn-123', name: 'Reports', created_at: null };
+
+    const setup = async (backend: Backend) => {
+      mockBackend(backend);
+      const wrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(SavedQueriesProvider, null, children);
+      const hook = renderHook(() => useSavedQueries(), { wrapper });
+      await waitFor(() => expect(hook.result.current.isLoading).toBe(false));
+      return hook;
+    };
+
+    it('loads folders for the active connection alongside queries', async () => {
+      const { result } = await setup({ queries: mockQueries, folders: [folder] });
+
+      expect(result.current.folders).toEqual([folder]);
+      expect(mockClient.call).toHaveBeenCalledWith('get_saved_query_folders', { connectionId: 'conn-123' });
+    });
+
+    it('still loads queries, unfiled, when folders fail to load', async () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const { result } = await setup({
+        queries: mockQueries,
+        fail: { get_saved_query_folders: new Error('corrupt folders.json') },
+      });
+
+      expect(result.current.queries).toHaveLength(2);
+      expect(result.current.folders).toEqual([]);
+      consoleSpy.mockRestore();
+    });
+
+    it('clears folders when disconnected', async () => {
+      vi.mocked(useDatabase).mockReturnValue({ activeConnectionId: null } as ReturnType<typeof useDatabase>);
+      const { result } = await setup({ folders: [folder] });
+
+      expect(result.current.folders).toEqual([]);
+      expect(mockClient.call).not.toHaveBeenCalled();
+    });
+
+    it('creates a folder for the active connection and refreshes', async () => {
+      const backend: Backend = { effects: { create_saved_query_folder: () => { backend.folders = [folder]; } } };
+      const { result } = await setup(backend);
+
+      await result.current.createFolder('Reports');
+
+      expect(mockClient.call).toHaveBeenCalledWith('create_saved_query_folder', { connectionId: 'conn-123', name: 'Reports' });
+      await waitFor(() => expect(result.current.folders).toEqual([folder]));
+    });
+
+    it('renames and deletes folders', async () => {
+      const { result } = await setup({ folders: [folder] });
+
+      await result.current.renameFolder('f1', 'Ops');
+      expect(mockClient.call).toHaveBeenCalledWith('rename_saved_query_folder', { connectionId: 'conn-123', id: 'f1', name: 'Ops' });
+
+      await result.current.deleteFolder('f1');
+      expect(mockClient.call).toHaveBeenCalledWith('delete_saved_query_folder', { connectionId: 'conn-123', id: 'f1' });
+    });
+
+    it('moves a query into a folder and back to unfiled', async () => {
+      const { result } = await setup({ queries: mockQueries, folders: [folder] });
+
+      await result.current.moveQuery('query-1', 'f1');
+      expect(mockClient.call).toHaveBeenCalledWith('move_saved_query', { connectionId: 'conn-123', id: 'query-1', folderId: 'f1' });
+
+      await result.current.moveQuery('query-1', null);
+      expect(mockClient.call).toHaveBeenCalledWith('move_saved_query', { connectionId: 'conn-123', id: 'query-1', folderId: null });
+    });
+
+    it('surfaces backend errors, e.g. deleting a non-empty folder', async () => {
+      const { result } = await setup({
+        folders: [folder],
+        fail: { delete_saved_query_folder: new Error('Folder is not empty') },
+      });
+
+      await expect(result.current.deleteFolder('f1')).rejects.toThrow('Folder is not empty');
+      expect(result.current.folders).toEqual([folder]);
     });
   });
 });

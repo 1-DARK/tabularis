@@ -15,6 +15,7 @@ export type AiProvider =
   | "openai"
   | "anthropic"
   | "openrouter"
+  | "requesty"
   | "ollama"
   | "custom-openai"
   | "minimax";
@@ -91,6 +92,7 @@ export interface Settings {
   csvIncludeHeaders?: boolean;
   /** Whether the row editor sidebar follows row selection. Default: true. */
   rowEditorFollowSelection?: boolean;
+  groupSidebarConnectionsByFolder?: boolean;
   /** What happens on double-click of a data cell: "inline" (edit in place), "sidebar" (open in row editor), "both" (inline + update sidebar). Default: "inline". */
   cellDoubleClickAction?: "inline" | "sidebar" | "both";
   activeExternalDrivers?: string[];

@@ -296,8 +296,16 @@ pub async fn export_payload(
         file.tags.retain(|tag| kept_tags.contains(&tag.id));
     }
 
+    let mut plugin_secrets = HashMap::new();
     for connection in &mut file.connections {
         if include_secrets {
+            // A missing keychain entry must not abort the whole export (or a
+            // scheduled backup): the connection is exported without that value.
+            let values =
+                crate::application::connections::load_plugin_secrets(runtime, connection);
+            if !values.is_empty() {
+                plugin_secrets.insert(connection.id.clone(), values);
+            }
             crate::application::connections::restore_connection_secrets(
                 runtime,
                 &connection.id,
@@ -308,6 +316,7 @@ pub async fn export_payload(
             connection.params.connection_uri = None;
             connection.params.ssh_password = None;
             connection.params.ssh_key_passphrase = None;
+            connection.plugin_secret_keys.clear();
         }
     }
 
@@ -318,6 +327,7 @@ pub async fn export_payload(
         ssh_connections,
         k8s_connections,
         tags: file.tags,
+        plugin_secrets,
     })
 }
 
@@ -461,9 +471,11 @@ pub async fn apply_export_payload(
     runtime: &RuntimeContext,
     connection_cache: &crate::connection_cache::ConnectionCache,
     credential_cache: &crate::credential_cache::CredentialCache,
-    payload: ExportPayload,
+    mut payload: ExportPayload,
 ) -> Result<(), String> {
     let mut current = load_file(runtime).unwrap_or_default();
+    let mut imported_plugin_secrets = std::mem::take(&mut payload.plugin_secrets);
+    let mut plugin_secret_writes = Vec::new();
     let mut current_ssh: Vec<SshConnection> = load_json(&ssh_path(runtime))?;
     crate::commands::merge_groups(&mut current.groups, payload.groups);
     let tag_remap = crate::connection_tags::merge_imported_tags(&mut current.tags, payload.tags);
@@ -472,6 +484,30 @@ pub async fn apply_export_payload(
 
     for mut connection in incoming {
         connection.environment = normalize_environment(connection.environment.take());
+        let declared_plugin_secret_keys = std::mem::take(&mut connection.plugin_secret_keys);
+        let imported_values = imported_plugin_secrets
+            .remove(&connection.id)
+            .unwrap_or_default();
+        let previous_plugin_metadata = current
+            .connections
+            .iter()
+            .find(|existing| existing.id == connection.id)
+            .map(|existing| {
+                (
+                    existing.params.driver.clone(),
+                    existing.plugin_secret_keys.clone(),
+                )
+            });
+        // Keychain writes are deferred until the connections file is saved,
+        // so a failed import never leaves orphaned plugin secrets behind.
+        plugin_secret_writes.extend(crate::plugin_secrets::plan_imported_secrets(
+            &mut connection,
+            &declared_plugin_secret_keys,
+            imported_values,
+            previous_plugin_metadata
+                .as_ref()
+                .map(|(driver, keys)| (driver.as_str(), keys.as_slice())),
+        ));
         persist_imported_connection_secrets(runtime, credential_cache, &mut connection)?;
         if let Some(existing) = current
             .connections
@@ -496,7 +532,12 @@ pub async fn apply_export_payload(
         }
     }
 
-    crate::persistence::save_connections_file(&runtime.paths.connections_file(), &current)?;
+    crate::plugin_secrets::commit_secret_writes(
+        &RuntimeSecretStore(runtime),
+        credential_cache,
+        plugin_secret_writes,
+        || crate::persistence::save_connections_file(&runtime.paths.connections_file(), &current),
+    )?;
     save_json(&ssh_path(runtime), &current_ssh)?;
     let mut current_k8s: Vec<K8sConnection> = load_json(&k8s_path(runtime))?;
     for connection in payload.k8s_connections {
@@ -635,6 +676,20 @@ fn resolve_import_file(
             }
             Ok(Some(ResolvedImportFile::Upload(upload)))
         }
+    }
+}
+
+struct RuntimeSecretStore<'a>(&'a RuntimeContext);
+
+impl crate::plugin_secrets::SecretStore for RuntimeSecretStore<'_> {
+    fn set(&self, connection_id: &str, driver: &str, key: &str, value: &str) -> Result<(), String> {
+        let account = super::connections::plugin_secret_account(connection_id, driver, key);
+        self.0.secrets.set(&account, value)
+    }
+
+    fn delete(&self, connection_id: &str, driver: &str, key: &str) -> Result<(), String> {
+        let account = super::connections::plugin_secret_account(connection_id, driver, key);
+        self.0.secrets.delete(&account)
     }
 }
 

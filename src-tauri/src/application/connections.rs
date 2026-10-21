@@ -6,6 +6,7 @@ use crate::models::{
     ConnectionAppearance, ConnectionGroup, ConnectionParams, ConnectionsFile, SavedConnection,
     TestConnectionRequest,
 };
+use crate::plugin_secrets::PluginSecretChanges;
 use crate::runtime::{state::ApplicationState, RuntimeContext};
 use serde::Serialize;
 use serde_json::Value;
@@ -36,6 +37,7 @@ pub enum ConnectionCommand {
     SaveConnection {
         name: String,
         params: ConnectionParams,
+        plugin_secret_changes: Option<PluginSecretChanges>,
         detect_json_in_text_columns: Option<bool>,
         environment: Option<String>,
     },
@@ -43,6 +45,7 @@ pub enum ConnectionCommand {
         id: String,
         name: String,
         params: ConnectionParams,
+        plugin_secret_changes: Option<PluginSecretChanges>,
         detect_json_in_text_columns: Option<bool>,
         environment: Option<String>,
     },
@@ -168,6 +171,7 @@ pub async fn execute_for_session(
         ConnectionCommand::SaveConnection {
             name,
             params,
+            plugin_secret_changes,
             detect_json_in_text_columns,
             environment,
         } => json(save_connection(
@@ -175,6 +179,7 @@ pub async fn execute_for_session(
             state,
             name,
             params,
+            plugin_secret_changes.unwrap_or_default(),
             detect_json_in_text_columns,
             environment,
         )?),
@@ -182,6 +187,7 @@ pub async fn execute_for_session(
             id,
             name,
             params,
+            plugin_secret_changes,
             detect_json_in_text_columns,
             environment,
         } => {
@@ -192,6 +198,7 @@ pub async fn execute_for_session(
                 id.clone(),
                 name,
                 params,
+                plugin_secret_changes.unwrap_or_default(),
                 detect_json_in_text_columns,
                 environment,
             )?;
@@ -363,8 +370,10 @@ pub(crate) fn resolve_saved_connection_params(
 ) -> Result<(String, ConnectionParams), String> {
     let saved = find_connection(&load_file(runtime)?, connection_id)?;
     let driver_id = saved.params.driver.clone();
+    let plugin_secrets = load_plugin_secrets(runtime, &saved);
     let mut params = saved.params;
     restore_secrets(runtime, connection_id, &mut params)?;
+    params.extra.extend(plugin_secrets);
     params.connection_id = Some(connection_id.to_string());
     let params =
         crate::application::tunnels::resolve_connection_params(runtime, &params, session_id)?;
@@ -610,6 +619,96 @@ pub(crate) fn restore_connection_secrets(
     restore_secrets(runtime, id, params)
 }
 
+pub(crate) fn plugin_secret_account(connection_id: &str, driver: &str, key: &str) -> String {
+    format!("{connection_id}:plugin:{driver}:{key}")
+}
+
+/// Stored plugin-owned secrets of `connection`. Lenient like the desktop path:
+/// an unreadable key is logged and left unset so the plugin reports it.
+pub(crate) fn load_plugin_secrets(
+    runtime: &RuntimeContext,
+    connection: &SavedConnection,
+) -> std::collections::HashMap<String, String> {
+    let driver = &connection.params.driver;
+    crate::plugin_secrets::resolve_secret_values(
+        &connection.id,
+        &connection.plugin_secret_keys,
+        |key| {
+            runtime
+                .secrets
+                .get(&plugin_secret_account(&connection.id, driver, key))
+        },
+    )
+    .values
+}
+
+/// Applies the modal's plugin secret changes to the keychain and returns the
+/// key list to persist. Values never stay in `params.extra`.
+fn persist_plugin_secrets(
+    runtime: &RuntimeContext,
+    id: &str,
+    previous: Option<(&str, &[String])>,
+    params: &mut ConnectionParams,
+    changes: &PluginSecretChanges,
+    writes: &mut SecretWrites,
+) -> Result<Vec<String>, String> {
+    let same_driver = previous.is_none_or(|(driver, _)| driver == params.driver);
+    let existing = previous.map(|(_, keys)| keys).unwrap_or_default();
+    let keys = crate::plugin_secrets::next_secret_keys(existing, same_driver, changes)?;
+    if let Some((old_driver, old_keys)) = previous.filter(|_| !same_driver) {
+        for key in old_keys {
+            writes.delete(runtime, plugin_secret_account(id, old_driver, key))?;
+        }
+    }
+    for (key, value) in changes {
+        params.extra.remove(key);
+        let account = plugin_secret_account(id, &params.driver, key);
+        match value {
+            Some(value) => writes.set(runtime, account, value)?,
+            None => writes.delete(runtime, account)?,
+        }
+    }
+    Ok(keys)
+}
+
+/// Secrets a plugin SQL builder may forward: the connection URI, the database
+/// password and the plugin-owned secrets. Never fails (see
+/// `commands::apply_sql_builder_secrets`); SSH secrets are skipped because the
+/// builders never open tunnels.
+pub(crate) fn bind_sql_builder_secrets(runtime: &RuntimeContext, connection: &mut SavedConnection) {
+    let id = connection.id.clone();
+    crate::commands::apply_sql_builder_secrets(
+        &mut connection.params,
+        &id,
+        |stored| {
+            if stored {
+                runtime
+                    .secrets
+                    .get(&secret_account(&id, CONNECTION_URI_SUFFIX))
+            } else {
+                Ok(None)
+            }
+        },
+        || {
+            runtime
+                .secrets
+                .get(&secret_account(&id, DB_SECRET_SUFFIX))?
+                .ok_or_else(|| "No password stored".to_string())
+        },
+    );
+    let plugin_secrets = load_plugin_secrets(runtime, connection);
+    connection.params.extra.extend(plugin_secrets);
+}
+
+fn delete_plugin_secrets(runtime: &RuntimeContext, connection: &SavedConnection) {
+    for key in &connection.plugin_secret_keys {
+        let account = plugin_secret_account(&connection.id, &connection.params.driver, key);
+        if let Err(error) = runtime.secrets.delete(&account) {
+            log::warn!("Failed to remove plugin secret '{key}': {error}");
+        }
+    }
+}
+
 fn restore_secrets(
     runtime: &RuntimeContext,
     id: &str,
@@ -649,6 +748,7 @@ fn save_connection(
     state: &Arc<ApplicationState>,
     name: String,
     mut params: ConnectionParams,
+    plugin_secret_changes: PluginSecretChanges,
     detect_json_in_text_columns: Option<bool>,
     environment: Option<String>,
 ) -> Result<SavedConnection, String> {
@@ -658,11 +758,20 @@ fn save_connection(
     let mut writes = SecretWrites::default();
     let result = (|| {
         params.connection_id = None;
+        let plugin_secret_keys = persist_plugin_secrets(
+            runtime,
+            &id,
+            None,
+            &mut params,
+            &plugin_secret_changes,
+            &mut writes,
+        )?;
         persist_secrets_for_create(runtime, &id, &mut params, &mut writes)?;
         let connection = SavedConnection {
             id,
             name,
             params,
+            plugin_secret_keys,
             group_id: None,
             sort_order: None,
             detect_json_in_text_columns,
@@ -722,6 +831,7 @@ fn update_connection(
     id: String,
     name: String,
     mut params: ConnectionParams,
+    plugin_secret_changes: PluginSecretChanges,
     detect_json_in_text_columns: Option<bool>,
     environment: Option<String>,
 ) -> Result<SavedConnection, String> {
@@ -736,11 +846,20 @@ fn update_connection(
     let mut writes = SecretWrites::default();
     let result = (|| {
         params.connection_id = None;
+        let plugin_secret_keys = persist_plugin_secrets(
+            runtime,
+            &id,
+            Some((&existing.params.driver, &existing.plugin_secret_keys)),
+            &mut params,
+            &plugin_secret_changes,
+            &mut writes,
+        )?;
         merge_and_persist_update_secrets(runtime, &id, &existing.params, &mut params, &mut writes)?;
         let connection = SavedConnection {
             id,
             name,
             params,
+            plugin_secret_keys,
             group_id: existing.group_id,
             sort_order: existing.sort_order,
             detect_json_in_text_columns,
@@ -797,14 +916,20 @@ fn delete_connection(
     id: &str,
 ) -> Result<(), String> {
     let mut file = load_file(runtime)?;
-    let appearance = file
+    let removed = file
         .connections
         .iter()
         .find(|connection| connection.id == id)
+        .cloned();
+    let appearance = removed
+        .as_ref()
         .and_then(|connection| connection.appearance.clone());
     file.connections.retain(|connection| connection.id != id);
     save_file(runtime, state, &file)?;
     delete_connection_secrets(runtime, id)?;
+    if let Some(removed) = &removed {
+        delete_plugin_secrets(runtime, removed);
+    }
     crate::credential_cache::invalidate_all_for_connection(&state.credential_cache, id);
     crate::connection_appearance::cascade_delete_if_image(
         runtime.paths.data_dir(),
@@ -846,11 +971,24 @@ fn duplicate_connection(
                 }
             }
         }
+        // A secret that can no longer be read is not copied, and the
+        // duplicate does not list it.
+        let plugin_secrets = load_plugin_secrets(runtime, &original);
+        for (key, value) in &plugin_secrets {
+            writes.set(
+                runtime,
+                plugin_secret_account(&new_id, &original.params.driver, key),
+                value,
+            )?;
+        }
+        let mut plugin_secret_keys: Vec<String> = plugin_secrets.into_keys().collect();
+        plugin_secret_keys.sort();
         let appearance = duplicate_appearance(runtime.paths.data_dir(), &original, &new_id);
         let duplicate = SavedConnection {
             id: new_id,
             name: format!("{} (Copy)", original.name),
             params: original.params,
+            plugin_secret_keys,
             group_id: original.group_id,
             sort_order: None,
             detect_json_in_text_columns: original.detect_json_in_text_columns,
@@ -1183,13 +1321,25 @@ async fn test_connection(
     mut request: TestConnectionRequest,
 ) -> Result<String, String> {
     let progress_id = request.progress_id.clone();
+    let mut stored_plugin_secrets = std::collections::HashMap::new();
     if let Some(connection_id) = request.connection_id.as_deref() {
         let saved = find_connection(&load_file(runtime)?, connection_id)?;
+        // Stored plugin secrets apply only while the driver is unchanged, and
+        // only for keys the pending modal changes do not set or clear.
+        if saved.params.driver == request.params.driver {
+            stored_plugin_secrets = load_plugin_secrets(runtime, &saved);
+            stored_plugin_secrets.retain(|key, _| !request.plugin_secret_changes.contains_key(key));
+        }
         if request.params.password.as_deref().is_none_or(str::is_empty) {
             request.params.password = saved.params.password;
         }
         restore_secrets(runtime, connection_id, &mut request.params)?;
     }
+    crate::plugin_secrets::apply_runtime_changes(
+        &mut request.params,
+        stored_plugin_secrets,
+        &request.plugin_secret_changes,
+    )?;
 
     let expanded = crate::application::tunnels::expand_connection_params(runtime, &request.params)
         .map_err(|error| {
@@ -1278,7 +1428,13 @@ async fn test_connection(
         "start",
         request.params.host.clone(),
     );
-    if driver.manifest().capabilities.file_based {
+    let capabilities = &driver.manifest().capabilities;
+    if capabilities.file_based
+        && crate::fs_path::requires_existing_database_file(
+            capabilities.in_memory,
+            resolved.database.primary(),
+        )
+    {
         let path = if resolved.driver == "sqlite" {
             crate::sqlite_database::expand_sqlite_filename(resolved.database.primary())
         } else {

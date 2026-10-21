@@ -7,6 +7,9 @@
  * a one-line XML document readable without touching the parsed plan.
  */
 
+import type { PlatformCapabilities } from "../platform/capabilities";
+import { downloadTextFile } from "./fileDownloads";
+
 export type RawExplainLanguage = "json" | "xml" | "plaintext";
 
 /** Pick the Monaco language for a raw EXPLAIN payload from its first character. */
@@ -15,6 +18,93 @@ export function detectRawExplainLanguage(raw: string): RawExplainLanguage {
   if (trimmed.startsWith("{") || trimmed.startsWith("[")) return "json";
   if (trimmed.startsWith("<")) return "xml";
   return "plaintext";
+}
+
+/**
+ * Return the file extension matching the detected raw EXPLAIN payload language.
+ * "json" maps to "json", "xml" to "xml", and "plaintext" to "txt".
+ */
+export function getRawExplainExtension(language: RawExplainLanguage): string {
+  switch (language) {
+    case "json":
+      return "json";
+    case "xml":
+      return "xml";
+    case "plaintext":
+    default:
+      return "txt";
+  }
+}
+
+/**
+ * Return a clean user-facing format label for a raw EXPLAIN payload.
+ * "json" maps to "JSON", "xml" to "XML", and "plaintext" to the provided text label (defaults to "Text").
+ */
+export function getRawExplainFormatLabel(
+  language: RawExplainLanguage,
+  formatTextLabel = "Text",
+): string {
+  switch (language) {
+    case "json":
+      return "JSON";
+    case "xml":
+      return "XML";
+    case "plaintext":
+    default:
+      return formatTextLabel;
+  }
+}
+
+export interface RawExplainFileFilter {
+  name: string;
+  extensions: string[];
+}
+
+export interface RawExplainFileDialogOptions {
+  defaultPath: string;
+  filters: RawExplainFileFilter[];
+}
+
+/**
+ * Build default file name and filter options for the file save dialog based on raw payload.
+ */
+export function getRawExplainFileOptions(raw: string): RawExplainFileDialogOptions {
+  const language = detectRawExplainLanguage(raw);
+  const ext = getRawExplainExtension(language);
+  const filterName =
+    language === "json" ? "JSON" : language === "xml" ? "XML" : "Text";
+
+  return {
+    defaultPath: `explain.${ext}`,
+    filters: [
+      { name: filterName, extensions: [ext] },
+      { name: "All files", extensions: ["*"] },
+    ],
+  };
+}
+
+const RAW_EXPLAIN_MIME_TYPES: Record<RawExplainLanguage, string> = {
+  json: "application/json",
+  xml: "application/xml",
+  plaintext: "text/plain",
+};
+
+/**
+ * Save the raw EXPLAIN output unmodified through the platform download
+ * (native save dialog on desktop, browser download on the web).
+ * Returns false when the user cancelled; throws when saving fails.
+ */
+export function saveRawExplainOutput(
+  platform: PlatformCapabilities,
+  raw: string,
+): Promise<boolean> {
+  const { defaultPath, filters } = getRawExplainFileOptions(raw);
+  return downloadTextFile(platform, {
+    fileName: defaultPath,
+    contents: raw,
+    mimeType: RAW_EXPLAIN_MIME_TYPES[detectRawExplainLanguage(raw)],
+    filters,
+  });
 }
 
 /**

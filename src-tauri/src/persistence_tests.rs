@@ -46,6 +46,7 @@ mod tests {
                 save_in_keychain: Some(save_in_keychain),
                 ..ConnectionParams::default()
             },
+            plugin_secret_keys: Vec::new(),
             group_id: None,
             sort_order: None,
             detect_json_in_text_columns: None,
@@ -108,6 +109,37 @@ mod tests {
         assert_eq!(params.save_in_keychain, Some(true));
     }
 
+    #[test]
+    fn pooler_mode_round_trips_and_stays_absent_when_none() {
+        // "transaction" serializes and deserializes back.
+        let with_mode = ConnectionParams {
+            driver: "postgresql".to_string(),
+            pooler_mode: Some("transaction".to_string()),
+            ..ConnectionParams::default()
+        };
+        let json = serde_json::to_value(&with_mode).unwrap();
+        assert_eq!(json["pooler_mode"], "transaction");
+
+        let back: ConnectionParams = serde_json::from_value(json).unwrap();
+        assert_eq!(back.pooler_mode.as_deref(), Some("transaction"));
+
+        // None omits the key entirely (skip_serializing_if) — backward-compat:
+        // old connections.json entries have no pooler_mode key.
+        let without_mode = ConnectionParams {
+            driver: "postgresql".to_string(),
+            ..ConnectionParams::default()
+        };
+        let json = serde_json::to_value(&without_mode).unwrap();
+        assert!(json.get("pooler_mode").is_none());
+
+        // A legacy JSON object without the key deserializes as None.
+        // `driver` and `database` are the required fields (no #[serde(default)]);
+        // a realistic old connections.json entry carries them; pooler_mode is absent.
+        let legacy = serde_json::json!({"driver": "postgresql", "database": "appdb"});
+        let parsed: ConnectionParams = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.pooler_mode.is_none());
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_private_file_creates_mode_0600_with_the_given_content() {
@@ -146,5 +178,44 @@ mod tests {
             0o600
         );
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "new-secret");
+    }
+
+    #[test]
+    fn strips_plugin_secret_values_but_preserves_markers() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("connections.json");
+        let connection = SavedConnection {
+            id: "connection-1".into(),
+            name: "Plugin".into(),
+            params: ConnectionParams {
+                driver: "bigquery".into(),
+                database: crate::models::DatabaseSelection::Single("project".into()),
+                extra: [
+                    ("location".into(), "EU".into()),
+                    ("credential".into(), "private-value".into()),
+                ]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            },
+            plugin_secret_keys: vec!["credential".into()],
+            group_id: None,
+            sort_order: None,
+            detect_json_in_text_columns: None,
+            appearance: None,
+            tag_ids: None,
+            environment: None,
+        };
+        let file = ConnectionsFile {
+            connections: vec![connection],
+            ..Default::default()
+        };
+
+        save_connections_file(&path, &file).expect("save connections");
+        let stored = std::fs::read_to_string(path).expect("read connections");
+        assert!(!stored.contains("private-value"));
+        assert!(stored.contains("credential"));
+        assert!(stored.contains("location"));
+        assert!(stored.contains("EU"));
     }
 }

@@ -972,6 +972,7 @@ async fn executes_representative_commands_over_versioned_rpc() {
                 id: "metadata-fixture".to_string(),
                 name: "Metadata fixture".to_string(),
                 params: sqlite_params,
+                plugin_secret_keys: Vec::new(),
                 group_id: None,
                 sort_order: None,
                 detect_json_in_text_columns: None,
@@ -1468,6 +1469,89 @@ async fn executes_representative_commands_over_versioned_rpc() {
     assert_eq!(
         cross_connection_update.status(),
         reqwest::StatusCode::CONFLICT
+    );
+    let folder = rpc_data(
+        &client,
+        &base_url,
+        &cookie,
+        &session.csrf_token,
+        "create_saved_query_folder",
+        serde_json::json!({"connectionId": "metadata-fixture", "name": "Reports"}),
+    )
+    .await;
+    let folder_id = folder["id"].as_str().unwrap();
+    rpc_data(
+        &client,
+        &base_url,
+        &cookie,
+        &session.csrf_token,
+        "move_saved_query",
+        serde_json::json!({
+            "connectionId": "metadata-fixture",
+            "id": saved_query_id,
+            "folderId": folder_id
+        }),
+    )
+    .await;
+    assert_eq!(
+        rpc_data(
+            &client,
+            &base_url,
+            &cookie,
+            &session.csrf_token,
+            "get_saved_queries",
+            serde_json::json!({"connectionId": "metadata-fixture"}),
+        )
+        .await[0]["folder_id"],
+        folder_id
+    );
+    let cross_connection_rename = client
+        .post(format!("{base_url}/api/v1/rpc/rename_saved_query_folder"))
+        .header(COOKIE, &cookie)
+        .header(ORIGIN, &base_url)
+        .header(CSRF_HEADER, &session.csrf_token)
+        .json(&serde_json::json!({
+            "connectionId": "another-connection",
+            "id": folder_id,
+            "name": "Hijacked"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(cross_connection_rename.status(), reqwest::StatusCode::OK);
+    rpc_data(
+        &client,
+        &base_url,
+        &cookie,
+        &session.csrf_token,
+        "move_saved_query",
+        serde_json::json!({
+            "connectionId": "metadata-fixture",
+            "id": saved_query_id,
+            "folderId": null
+        }),
+    )
+    .await;
+    rpc_data(
+        &client,
+        &base_url,
+        &cookie,
+        &session.csrf_token,
+        "delete_saved_query_folder",
+        serde_json::json!({"connectionId": "metadata-fixture", "id": folder_id}),
+    )
+    .await;
+    assert_eq!(
+        rpc_data(
+            &client,
+            &base_url,
+            &cookie,
+            &session.csrf_token,
+            "get_saved_query_folders",
+            serde_json::json!({"connectionId": "metadata-fixture"}),
+        )
+        .await,
+        serde_json::json!([])
     );
     let updated_query = rpc_data(
         &client,

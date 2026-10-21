@@ -1,11 +1,12 @@
 #[cfg(test)]
 mod tests {
     use crate::ai_activity::{
-        append_event_in, classify_query_kind, clear_in, compute_or_rotate_session_id_in,
+        append_event_in, classify_query_kind, classify_query_kind_for_dialect, clear_in, compute_or_rotate_session_id_in,
         load_session_state_in, read_events_in, read_session_events_in, read_sessions_in,
         rotate_if_needed_in, save_session_state_in, set_client_hint_in,
         strip_strings_and_comments, to_local_rfc3339, AiActivityEvent, EventFilter, SessionState,
     };
+    use crate::drivers::driver_trait::SqlDialect;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -17,6 +18,7 @@ mod tests {
             tool: tool.to_string(),
             connection_id: Some("conn-1".to_string()),
             connection_name: Some("local".to_string()),
+            database: None,
             query: Some("SELECT 1".to_string()),
             query_kind: Some("select".to_string()),
             duration_ms: 5,
@@ -919,8 +921,15 @@ mod tests {
             classify_query_kind("SELECT \"a b\", \"c\" FROM t"),
             "select"
         );
-        // A dollar-quoted / escape-string body with no trailing call is a read.
-        assert_eq!(classify_query_kind("SELECT $$hello ; world$$"), "select");
+        // A dollar-quoted / escape-string body with no trailing call is a read
+        // on PostgreSQL. Without a dialect the `;` inside `$$…$$` is a real
+        // separator for MySQL-like engines, so it fails closed.
+        let pg = Some(SqlDialect::Postgres);
+        assert_eq!(
+            classify_query_kind_for_dialect("SELECT $$hello ; world$$", pg),
+            "select"
+        );
+        assert_eq!(classify_query_kind("SELECT $$hello ; world$$"), "unknown");
         assert_eq!(classify_query_kind("SELECT E'line\\n'"), "select");
     }
 
@@ -1070,5 +1079,41 @@ mod tests {
     #[test]
     fn to_local_rfc3339_returns_input_when_unparseable() {
         assert_eq!(to_local_rfc3339("not-a-date", Some("Asia/Tokyo")), "not-a-date");
+    }
+
+    // Target database -------------------------------------------------------
+
+    #[test]
+    fn event_without_database_omits_the_field() {
+        let json = serde_json::to_value(make_event("a", "s1", "run_query", "2026-04-24T10:00:00Z"))
+            .unwrap();
+        assert!(json.get("database").is_none());
+    }
+
+    #[test]
+    fn event_round_trips_a_target_database() {
+        let tmp = TempDir::new().unwrap();
+        append(
+            tmp.path(),
+            AiActivityEvent {
+                database: Some("analytics".to_string()),
+                ..make_event("a", "s1", "run_query", "2026-04-24T10:00:00Z")
+            },
+        );
+        let events = read_events_in(tmp.path(), &EventFilter::default()).unwrap();
+        assert_eq!(events[0].database.as_deref(), Some("analytics"));
+    }
+
+    #[test]
+    fn event_written_by_an_older_build_still_parses() {
+        let tmp = TempDir::new().unwrap();
+        let mut json =
+            serde_json::to_value(make_event("old", "s1", "run_query", "2026-04-24T10:00:00Z"))
+                .unwrap();
+        json.as_object_mut().unwrap().remove("database");
+        std::fs::write(tmp.path().join("ai_activity.jsonl"), format!("{}\n", json)).unwrap();
+        let events = read_events_in(tmp.path(), &EventFilter::default()).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].database, None);
     }
 }

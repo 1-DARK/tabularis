@@ -25,11 +25,14 @@ interface ConnectionParams {
   /** Opaque plugin-specific connection fields, persisted as-is and forwarded
    * verbatim to the driver/plugin. */
   extra?: Record<string, string>;
+  /** Connection pooler mode for PgBouncer / transaction-mode poolers. */
+  pooler_mode?: string;
 }
 
 export interface SavedConnectionWithCredentials {
   id: string;
   name: string;
+  plugin_secret_keys?: string[];
   params: ConnectionParams;
 }
 

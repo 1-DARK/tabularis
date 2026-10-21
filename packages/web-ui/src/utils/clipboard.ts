@@ -1,9 +1,23 @@
 import { formatCellValue } from './dataGrid';
 import { writeActiveClipboard } from '../platform/activeCapabilities';
+import type { DriverCapabilities, PluginManifest } from '../types/plugins';
+import { quoteSqlString, sqlBooleanLiteral, stringEscapeStyle } from './sqlLiteral';
+
+/** Driver whose dialect the copied SQL literals follow. */
+type CopyDriver = string | PluginManifest | DriverCapabilities | null;
+
+// RFC 4180 quoting, shared with the file export: a field with the delimiter, a quote or a line
+// break (LF or CR) is wrapped in quotes, and its quotes are doubled.
+export function csvField(text: string, delimiter: string): string {
+  if (text.includes(delimiter) || text.includes('"') || /[\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+}
 
 export function rowToCSV(row: unknown[], nullLabel: string = "null", delimiter: string = ","): string {
   return row
-    .map((cell) => formatCellValue(cell, nullLabel))
+    .map((cell) => csvField(formatCellValue(cell, nullLabel), delimiter))
     .join(delimiter);
 }
 
@@ -14,7 +28,7 @@ export function rowsToCSV(rows: unknown[][], nullLabel: string = "null", delimit
 }
 
 export function rowsToCSVWithHeaders(rows: unknown[][], columns: string[], nullLabel: string = "null", delimiter: string = ","): string {
-  const header = columns.join(delimiter);
+  const header = columns.map((column) => csvField(column, delimiter)).join(delimiter);
   const body = rowsToCSV(rows, nullLabel, delimiter);
   return body ? `${header}\n${body}` : header;
 }
@@ -63,6 +77,28 @@ export function rowsToMarkdown(rows: unknown[][], columns: string[], nullLabel: 
   return [header, separator, ...body].join("\n");
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function htmlCell(cell: unknown, nullLabel: string): string {
+  return escapeHtml(formatCellValue(cell, nullLabel)).replace(/\r?\n/g, "<br>");
+}
+
+/** Format rows as an HTML table (with a header row) for pasting into spreadsheets and documents. */
+export function rowsToHtmlTable(rows: unknown[][], columns: string[], nullLabel: string = "null"): string {
+  const header = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const body = rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${htmlCell(cell, nullLabel)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table><thead><tr>${header}</tr></thead><tbody>${body}</tbody></table>`;
+}
+
 export type CopyFormat = "csv" | "json" | "sql-insert" | "markdown";
 
 /** Format result rows for clipboard copy in the user's chosen copy format. */
@@ -75,6 +111,7 @@ export function formatRowsForCopy(
     csvIncludeHeaders?: boolean;
     csvDelimiter?: string;
     tableName?: string | null;
+    driver?: CopyDriver;
   } = {},
 ): string {
   const {
@@ -82,10 +119,11 @@ export function formatRowsForCopy(
     csvIncludeHeaders = true,
     csvDelimiter = ",",
     tableName,
+    driver,
   } = options;
   if (copyFormat === "json") return rowsToJSON(rows, columns);
   if (copyFormat === "sql-insert")
-    return rowsToSqlInsert(rows, columns, tableName ?? "table");
+    return rowsToSqlInsert(rows, columns, tableName ?? "table", driver);
   if (copyFormat === "markdown")
     return rowsToMarkdown(rows, columns, "null", withHeaders && csvIncludeHeaders);
   if (withHeaders && csvIncludeHeaders)
@@ -119,6 +157,7 @@ interface ColumnCopyOptions {
   delimiter?: string;
   includeHeader?: boolean;
   tableName?: string;
+  driver?: CopyDriver;
 }
 
 export function columnValuesForCopy(
@@ -141,6 +180,7 @@ export function columnValuesForCopy(
       projectedRows,
       projectedColumns,
       options.tableName ?? "table",
+      options.driver,
     );
   }
   if (options.format === "markdown") {
@@ -165,15 +205,20 @@ export function columnValuesForCopy(
 export function columnValuesToInClause(
   rows: unknown[][],
   colIndex: number,
+  driver?: CopyDriver,
 ): string {
-  return rows.map((row) => sqlValue(row[colIndex])).join(", ");
+  return rows.map((row) => sqlValue(row[colIndex], driver)).join(", ");
 }
 
-function sqlValue(cell: unknown): string {
+function sqlValue(cell: unknown, driver?: CopyDriver): string {
   if (cell === null || cell === undefined) return "NULL";
-  if (typeof cell === "boolean") return cell ? "TRUE" : "FALSE";
+  // TRUE/FALSE unless the driver declares `sql_syntax.boolean_literals`.
+  if (typeof cell === "boolean") return sqlBooleanLiteral(cell, driver);
   if (typeof cell === "number") return String(cell);
   const str = typeof cell === "object" ? JSON.stringify(cell) : String(cell);
+  // A backslash-escape syntax (GoogleSQL) has no doubled-quote escape;
+  // every other driver, MySQL included, keeps the standard form.
+  if (stringEscapeStyle(driver) === "backslash") return quoteSqlString(str, driver);
   return `'${str.replace(/'/g, "''")}'`;
 }
 
@@ -181,9 +226,10 @@ function rowToSqlInsert(
   row: unknown[],
   columns: string[],
   tableName: string,
+  driver?: CopyDriver,
 ): string {
   const cols = columns.map((c) => `\`${c}\``).join(", ");
-  const vals = row.map(sqlValue).join(", ");
+  const vals = row.map((cell) => sqlValue(cell, driver)).join(", ");
   return `INSERT INTO \`${tableName}\` (${cols}) VALUES (${vals});`;
 }
 
@@ -191,8 +237,9 @@ export function rowsToSqlInsert(
   rows: unknown[][],
   columns: string[],
   tableName: string,
+  driver?: CopyDriver,
 ): string {
-  return rows.map((row) => rowToSqlInsert(row, columns, tableName)).join("\n");
+  return rows.map((row) => rowToSqlInsert(row, columns, tableName, driver)).join("\n");
 }
 
 export async function copyTextToClipboard(

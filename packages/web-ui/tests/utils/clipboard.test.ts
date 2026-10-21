@@ -1,16 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { GOOGLESQL_CAPS } from '../../../../tests/fixtures/sql-syntax/googlesql';
 import {
   rowToCSV,
   rowsToCSV,
+  rowsToCSVWithHeaders,
   rowToJSON,
   rowsToJSON,
   columnValuesForCopy,
   columnValuesToInClause,
   getSelectedRows,
   copyTextToClipboard,
+  rowsToHtmlTable,
   columnNamesAsLines,
   columnNamesAsJson,
+  formatRowsForCopy,
+  rowsToSqlInsert,
 } from '../../src/utils/clipboard';
+import type { DriverCapabilities } from '../../src/types/plugins';
 
 describe('clipboard utils', () => {
   describe('rowToCSV', () => {
@@ -41,7 +47,8 @@ describe('clipboard utils', () => {
 
     it('should handle objects by converting to JSON', () => {
       const row = [1, { name: 'test' }, 'value'];
-      expect(rowToCSV(row)).toBe('1,{"name":"test"},value');
+      // The JSON text has quotes, so the CSV field is quoted with them doubled.
+      expect(rowToCSV(row)).toBe('1,"{""name"":""test""}",value');
     });
 
     it('should handle boolean values', () => {
@@ -183,6 +190,56 @@ describe('clipboard utils', () => {
       ];
       const columns = ['id', 'name'];
       expect(rowsToJSON(rows, columns)).toBe('[{"id":1,"name":null},{"id":2,"name":"value"}]');
+    });
+  });
+
+  describe('rowsToHtmlTable', () => {
+    it('should build a table with a header row and one row per record', () => {
+      const rows = [
+        [1, 'Alice'],
+        [2, 'Bob'],
+      ];
+      expect(rowsToHtmlTable(rows, ['id', 'name'])).toBe(
+        '<table><thead><tr><th>id</th><th>name</th></tr></thead>' +
+          '<tbody><tr><td>1</td><td>Alice</td></tr><tr><td>2</td><td>Bob</td></tr></tbody></table>'
+      );
+    });
+
+    it('should escape HTML special characters in values and headers', () => {
+      const rows = [['<b>Tom & "Jerry"</b>', "it's"]];
+      expect(rowsToHtmlTable(rows, ['a<b', 'c&d'])).toBe(
+        '<table><thead><tr><th>a&lt;b</th><th>c&amp;d</th></tr></thead>' +
+          '<tbody><tr><td>&lt;b&gt;Tom &amp; &quot;Jerry&quot;&lt;/b&gt;</td><td>it&#39;s</td></tr></tbody></table>'
+      );
+    });
+
+    it('should use the given NULL label for null and undefined values', () => {
+      expect(rowsToHtmlTable([[null, undefined]], ['a', 'b'], 'NULL')).toBe(
+        '<table><thead><tr><th>a</th><th>b</th></tr></thead>' +
+          '<tbody><tr><td>NULL</td><td>NULL</td></tr></tbody></table>'
+      );
+    });
+
+    it('should default the NULL label to "null"', () => {
+      expect(rowsToHtmlTable([[null]], ['a'])).toContain('<td>null</td>');
+    });
+
+    it('should format booleans and objects like the other copy formats', () => {
+      expect(rowsToHtmlTable([[true, { k: 1 }]], ['flag', 'data'])).toContain(
+        '<td>true</td><td>{&quot;k&quot;:1}</td>'
+      );
+    });
+
+    it('should keep line breaks inside a cell', () => {
+      expect(rowsToHtmlTable([['line1\nline2\r\nline3']], ['text'])).toContain(
+        '<td>line1<br>line2<br>line3</td>'
+      );
+    });
+
+    it('should return only the header row when there are no rows', () => {
+      expect(rowsToHtmlTable([], ['id'])).toBe(
+        '<table><thead><tr><th>id</th></tr></thead><tbody></tbody></table>'
+      );
     });
   });
 
@@ -366,6 +423,57 @@ describe('clipboard utils', () => {
         "'Alice', 'O''Brien', NULL, TRUE",
       );
     });
+
+    it('backslash-escapes strings for a GoogleSQL driver', () => {
+      const bq = GOOGLESQL_CAPS;
+      const rows = [["O'Brien\\"], [null]];
+      expect(columnValuesToInClause(rows, 0, bq)).toBe("'O\\'Brien\\\\', NULL");
+      expect(columnValuesToInClause(rows, 0, 'postgres')).toBe("'O''Brien\\', NULL");
+    });
+  });
+
+  describe('rowsToSqlInsert', () => {
+    it('quotes values for the driver dialect', () => {
+      const bq = GOOGLESQL_CAPS;
+      expect(rowsToSqlInsert([[1, "it's"]], ['id', 'name'], 't', bq)).toBe(
+        "INSERT INTO `t` (`id`, `name`) VALUES (1, 'it\\'s');",
+      );
+      expect(rowsToSqlInsert([[1, "it's"]], ['id', 'name'], 't')).toBe(
+        "INSERT INTO `t` (`id`, `name`) VALUES (1, 'it''s');",
+      );
+    });
+
+    it('writes booleans in the declared boolean_literals style', () => {
+      const numeric = {
+        ...GOOGLESQL_CAPS,
+        sql_syntax: { ...GOOGLESQL_CAPS.sql_syntax, boolean_literals: 'numeric' as const },
+      };
+      const rows = [[1, true, false]];
+      const cols = ['id', 'a', 'b'];
+      expect(rowsToSqlInsert(rows, cols, 't', GOOGLESQL_CAPS)).toBe(
+        'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+      );
+      expect(rowsToSqlInsert(rows, cols, 't', numeric)).toBe(
+        'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, 1, 0);',
+      );
+      // Built-in drivers keep TRUE/FALSE.
+      for (const driver of ['mysql', 'postgres', 'sqlite', undefined]) {
+        expect(rowsToSqlInsert(rows, cols, 't', driver)).toBe(
+          'INSERT INTO `t` (`id`, `a`, `b`) VALUES (1, TRUE, FALSE);',
+        );
+      }
+      expect(columnValuesToInClause([[true], [false]], 0, numeric)).toBe('1, 0');
+    });
+
+    it('passes the driver through formatRowsForCopy and columnValuesForCopy', () => {
+      const bq = GOOGLESQL_CAPS;
+      expect(
+        formatRowsForCopy([["a'b"]], ['c'], 'sql-insert', { tableName: 't', driver: bq }),
+      ).toBe("INSERT INTO `t` (`c`) VALUES ('a\\'b');");
+      expect(
+        columnValuesForCopy([["a'b"]], ['c'], 0, { format: 'sql-insert', tableName: 't', driver: bq }),
+      ).toBe("INSERT INTO `t` (`c`) VALUES ('a\\'b');");
+    });
   });
 
   describe('copyTextToClipboard', () => {
@@ -414,5 +522,31 @@ describe('clipboard utils', () => {
 
       expect(mockWriteText).toHaveBeenCalledWith('');
     });
+  });
+});
+
+describe('CSV clipboard quoting', () => {
+  it('quotes a value that contains the delimiter', () => {
+    expect(rowToCSV(['Rome, Italy', 3])).toBe('"Rome, Italy",3');
+  });
+
+  it('quotes a value with a double quote and doubles the quote', () => {
+    expect(rowToCSV(['say "hi"'])).toBe('"say ""hi"""');
+  });
+
+  it('quotes a value with a lone carriage return, as the file export does', () => {
+    expect(rowsToCSV([['hello\rworld', 'x']])).toBe('"hello\rworld",x');
+  });
+
+  it('quotes a value with a line break', () => {
+    expect(rowsToCSV([['line1\nline2', 'x']])).toBe('"line1\nline2",x');
+  });
+
+  it('leaves plain values unquoted', () => {
+    expect(rowsToCSV([['a', 1, null]])).toBe('a,1,null');
+  });
+
+  it('quotes header names the same way as the body', () => {
+    expect(rowsToCSVWithHeaders([['Rome, Italy']], ['city, name'])).toBe('"city, name"\n"Rome, Italy"');
   });
 });

@@ -157,6 +157,7 @@ fn ssh_tests_restore_inline_plaintext_secrets_from_saved_database_connections() 
                 save_in_keychain: Some(false),
                 ..ConnectionParams::default()
             },
+            plugin_secret_keys: Vec::new(),
             group_id: None,
             sort_order: None,
             detect_json_in_text_columns: None,

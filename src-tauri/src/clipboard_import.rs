@@ -1,3 +1,4 @@
+use crate::drivers::sql_syntax::{quote_string_literal, BooleanLiterals, LiteralStyle, SqlSyntax};
 use crate::models::TableColumn;
 use crate::{drivers::driver_trait::DatabaseDriver, models::ColumnDefinition};
 use serde::{Deserialize, Serialize};
@@ -33,17 +34,35 @@ pub struct ClipboardImportResult {
     pub table_created: bool,
 }
 
-fn escape_sql_string(s: &str) -> String {
+/// Quotes a string literal in the driver's declared literal style. A driver
+/// whose `sql_syntax` declares `string_escape: "backslash"` (no doubled-quote
+/// escape, no raw newlines in a literal) gets backslash escapes; every other
+/// driver, MySQL included, doubles the quote as before.
+fn escape_sql_string(s: &str, style: LiteralStyle) -> String {
+    if style == LiteralStyle::Backslash {
+        return quote_string_literal(s, style);
+    }
     format!("'{}'", s.replace('\'', "''"))
 }
 
 /// The SQL literal for a value the clipboard parser accepts as a boolean.
-fn boolean_literal(value: &str) -> Option<&'static str> {
+fn boolean_literal(value: &str, style: BooleanLiterals) -> Option<&'static str> {
     match value.to_ascii_lowercase().as_str() {
-        "true" | "yes" | "1" => Some("TRUE"),
-        "false" | "no" | "0" => Some("FALSE"),
+        "true" | "yes" | "1" => Some(style.literal(true)),
+        "false" | "no" | "0" => Some(style.literal(false)),
         _ => None,
     }
+}
+
+/// Whether `col` is a BOOLEAN column this import creates, in a new table or
+/// as an added column.
+fn is_created_boolean(
+    req: &ClipboardImportRequest,
+    col: &ColumnDefinition,
+    table_created: bool,
+) -> bool {
+    col.data_type.eq_ignore_ascii_case("BOOLEAN")
+        && (table_created || req.add_columns.iter().any(|added| added.name == col.name))
 }
 
 /// MySQL creates BOOLEAN as TINYINT(1) and, in strict mode, rejects quoted words
@@ -60,11 +79,20 @@ fn boolean_literal_columns(
     req.columns
         .iter()
         .map(|col| {
-            let created_boolean = col.data_type.eq_ignore_ascii_case("BOOLEAN")
-                && (table_created || req.add_columns.iter().any(|added| added.name == col.name));
             driver_id == "mysql"
-                && (created_boolean || existing_tinyint_columns.contains(&col.name))
+                && (is_created_boolean(req, col, table_created)
+                    || existing_tinyint_columns.contains(&col.name))
         })
+        .collect()
+}
+
+/// A driver that declares `sql_syntax.boolean_literals` (GoogleSQL, which
+/// does not coerce a quoted 'true' to BOOL) gets boolean literals in the
+/// BOOLEAN columns this import created. Existing columns keep quoted values.
+fn declared_boolean_columns(req: &ClipboardImportRequest, table_created: bool) -> Vec<bool> {
+    req.columns
+        .iter()
+        .map(|col| is_created_boolean(req, col, table_created))
         .collect()
 }
 
@@ -102,16 +130,21 @@ async fn existing_tinyint_columns(
     }
 }
 
-fn row_to_values_clause(row: &[Option<String>], boolean_columns: &[bool]) -> String {
+fn row_to_values_clause(
+    row: &[Option<String>],
+    boolean_columns: &[bool],
+    boolean_style: BooleanLiterals,
+    literal_style: LiteralStyle,
+) -> String {
     let values: Vec<String> = row
         .iter()
         .enumerate()
         .map(|(i, cell)| match cell {
             None => "NULL".to_string(),
             Some(v) if v.is_empty() => "NULL".to_string(),
-            Some(v) => match boolean_literal(v) {
+            Some(v) => match boolean_literal(v, boolean_style) {
                 Some(literal) if boolean_columns.get(i) == Some(&true) => literal.to_string(),
-                _ => escape_sql_string(v),
+                _ => escape_sql_string(v, literal_style),
             },
         })
         .collect();
@@ -274,18 +307,23 @@ async fn insert_rows(
         .collect::<Vec<_>>()
         .join(", ");
 
-    let existing_tinyint =
-        existing_tinyint_columns(drv, params, req, schema_ref, table_created).await;
-    let boolean_columns =
-        boolean_literal_columns(req, &drv.manifest().id, table_created, &existing_tinyint);
-
+    let syntax = SqlSyntax::resolve(&drv.manifest().capabilities);
+    let boolean_columns = if syntax.boolean_literals.is_some() {
+        declared_boolean_columns(req, table_created)
+    } else {
+        let existing_tinyint =
+            existing_tinyint_columns(drv, params, req, schema_ref, table_created).await;
+        boolean_literal_columns(req, &drv.manifest().id, table_created, &existing_tinyint)
+    };
+    let boolean_style = syntax.boolean_literals.unwrap_or(BooleanLiterals::Keywords);
+    let literal_style = syntax.string_escape;
     const BATCH_SIZE: usize = 500;
     let mut rows_inserted = 0;
 
     for chunk in req.rows.chunks(BATCH_SIZE) {
         let values_clauses: Vec<String> = chunk
             .iter()
-            .map(|r| row_to_values_clause(r, &boolean_columns))
+            .map(|r| row_to_values_clause(r, &boolean_columns, boolean_style, literal_style))
             .collect();
         let insert_sql = format!(
             "INSERT INTO {} ({}) VALUES {}",

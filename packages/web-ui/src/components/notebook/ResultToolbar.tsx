@@ -1,10 +1,11 @@
 import { useTranslation } from "react-i18next";
 import { Download } from "lucide-react";
 import type { QueryResult } from "../../types/editor";
-import { resultToCsv, resultToJson } from "../../utils/notebookExport";
+import { formatResultForExport } from "../../utils/resultExport";
 import { usePlatformCapabilities } from "../../hooks/usePlatformCapabilities";
 import { downloadTextFile } from "../../utils/fileDownloads";
 import { useAlert } from "../../hooks/useAlert";
+import { useSettings } from "../../hooks/useSettings";
 
 interface ResultToolbarProps {
   result: QueryResult;
@@ -19,12 +20,15 @@ export function ResultToolbar({ result, executionTime }: ResultToolbarProps) {
   const { t } = useTranslation();
   const platform = usePlatformCapabilities();
   const { showAlert } = useAlert();
+  const { settings } = useSettings();
 
   const handleExport = async (format: "csv" | "json") => {
     try {
       const downloaded = await downloadTextFile(platform, {
         fileName: `result.${format}`,
-        contents: format === "json" ? resultToJson(result) : resultToCsv(result),
+        // Same formatter as the editor export, so a notebook cell and the editor
+        // write identical files (NULL sentinel, JSON values, CSV delimiter).
+        contents: formatResultForExport(result, format, settings.csvDelimiter ?? ","),
         mimeType: format === "json" ? "application/json" : "text/csv",
         filters: [{ name: format.toUpperCase(), extensions: [format] }],
       });

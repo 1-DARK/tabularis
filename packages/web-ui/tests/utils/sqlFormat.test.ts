@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { formatSql, toFormatterLanguage } from '../../src/utils/sqlFormat';
+import { resolveSqlSyntax } from '../../src/utils/sqlSyntax';
+import { GOOGLESQL } from '../../../../tests/fixtures/sql-syntax/googlesql';
 
 describe('sqlFormat', () => {
   describe('toFormatterLanguage', () => {
@@ -21,6 +23,21 @@ describe('sqlFormat', () => {
 
     it('maps oracle to plsql', () => {
       expect(toFormatterLanguage('oracle')).toBe('plsql');
+    });
+
+    it('uses the formatter a declared syntax names', () => {
+      expect(toFormatterLanguage(GOOGLESQL)).toBe('bigquery');
+    });
+
+    it('maps a resolved preset like its dialect name', () => {
+      for (const dialect of ['postgres', 'mysql', 'mssql', 'sqlite', 'oracle', 'generic', undefined] as const) {
+        expect(toFormatterLanguage(resolveSqlSyntax(dialect ? ({ sql_dialect: dialect } as never) : null)))
+          .toBe(toFormatterLanguage(dialect));
+      }
+    });
+
+    it('treats bigquery as an unknown dialect name', () => {
+      expect(toFormatterLanguage('bigquery')).toBe('sql');
     });
 
     it('falls back to sql for the generic dialect', () => {

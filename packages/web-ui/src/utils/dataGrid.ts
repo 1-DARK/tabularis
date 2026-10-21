@@ -592,6 +592,22 @@ function escapeRegExp(string: string): string {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Whether writing `value` puts a cell back to its stored `original`, so the
+ * pending change can be cleared instead of staging a no-op. Text matches by
+ * its text, as a paste always has: "5" over 5, and "null" (how a copied NULL
+ * reads) over NULL. A NULL or structured value written by "Edit selection"
+ * only matches itself, so Set NULL over the text "null" and a JSON value
+ * filled over another one are staged.
+ */
+export function isOriginalCellValue(value: unknown, original: unknown): boolean {
+  const isStructured = (v: unknown) => typeof v === "object" && v !== null;
+  if (value === null || isStructured(value) || isStructured(original)) {
+    return Object.is(value, original) || (value === null && original === undefined);
+  }
+  return String(value) === String(original);
+}
+
 /** One cell write produced by a paste operation */
 export interface PasteTarget {
   rowIndex: number;
@@ -625,6 +641,64 @@ function splitDelimitedLine(line: string, delimiter: string): string[] {
 }
 
 /**
+ * Whether a quoted field pasted into a JSON column is the grid's own CSV
+ * quoting of a JSON value, so its quotes can be removed. The copy only
+ * quotes a field that contains the delimiter, a quote or a line break (see
+ * `csvField`), and a value from a JSON column is valid JSON. Anything else,
+ * like the JSON string `"abc"` or `""`, keeps its quotes.
+ */
+function isCsvQuotedJson(unquoted: string, delimiter?: string): boolean {
+  const neededQuotes =
+    /["\t\r\n]/.test(unquoted) || (!!delimiter && unquoted.includes(delimiter));
+  if (!neededQuotes) return false;
+  try {
+    JSON.parse(unquoted);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Splits one tab-separated line into cells. A cell that is one fully quoted
+ * field, as the CSV copy writes it, is unquoted (its doubled quotes become
+ * one); any other cell, including one that only starts with a quote, is kept
+ * as written. A line with no tab is a single cell and is unquoted the same
+ * way. `keepQuotes` can veto the unquoting of a cell, given its index in the
+ * line and its unquoted text.
+ */
+function splitTabLine(
+  line: string,
+  keepQuotes?: (colIndex: number, unquoted: string) => boolean,
+): string[] {
+  const cells: string[] = [];
+  let pos = 0;
+  for (;;) {
+    if (line[pos] === '"') {
+      const quoted = /^"((?:[^"]|"")*)"(?=\t|$)/.exec(line.slice(pos));
+      const unquoted = quoted?.[1].replace(/""/g, '"');
+      if (
+        quoted &&
+        unquoted !== undefined &&
+        !keepQuotes?.(cells.length, unquoted)
+      ) {
+        cells.push(unquoted);
+        pos += quoted[0].length + 1;
+        if (pos > line.length) return cells;
+        continue;
+      }
+    }
+    const end = line.indexOf("\t", pos);
+    if (end === -1) {
+      cells.push(line.slice(pos));
+      return cells;
+    }
+    cells.push(line.slice(pos, end));
+    pos = end + 1;
+  }
+}
+
+/**
  * Parses clipboard text into a cell matrix. Tab-separated cells win
  * (spreadsheet convention); multi-line text without tabs is parsed as CSV so
  * the grid's own comma/semicolon/pipe copy formats round-trip. A single line
@@ -634,21 +708,37 @@ function splitDelimitedLine(line: string, delimiter: string): string[] {
  *
  * `delimiterHint` is the grid's configured CSV delimiter; when it appears in
  * the text it takes precedence over frequency-based detection.
+ *
+ * When quotes are removed: tab-separated lines, a single line and a
+ * one-column copy (lines without any delimiter) unquote a cell that is one
+ * fully quoted field, so the grid's own CSV copy round-trips; `""` becomes
+ * an empty string. A cell that only starts with a quote is kept as written.
+ * `isJsonColumn` tells, by the cell's index in its line, which cells land in
+ * a JSON column. There the quotes are only removed when the field is the
+ * CSV copy's quoting of a JSON value (it needed quoting and is valid JSON),
+ * so text copied from elsewhere, like the JSON string `"abc"`, keeps them.
+ * Multi-line text split on a CSV delimiter is parsed as CSV in every column.
  */
 export function parsePasteMatrix(
   text: string,
   delimiterHint?: string,
+  isJsonColumn?: (colIndex: number) => boolean,
 ): string[][] {
   if (!text) return [];
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
 
+  const keepQuotes = isJsonColumn
+    ? (colIndex: number, unquoted: string) =>
+        isJsonColumn(colIndex) && !isCsvQuotedJson(unquoted, delimiterHint)
+    : undefined;
+
   if (lines.some((line) => line.includes("\t"))) {
-    return lines.map((line) => line.split("\t"));
+    return lines.map((line) => splitTabLine(line, keepQuotes));
   }
 
   if (lines.length === 1) {
-    return lines[0] === "" ? [] : [[lines[0]]];
+    return lines[0] === "" ? [] : [splitTabLine(lines[0], keepQuotes)];
   }
 
   const first = lines[0];
@@ -666,7 +756,7 @@ export function parsePasteMatrix(
     }
   }
   if (!delimiter) {
-    return lines.map((line) => [line]);
+    return lines.map((line) => splitTabLine(line, keepQuotes));
   }
   return lines.map((line) => splitDelimitedLine(line, delimiter!));
 }

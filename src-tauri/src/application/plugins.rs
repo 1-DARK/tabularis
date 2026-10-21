@@ -477,6 +477,7 @@ fn plugin_manifest(config: ConfigManifest) -> PluginManifest {
         settings: config.settings,
         ui_extensions: config.ui_extensions,
         explain_parsers: config.explain_parsers,
+        connection_fields: config.connection_fields,
         type_mappings: config.type_mappings,
         // `deprecated` is a built-in-only concept stamped at registration;
         // external plugins read from disk are never deprecated by the app.
