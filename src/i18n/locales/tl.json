@@ -1597,6 +1597,7 @@
     "exporting": "Nag-e-export...",
     "rowsProcessed": "Mga Row na Naproseso",
     "exportLoadedRowsWarning": "{{loaded}} lang na na-load na row ang na-export mula sa kabuuang {{total}} row. Mag-page sa resulta o magpatakbo ng mas makitid na query bago mag-export kung kailangan mo ng mas maraming row.",
+    "exportLoadedRowsWarningUnknownTotal": "{{loaded}} lang na na-load na row ang na-export. Mas marami ang row ng resulta kaysa sa na-load. Mag-page sa resulta o magpatakbo ng mas makitid na query bago mag-export kung kailangan mo ng mas maraming row.",
     "exportLoadedHtml": "I-export ang mga na-load na row bilang HTML…",
     "exportLoadedNdjson": "I-export ang mga na-load na row bilang NDJSON…",
     "queryParameters": "Mga Parameter ng Query",
