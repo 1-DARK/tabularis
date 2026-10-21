@@ -12,7 +12,7 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
 describe("SOCIAL_LINKS", () => {
   it("includes every project social network with a valid https URL", () => {
     const labels = SOCIAL_LINKS.map((l) => l.label);
-    expect(labels).toEqual(["GitHub", "Discord", "X", "Bluesky", "Mastodon"]);
+    expect(labels).toEqual(["GitHub", "Discord", "X", "Bluesky", "Mastodon", "LinkedIn"]);
     for (const link of SOCIAL_LINKS) {
       expect(link.href).toMatch(/^https:\/\//);
     }
@@ -27,6 +27,8 @@ describe("SOCIAL_LINKS", () => {
     expect(byLabel.X).toBe(LINKS.X);
     expect(byLabel.Bluesky).toBe(LINKS.BLUESKY);
     expect(byLabel.Mastodon).toBe(LINKS.MASTODON);
+    expect(byLabel.LinkedIn).toBe("https://www.linkedin.com/company/tabularisdb");
+    expect(byLabel.LinkedIn).toBe(LINKS.LINKEDIN);
   });
 });
 
@@ -66,7 +68,7 @@ describe("SocialLinks", () => {
 
   it("opens the matching URL externally when a button is clicked", () => {
     render(<SocialLinks />);
-    fireEvent.click(screen.getByRole("button", { name: "Mastodon" }));
-    expect(openUrl).toHaveBeenCalledWith(LINKS.MASTODON);
+    fireEvent.click(screen.getByRole("button", { name: "LinkedIn" }));
+    expect(openUrl).toHaveBeenCalledWith(LINKS.LINKEDIN);
   });
 });

@@ -9,7 +9,8 @@
     "github-issues": "https://github.com/TabularisDB/tabularis/issues",
     "x": "https://x.com/tabularisdb",
     "bluesky": "https://bsky.app/profile/tabularis.bsky.social",
-    "mastodon": "https://mastodon.social/@tabularis"
+    "mastodon": "https://mastodon.social/@tabularis",
+    "linkedin": "https://www.linkedin.com/company/tabularisdb"
   },
   "scripts": {
     "dev": "vite",
