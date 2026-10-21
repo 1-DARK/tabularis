@@ -609,6 +609,25 @@ describe('SQL INSERT copy quoting', () => {
         );
     });
 
+    it('uses double quotes for SQL Server identifiers', () => {
+        expect(rowsToSqlInsert([[1]], ['id'], 'users', 'mssql')).toBe(
+            'INSERT INTO "users" ("id") VALUES (1);',
+        );
+    });
+
+    it('uses a plugin driver’s identifier quote and escapes that quote', () => {
+        const capabilities = {identifier_quote: '~'} as DriverCapabilities;
+        expect(rowsToSqlInsert([[1]], ['we~ird'], 'user~table', capabilities)).toBe(
+            'INSERT INTO ~user~~table~ (~we~~ird~) VALUES (1);',
+        );
+    });
+
+    it('escapes a quote in PostgreSQL identifiers', () => {
+        expect(rowsToSqlInsert([[1]], ['we"ird'], 'user"table', 'postgres')).toBe(
+            'INSERT INTO "user""table" ("we""ird") VALUES (1);',
+        );
+    });
+
     it('keeps backticks when no driver is given', () => {
         expect(rowsToSqlInsert([[1]], ['id'], 'users')).toBe(
             'INSERT INTO `users` (`id`) VALUES (1);',
