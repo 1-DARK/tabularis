@@ -76,6 +76,23 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
     .unwrap_err()
     .contains("HTTPS"));
 
+    let mut loopback_config = config.clone();
+    loopback_config.public_origin = "http://localhost:8080".to_string();
+    loopback_config.allowed_origins = vec![
+        loopback_config.public_origin.clone(),
+        "http://127.0.0.1:8080".to_string(),
+    ];
+    let loopback_security = LocalSessionSecurity::new_remote(
+        loopback_config,
+        RemoteAuthentication::password("correct horse battery staple"),
+    )
+    .unwrap();
+    assert!(loopback_security.is_remote());
+    assert!(!loopback_security.secure_cookie());
+    assert!(loopback_security.host_allowed("localhost:8080"));
+    assert!(loopback_security.origin_allowed("http://127.0.0.1:8080"));
+    assert!(!loopback_security.origin_allowed("http://tabularis.example.com"));
+
     let password_security = LocalSessionSecurity::new_remote(
         config.clone(),
         RemoteAuthentication::password("correct horse battery staple"),

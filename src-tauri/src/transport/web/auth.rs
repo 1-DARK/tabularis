@@ -215,6 +215,9 @@ impl LocalSessionSecurity {
             return Err("The public Web UI URL must be included in --allowed-origin".to_string());
         }
         allowed_hosts.insert(public_host.clone());
+        // Only a loopback origin may be plain HTTP (see `parse_origin`), and
+        // browsers drop `Secure` cookies there.
+        let secure_cookie = public_origin.starts_with("https://");
 
         let authentication = match authentication {
             RemoteAuthentication::Password { hash, length } if length >= 12 => {
@@ -239,7 +242,7 @@ impl LocalSessionSecurity {
                 public_host,
                 allowed_origins,
                 allowed_hosts,
-                secure_cookie: true,
+                secure_cookie,
                 remote: true,
                 authorization: config.authorization,
                 authentication,
@@ -500,10 +503,13 @@ impl fmt::Debug for LocalSessionSecurity {
     }
 }
 
+/// Remote origins must be HTTPS, except a loopback host: a container published
+/// on `127.0.0.1` is reached as `http://localhost:<port>` and never crosses a
+/// network the browser does not own.
 fn parse_origin(origin: &str, require_https: bool) -> Result<(String, String), String> {
     let parsed = Url::parse(origin).map_err(|_| "Invalid Web UI origin".to_string())?;
     let valid_scheme = if require_https {
-        parsed.scheme() == "https"
+        parsed.scheme() == "https" || (parsed.scheme() == "http" && is_loopback_origin(&parsed))
     } else {
         parsed.scheme() == "http"
     };
@@ -515,7 +521,7 @@ fn parse_origin(origin: &str, require_https: bool) -> Result<(String, String), S
         || parsed.path() != "/"
     {
         return Err(if require_https {
-            "Remote Web UI origins must be HTTPS origins without paths, queries, or credentials"
+            "Remote Web UI origins must be HTTPS (or loopback HTTP) origins without paths, queries, or credentials"
                 .to_string()
         } else {
             "Invalid local Web UI origin".to_string()
@@ -535,6 +541,15 @@ fn parse_origin(origin: &str, require_https: bool) -> Result<(String, String), S
         None => host,
     };
     Ok((parsed.origin().ascii_serialization(), host))
+}
+
+fn is_loopback_origin(url: &Url) -> bool {
+    match url.host() {
+        Some(Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
 }
 
 fn generate_token() -> String {

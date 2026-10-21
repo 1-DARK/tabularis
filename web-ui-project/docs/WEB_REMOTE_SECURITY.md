@@ -69,7 +69,7 @@ Store the proxy secret in the reverse proxy's protected secret store rather than
 
 ## Origin and cookie policy
 
-`--public-url` and every repeated `--allowed-origin` value must be an HTTPS origin with no path, query, fragment, or embedded credentials. The public URL must also appear in the allowlist. Requests with an unexpected `Host` or `Origin` are rejected. State-changing requests additionally require the session's CSRF token.
+`--public-url` and every repeated `--allowed-origin` value must be an HTTPS origin with no path, query, fragment, or embedded credentials. The only exception is a loopback host (`localhost`, `127.0.0.0/8`, `[::1]`), which may use plain HTTP because the traffic never leaves the browser's machine; its session cookie is then not marked `Secure`. The public URL must also appear in the allowlist. Requests with an unexpected `Host` or `Origin` are rejected. State-changing requests additionally require the session's CSRF token.
 
 Examples with an additional explicitly trusted administration origin:
 
@@ -178,38 +178,7 @@ Create the service account before enabling the unit, replace the public origin, 
 
 ## Container example
 
-Containers do not remove the remote-mode requirements. Build from an official `.deb` so the image contains the same binary and packaged `web-ui` resource tree:
-
-```dockerfile
-FROM ubuntu:22.04
-
-ARG TABULARIS_DEB=tabularis.deb
-COPY ${TABULARIS_DEB} /tmp/tabularis.deb
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends /tmp/tabularis.deb ca-certificates \
-    && rm -rf /var/lib/apt/lists/* /tmp/tabularis.deb \
-    && useradd --system --home-dir /var/lib/tabularis --create-home tabularis
-
-USER tabularis
-ENV HOME=/var/lib/tabularis
-VOLUME ["/var/lib/tabularis"]
-EXPOSE 8080
-ENTRYPOINT ["tabularis", "web", "--host", "0.0.0.0", "--port", "8080", "--no-open", "--auth", "password", "--public-url", "https://tabularis.example.com", "--allowed-origin", "https://tabularis.example.com"]
-```
-
-Pass `TABULARIS_WEB_PASSWORD` through a protected runtime environment or secret manager, never in the image. Attach the container only to an internal reverse-proxy network and do not publish port 8080 directly:
-
-```bash
-docker build --build-arg TABULARIS_DEB=tabularis_0.20.0_amd64.deb -t tabularis-web .
-docker network create tabularis-internal
-docker run -d --name tabularis-web \
-  --network tabularis-internal \
-  --env-file /etc/tabularis/web.env \
-  --mount type=volume,src=tabularis-data,dst=/var/lib/tabularis \
-  tabularis-web
-```
-
-The TLS reverse proxy must join `tabularis-internal`, proxy to `http://tabularis-web:8080`, preserve `Host`, and support WebSocket upgrades. Integrating an OS secret service for backend credential storage is deployment-specific; verify it before relying on saved database passwords in a container.
+Use the official images and their Compose and Helm setups described in [Running Tabularis Web in containers](./WEB_MODE_CONTAINERS.md). Containers do not remove the remote-mode requirements: attach the container only to an internal reverse-proxy network, do not publish port 8080 beyond `127.0.0.1`, and pass `TABULARIS_WEB_PASSWORD` and `TABULARIS_SECRET_KEY` through a secret manager rather than the image or a committed file.
 
 ## Verification checklist
 

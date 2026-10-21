@@ -110,7 +110,7 @@ pub async fn run(options: WebServerOptions) -> Result<(), String> {
     let (security, launch_url, public_url) = match options.auth {
         Some(auth_mode) => {
             let public_url = options.public_url.clone().ok_or_else(|| {
-                "Remote Web UI mode requires --public-url with an HTTPS origin".to_string()
+                "Remote Web UI mode requires --public-url with an HTTPS (or loopback HTTP) origin".to_string()
             })?;
             let authentication = remote_authentication(auth_mode)?;
             let authorization = if options.allow_high_risk {
