@@ -13,6 +13,7 @@ pub const SESSION_COOKIE_NAME: &str = "tabularis_session";
 pub const CSRF_HEADER_NAME: &str = "x-tabularis-csrf";
 pub const PROXY_SECRET_HEADER_NAME: &str = "x-tabularis-proxy-secret";
 pub const PROXY_USER_HEADER_NAME: &str = "x-tabularis-user";
+pub(crate) const MAX_SESSIONS: usize = 1024;
 
 #[derive(Clone, Debug)]
 pub struct LocalSessionSecurityConfig {
@@ -322,7 +323,7 @@ impl LocalSessionSecurity {
         let Authentication::Password(expected) = self.inner.authentication else {
             return Err(AuthenticationError::UnsupportedMode);
         };
-        self.authenticate_remote(expected, candidate, true)
+        self.authenticate_remote(expected, candidate)
     }
 
     pub fn authenticate_proxy(
@@ -335,7 +336,13 @@ impl LocalSessionSecurity {
         };
         let valid_user =
             !user.is_empty() && user.len() <= 256 && !user.chars().any(char::is_control);
-        self.authenticate_remote(expected, candidate, valid_user)
+        // No lockout: the 32+ character secret cannot be brute-forced, and a shared
+        // lockout would let anyone reaching the port deny every proxied user.
+        if hash_token(candidate) != expected || !valid_user {
+            return Err(AuthenticationError::InvalidCredentials);
+        }
+        let mut state = self.lock_state();
+        Ok(self.issue_session(&mut state, Instant::now()))
     }
 
     pub fn authenticate(&self, cookie_value: &str) -> Option<AuthenticatedSession> {
@@ -377,7 +384,6 @@ impl LocalSessionSecurity {
         &self,
         expected: TokenHash,
         candidate: &str,
-        additional_validation: bool,
     ) -> Result<IssuedSession, AuthenticationError> {
         let now = Instant::now();
         let mut state = self.lock_state();
@@ -394,7 +400,7 @@ impl LocalSessionSecurity {
             state.failed_logins.pop_front();
         }
 
-        if hash_token(candidate) != expected || !additional_validation {
+        if hash_token(candidate) != expected {
             state.failed_logins.push_back(now);
             if state.failed_logins.len() >= self.inner.config.rate_limit.max_failures {
                 state.blocked_until = Some(now + self.inner.config.rate_limit.lockout);
@@ -408,6 +414,18 @@ impl LocalSessionSecurity {
     }
 
     fn issue_session(&self, state: &mut SecurityState, now: Instant) -> IssuedSession {
+        // Bound the store against clients that never return the cookie. Expiring the
+        // oldest session (instead of removing it) lets reclamation clean up its state.
+        let mut live: Vec<_> = state
+            .sessions
+            .values_mut()
+            .filter(|session| session.expires_at > now)
+            .collect();
+        if live.len() >= MAX_SESSIONS {
+            if let Some(oldest) = live.iter_mut().min_by_key(|session| session.expires_at) {
+                oldest.expires_at = now;
+            }
+        }
         let cookie_value = generate_token();
         let token_hash = hash_token(&cookie_value);
         let csrf_token = generate_token();

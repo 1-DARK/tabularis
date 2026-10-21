@@ -331,8 +331,27 @@ fn router(
         .fallback_service(static_files)
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state.clone(), security_gate))
-        .layer(middleware::from_fn(add_request_id));
+        .layer(middleware::from_fn(add_request_id))
+        .layer(middleware::map_response(baseline_security_headers));
     (router, state)
+}
+
+/// Defaults for the SPA shell and every other response; handlers with a stricter policy keep theirs.
+async fn baseline_security_headers(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers
+        .entry(X_CONTENT_TYPE_OPTIONS)
+        .or_insert(HeaderValue::from_static("nosniff"));
+    headers
+        .entry(REFERRER_POLICY)
+        .or_insert(HeaderValue::from_static("same-origin"));
+    // No script-src yet: Monaco workers and plugin UI extensions need a tested allowlist first.
+    headers
+        .entry(CONTENT_SECURITY_POLICY)
+        .or_insert(HeaderValue::from_static(
+            "base-uri 'self'; object-src 'none'; frame-ancestors 'none'",
+        ));
+    response
 }
 
 async fn health() -> impl IntoResponse {
@@ -743,11 +762,15 @@ async fn connection_icon_asset(
         Some("svg") => "image/svg+xml",
         _ => "application/octet-stream",
     };
+    // The SVG upload filter is a denylist; the sandbox CSP stops scripts when an icon is opened directly.
     (
         StatusCode::OK,
         [
             (CACHE_CONTROL, "private, max-age=300"),
             (CONTENT_TYPE, content_type),
+            (X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (CONTENT_SECURITY_POLICY, PLUGIN_ASSET_CSP),
+            (CROSS_ORIGIN_RESOURCE_POLICY, "same-origin"),
         ],
         bytes,
     )

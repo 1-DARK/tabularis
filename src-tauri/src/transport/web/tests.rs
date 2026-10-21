@@ -119,14 +119,47 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
         RemoteAuthentication::proxy("a-proxy-shared-secret-with-32-bytes"),
     )
     .unwrap();
-    assert!(matches!(
-        proxy_security.authenticate_proxy("wrong", "alice@example.com"),
-        Err(AuthenticationError::InvalidCredentials)
-    ));
+    // Wrong proxy secrets must not lock out the proxy's legitimate users.
+    for _ in 0..3 {
+        assert!(matches!(
+            proxy_security.authenticate_proxy("wrong", "alice@example.com"),
+            Err(AuthenticationError::InvalidCredentials)
+        ));
+    }
     let issued = proxy_security
         .authenticate_proxy("a-proxy-shared-secret-with-32-bytes", "alice@example.com")
         .unwrap();
     assert!(proxy_security.authenticate(&issued.cookie_value).is_some());
+}
+
+#[test]
+fn bounds_the_session_store_by_expiring_the_oldest_session() {
+    let proxy_security = LocalSessionSecurity::new_remote(
+        RemoteSessionSecurityConfig {
+            public_origin: "https://tabularis.example.com".to_string(),
+            allowed_origins: vec!["https://tabularis.example.com".to_string()],
+            session_ttl: Duration::from_secs(60),
+            max_body_bytes: 1_048_576,
+            authorization: AuthorizationLevel::Database,
+            rate_limit: LoginRateLimitConfig::default(),
+        },
+        RemoteAuthentication::proxy("a-proxy-shared-secret-with-32-bytes"),
+    )
+    .unwrap();
+    let secret = "a-proxy-shared-secret-with-32-bytes";
+    let oldest = proxy_security.authenticate_proxy(secret, "alice").unwrap();
+    for _ in 1..super::auth::MAX_SESSIONS {
+        proxy_security.authenticate_proxy(secret, "alice").unwrap();
+    }
+    assert!(proxy_security.authenticate(&oldest.cookie_value).is_some());
+
+    let newest = proxy_security.authenticate_proxy(secret, "alice").unwrap();
+    assert!(proxy_security.authenticate(&oldest.cookie_value).is_none());
+    assert!(proxy_security.authenticate(&newest.cookie_value).is_some());
+    assert_eq!(
+        proxy_security.take_expired_sessions(),
+        vec![oldest.session_id()]
+    );
 }
 
 #[test]
@@ -365,6 +398,11 @@ async fn requires_a_single_use_bootstrap_and_authenticated_session() {
         .await
         .unwrap();
     assert_eq!(index.status(), reqwest::StatusCode::OK);
+    assert_eq!(index.headers()["x-content-type-options"], "nosniff");
+    assert_eq!(
+        index.headers()["content-security-policy"],
+        "base-uri 'self'; object-src 'none'; frame-ancestors 'none'"
+    );
     assert_eq!(index.text().await.unwrap(), "<main>Tabularis Web</main>");
 
     let asset = client
@@ -2372,6 +2410,11 @@ async fn executes_representative_commands_over_versioned_rpc() {
         .await
         .unwrap();
     assert_eq!(icon_asset.status(), reqwest::StatusCode::OK);
+    assert_eq!(icon_asset.headers()["x-content-type-options"], "nosniff");
+    assert!(icon_asset.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .ends_with("sandbox"));
     assert_eq!(
         icon_asset.bytes().await.unwrap().as_ref(),
         &[0x89, b'P', b'N', b'G']

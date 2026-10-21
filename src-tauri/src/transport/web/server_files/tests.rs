@@ -180,3 +180,15 @@ fn validates_new_directories_inside_configured_roots() {
     )
     .is_err());
 }
+
+#[cfg(unix)]
+#[test]
+fn rejects_new_directories_below_dangling_links_outside_roots() {
+    let root = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let link = root.path().join("sync");
+    std::os::unix::fs::symlink(outside.path().join("missing"), &link).unwrap();
+    let roots = canonicalize_roots(&[root.path().to_path_buf()]).unwrap();
+
+    assert!(validate_directory_target(&roots, link.join("tabularis").to_str().unwrap()).is_err());
+}

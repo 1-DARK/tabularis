@@ -124,7 +124,8 @@ pub fn validate_directory_target(roots: &[PathBuf], target: &str) -> Result<Path
     }
     let mut existing = requested;
     let mut missing = Vec::new();
-    while !existing.exists() {
+    // `exists()` follows links, so a dangling symlink would pass as a plain missing name.
+    while fs::symlink_metadata(existing).is_err() {
         let name = existing
             .file_name()
             .ok_or_else(|| "Choose a valid server directory".to_string())?;
