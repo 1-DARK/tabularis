@@ -17,17 +17,21 @@ auth:
   # -- password: built-in login page. proxy: an authenticating reverse proxy
   # sends the shared secret in `x-tabularis-proxy-secret`.
   mode: password
-  # -- Secret with the keys `web-password`, `proxy-secret` and `secret-key`.
-  # When empty the chart creates one and keeps generated values across upgrades.
+  # -- Secret with the keys `web-password` (password mode) or `proxy-secret`
+  # (proxy mode), and `secret-key`. Overrides the three values below.
   existingSecret: ""
-  # -- Login password (min. 12 characters); generated when empty.
+  # -- Login password (min. 12 characters). When empty, the container generates
+  # one on the data volume (`/data/web-password`) and prints it in its log.
   password: ""
-  # -- Proxy secret (min. 32 characters); generated when empty.
+  # -- Proxy secret (min. 32 characters). Required in proxy mode, because the
+  # proxy must send the same value.
   proxySecret: ""
 
 secretStore:
   # -- Encrypts saved connection credentials on the volume (min. 16
-  # characters); generated when empty. Losing it makes them unreadable.
+  # characters). When empty, the container generates `/data/secrets.key` next
+  # to the data; set it to keep the key out of volume backups. Losing it makes
+  # the saved credentials unreadable.
   key: ""
 
 # -- Grants every session host-level operations (plugin management, server

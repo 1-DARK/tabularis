@@ -34,3 +34,19 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "tabularis.secretName" -}}
 {{- .Values.auth.existingSecret | default (include "tabularis.fullname" .) -}}
 {{- end -}}
+
+{{/* Non-empty when the chart itself creates a Secret. */}}
+{{- define "tabularis.chartSecret" -}}
+{{- if or .Values.auth.password .Values.auth.proxySecret .Values.secretStore.key -}}true{{- end -}}
+{{- end -}}
+
+{{/* Whether the pod reads `key` from a mounted Secret. */}}
+{{- define "tabularis.hasSecretKey" -}}
+{{- $values := index . 0 -}}
+{{- $key := index . 1 -}}
+{{- if $values.auth.existingSecret -}}true
+{{- else if and (eq $key "web-password") $values.auth.password -}}true
+{{- else if and (eq $key "proxy-secret") $values.auth.proxySecret -}}true
+{{- else if and (eq $key "secret-key") $values.secretStore.key -}}true
+{{- end -}}
+{{- end -}}
