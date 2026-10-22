@@ -317,7 +317,9 @@ const TableToolbarInternal = ({
             prev.column === updated.column &&
             prev.operator === updated.operator &&
             prev.value === updated.value &&
-            prev.value2 === updated.value2;
+            prev.value2 === updated.value2 &&
+            // undefined and true both mean "match case"
+            (prev.matchCase !== false) === (updated.matchCase !== false);
         if (!onlyEnabledChanged) {
             onResetApplied(updated.id);
         }
