@@ -87,6 +87,7 @@ pub enum AuthenticationError {
     InvalidCredentials,
     RateLimited,
     UnsupportedMode,
+    SessionLimitReached,
 }
 
 #[derive(Clone)]
@@ -330,7 +331,7 @@ impl LocalSessionSecurity {
             return None;
         }
         state.bootstrap = None;
-        Some(self.issue_session(&mut state, now))
+        self.issue_session(&mut state, now).ok()
     }
 
     pub(crate) fn login_client(&self, peer: Option<IpAddr>, forwarded_for: Option<&str>) -> IpAddr {
@@ -364,7 +365,7 @@ impl LocalSessionSecurity {
             return Err(AuthenticationError::InvalidCredentials);
         }
         let mut state = self.lock_state();
-        Ok(self.issue_session(&mut state, Instant::now()))
+        self.issue_session(&mut state, Instant::now())
     }
 
     pub fn authenticate(&self, cookie_value: &str) -> Option<AuthenticatedSession> {
@@ -418,6 +419,12 @@ impl LocalSessionSecurity {
                     .back()
                     .is_some_and(|last| now.duration_since(*last) < limit.window)
         });
+        if !state.login_attempts.contains_key(&client)
+            && state.login_attempts.len() >= MAX_TRACKED_LOGIN_CLIENTS
+        {
+            // Fail closed: untracked attempts cannot bypass a lockout or displace tracked clients.
+            return Err(AuthenticationError::RateLimited);
+        }
         let attempts = state.login_attempts.entry(client).or_default();
         if attempts.blocked_until.is_some_and(|until| until > now) {
             return Err(AuthenticationError::RateLimited);
@@ -436,36 +443,26 @@ impl LocalSessionSecurity {
             if attempts.failures.len() >= limit.max_failures {
                 attempts.blocked_until = Some(now + limit.lockout);
             }
-            if state.login_attempts.len() > MAX_TRACKED_LOGIN_CLIENTS {
-                let oldest = state
-                    .login_attempts
-                    .iter()
-                    .filter(|(address, _)| **address != client)
-                    .min_by_key(|(_, attempts)| attempts.failures.back().copied())
-                    .map(|(address, _)| *address);
-                if let Some(oldest) = oldest {
-                    state.login_attempts.remove(&oldest);
-                }
-            }
             return Err(AuthenticationError::InvalidCredentials);
         }
 
         state.login_attempts.remove(&client);
-        Ok(self.issue_session(&mut state, now))
+        self.issue_session(&mut state, now)
     }
 
-    fn issue_session(&self, state: &mut SecurityState, now: Instant) -> IssuedSession {
-        // Bound the store against clients that never return the cookie. Expiring the
-        // oldest session (instead of removing it) lets reclamation clean up its state.
-        let mut live: Vec<_> = state
+    fn issue_session(
+        &self,
+        state: &mut SecurityState,
+        now: Instant,
+    ) -> Result<IssuedSession, AuthenticationError> {
+        if state
             .sessions
-            .values_mut()
+            .values()
             .filter(|session| session.expires_at > now)
-            .collect();
-        if live.len() >= MAX_SESSIONS {
-            if let Some(oldest) = live.iter_mut().min_by_key(|session| session.expires_at) {
-                oldest.expires_at = now;
-            }
+            .count()
+            >= MAX_SESSIONS
+        {
+            return Err(AuthenticationError::SessionLimitReached);
         }
         let cookie_value = generate_token();
         let token_hash = hash_token(&cookie_value);
@@ -480,11 +477,11 @@ impl LocalSessionSecurity {
             },
         );
 
-        IssuedSession {
+        Ok(IssuedSession {
             cookie_value,
             max_age_seconds: self.inner.config.session_ttl.as_secs(),
             session_id: session_id(token_hash),
-        }
+        })
     }
 
     fn lock_state(&self) -> std::sync::MutexGuard<'_, SecurityState> {

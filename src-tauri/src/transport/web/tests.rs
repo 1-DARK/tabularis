@@ -157,7 +157,7 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
 }
 
 #[test]
-fn bounds_the_session_store_by_expiring_the_oldest_session() {
+fn bounds_the_session_store_without_displacing_live_sessions() {
     let proxy_security = LocalSessionSecurity::new_remote(
         RemoteSessionSecurityConfig {
         trusted_proxies: Vec::new(),
@@ -178,13 +178,15 @@ fn bounds_the_session_store_by_expiring_the_oldest_session() {
     }
     assert!(proxy_security.authenticate(&oldest.cookie_value).is_some());
 
-    let newest = proxy_security.authenticate_proxy(secret, "alice").unwrap();
-    assert!(proxy_security.authenticate(&oldest.cookie_value).is_none());
-    assert!(proxy_security.authenticate(&newest.cookie_value).is_some());
-    assert_eq!(
-        proxy_security.take_expired_sessions(),
-        vec![oldest.session_id()]
-    );
+    assert!(matches!(
+        proxy_security.authenticate_proxy(secret, "alice"),
+        Err(AuthenticationError::SessionLimitReached)
+    ));
+    assert!(proxy_security.authenticate(&oldest.cookie_value).is_some());
+    assert!(proxy_security.take_expired_sessions().is_empty());
+    let session = proxy_security.authenticate(&oldest.cookie_value).unwrap();
+    proxy_security.logout(&session);
+    assert!(proxy_security.authenticate_proxy(secret, "alice").is_ok());
 }
 
 #[test]
@@ -3100,4 +3102,106 @@ fn private_clients_cannot_spoof_the_login_bucket_without_explicit_proxy_trust() 
         let peer = address.parse().unwrap();
         assert_eq!(super::auth::login_client(Some(peer), Some("198.51.100.1"), &[]), peer);
     }
+}
+
+#[test]
+fn login_client_churn_cannot_clear_an_existing_lockout() {
+    let security = LocalSessionSecurity::new_remote(
+        RemoteSessionSecurityConfig {
+            trusted_proxies: Vec::new(),
+            public_origin: "https://review.example".into(),
+            allowed_origins: vec!["https://review.example".into()],
+            session_ttl: Duration::from_secs(60),
+            max_body_bytes: 1024,
+            authorization: AuthorizationLevel::Database,
+            rate_limit: LoginRateLimitConfig::default(),
+        },
+        RemoteAuthentication::password("correct horse battery staple"),
+    )
+    .unwrap();
+    let blocked = "198.51.100.1".parse().unwrap();
+    for _ in 0..5 {
+        let _ = security.authenticate_password("incorrect", blocked);
+    }
+    for client in 0..4096_u32 {
+        let address = std::net::IpAddr::V4(std::net::Ipv4Addr::from(0x0a000000 + client));
+        let _ = security.authenticate_password("incorrect", address);
+    }
+    assert!(matches!(
+        security.authenticate_password("correct horse battery staple", blocked),
+        Err(AuthenticationError::RateLimited)
+    ));
+    let overflow = "203.0.113.7".parse().unwrap();
+    for _ in 0..10 {
+        assert!(security
+            .authenticate_password("incorrect", overflow)
+            .is_err());
+    }
+    assert!(matches!(
+        security.authenticate_password("correct horse battery staple", overflow),
+        Err(AuthenticationError::RateLimited)
+    ));
+}
+
+#[tokio::test]
+async fn rejects_new_proxy_sessions_at_capacity_without_logging_out_existing_clients() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("index.html"), "Tabularis").unwrap();
+    let secret = "a-proxy-shared-secret-with-32-bytes";
+    let security = LocalSessionSecurity::new_remote(
+        RemoteSessionSecurityConfig {
+            trusted_proxies: Vec::new(),
+            public_origin: "https://review.example".into(),
+            allowed_origins: vec!["https://review.example".into()],
+            session_ttl: Duration::from_secs(60),
+            max_body_bytes: 1024,
+            authorization: AuthorizationLevel::Database,
+            rate_limit: LoginRateLimitConfig::default(),
+        },
+        RemoteAuthentication::proxy(secret),
+    )
+    .unwrap();
+    let oldest = security.authenticate_proxy(secret, "alice").unwrap();
+    for _ in 1..super::auth::MAX_SESSIONS {
+        security.authenticate_proxy(secret, "alice").unwrap();
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let server = tokio::spawn(server::serve(
+        listener,
+        temp.path().to_path_buf(),
+        security,
+        test_application(temp.path()),
+        async move {
+            let _ = shutdown_rx.await;
+        },
+    ));
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("http://{address}/api/v1/session"))
+        .header(HOST, "review.example")
+        .header("x-tabularis-proxy-secret", secret)
+        .header("x-tabularis-user", "bob")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+    let existing = client
+        .get(format!("http://{address}/api/v1/session"))
+        .header(HOST, "review.example")
+        .header(
+            COOKIE,
+            format!(
+                "{}={}",
+                super::auth::SESSION_COOKIE_NAME,
+                oldest.cookie_value
+            ),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(existing.status(), reqwest::StatusCode::OK);
+    let _ = shutdown_tx.send(());
+    server.await.unwrap().unwrap();
 }

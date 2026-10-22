@@ -1244,6 +1244,16 @@ fn login_page_response(status: StatusCode, error: Option<&str>) -> Response {
 
 fn authentication_error_response(error: AuthenticationError, html: bool) -> Response {
     match error {
+        AuthenticationError::SessionLimitReached => {
+            if html {
+                login_page_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Some("The server has reached its session limit. Try again later."),
+                )
+            } else {
+                status_response(StatusCode::SERVICE_UNAVAILABLE)
+            }
+        }
         AuthenticationError::RateLimited => {
             let mut response = if html {
                 login_page_response(StatusCode::TOO_MANY_REQUESTS, Some("Too many attempts"))
@@ -1268,6 +1278,7 @@ fn authentication_error_response(error: AuthenticationError, html: bool) -> Resp
 fn audit_authentication_error(request_id: &str, method: &str, error: AuthenticationError) {
     let outcome = match error {
         AuthenticationError::RateLimited => "rate_limited",
+        AuthenticationError::SessionLimitReached => "session_limit",
         AuthenticationError::InvalidCredentials | AuthenticationError::UnsupportedMode => "denied",
     };
     audit_event(

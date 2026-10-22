@@ -183,14 +183,14 @@ pub fn install_from_env() -> Result<(), String> {
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| directory.join(STORE_FILE));
-    let passphrase = resolve_passphrase(&directory)?;
+    let passphrase = resolve_passphrase(&directory, &path)?;
     let store = FileSecretStore::open(path.clone(), &passphrase)?;
     log::info!("Storing secrets in the encrypted file {}", path.display());
     keyring::set_default_credential_builder(Box::new(FileCredentialBuilder(Arc::new(store))));
     Ok(())
 }
 
-fn resolve_passphrase(directory: &Path) -> Result<String, String> {
+fn resolve_passphrase(directory: &Path, store_path: &Path) -> Result<String, String> {
     // Compose and Helm pass unset values as empty strings.
     if let Some(key) = std::env::var(KEY_ENV).ok().filter(|key| !key.is_empty()) {
         return Ok(key);
@@ -201,21 +201,75 @@ fn resolve_passphrase(directory: &Path) -> Result<String, String> {
             .map(|key| key.trim_end_matches(['\r', '\n']).to_string())
             .map_err(|error| format!("Cannot read {KEY_FILE_ENV} {}: {error}", path.display()));
     }
-    generated_key(directory)
+    generated_key(directory, store_path)
 }
 
 /// The key generated on first start, reused afterwards.
-fn generated_key(directory: &Path) -> Result<String, String> {
+fn generated_key(directory: &Path, store_path: &Path) -> Result<String, String> {
+    use std::io::Write;
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    // Keep the lock file: replacing its inode would let concurrent starts take different locks.
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let lock = options
+        .open(directory.join(".secrets-key.lock"))
+        .map_err(|error| error.to_string())?;
+    fs2::FileExt::lock_exclusive(&lock).map_err(|error| error.to_string())?;
     let path = directory.join(GENERATED_KEY_FILE);
-    if let Ok(key) = fs::read_to_string(&path) {
-        return Ok(key.trim().to_string());
+    match fs::read_to_string(&path) {
+        Ok(key)
+            if BASE64
+                .decode(key.trim())
+                .is_ok_and(|bytes| bytes.len() == 32) =>
+        {
+            return Ok(key.trim().to_string())
+        }
+        Ok(_) => {
+            if store_path.try_exists().map_err(|error| {
+                format!(
+                    "Cannot inspect encrypted secret store {}: {error}",
+                    store_path.display()
+                )
+            })? {
+                return Err(format!("Generated key {} is incomplete. Restore the original key from backup; the existing secret store was not changed", path.display()));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            if store_path.try_exists().map_err(|error| {
+                format!(
+                    "Cannot inspect encrypted secret store {}: {error}",
+                    store_path.display()
+                )
+            })? {
+                return Err(format!("Generated key {} is missing. Restore the original key from backup; the existing secret store was not changed", path.display()));
+            }
+        }
+        Err(error) => {
+            return Err(format!(
+                "Cannot read generated key {}: {error}",
+                path.display()
+            ))
+        }
     }
     let mut bytes = [0u8; 32];
     use aes_gcm::aead::rand_core::RngCore;
     aes_gcm::aead::OsRng.fill_bytes(&mut bytes);
     let key = BASE64.encode(bytes);
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    crate::persistence::write_private_file(&path, &key)?;
+    let mut pending =
+        tempfile::NamedTempFile::new_in(directory).map_err(|error| error.to_string())?;
+    pending
+        .write_all(key.as_bytes())
+        .map_err(|error| error.to_string())?;
+    pending
+        .as_file()
+        .sync_all()
+        .map_err(|error| error.to_string())?;
+    pending.persist(&path).map_err(|error| error.to_string())?;
     log::warn!(
         "No {KEY_ENV} set; generated {}. Anyone who can read the data volume can read the stored secrets",
         path.display()

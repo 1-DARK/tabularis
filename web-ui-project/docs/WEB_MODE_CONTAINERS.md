@@ -69,7 +69,7 @@ The entrypoint translates these into `tabularis web` flags. Arguments after the 
 
 Containers have no OS keychain. The image sets `TABULARIS_SECRET_STORE=file`, which keeps every secret the desktop app would put in the keychain (database and SSH passwords, connection URIs, plugin secrets, AI keys) in `/data/secrets.enc.json`, encrypted with AES-256-GCM under a key derived from `TABULARIS_SECRET_KEY` with Argon2id.
 
-Without `TABULARIS_SECRET_KEY`, a random key is generated in `/data/secrets.key`. Secrets then survive restarts and upgrades, but anyone who can read the volume can read them. Set your own key in production and back it up separately from the volume: a lost key makes the stored credentials unrecoverable, and a wrong key stops the container at startup instead of silently starting empty.
+Without `TABULARIS_SECRET_KEY`, a random key is generated in `/data/secrets.key`. Secrets then survive restarts and upgrades, but anyone who can read the volume can read them. Generated keys are published atomically under a startup lock. An incomplete key is regenerated only before a secret store exists; otherwise startup names the damaged or missing key file and requires restoring the original key, without changing the encrypted store. Set your own key in production and back it up separately from the volume: a lost key makes the stored credentials unrecoverable, and a wrong key stops the container at startup instead of silently starting empty.
 
 `TABULARIS_SECRET_STORE=file` also works outside containers, for example on a headless server without a Secret Service. `TABULARIS_SECRET_STORE_PATH` moves the store file.
 
