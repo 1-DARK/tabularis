@@ -16,6 +16,7 @@ const DEFAULT_TRANSFER_TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_PENDING_TRANSFERS_PER_SESSION: usize = 64;
 const CONTENT_FILE: &str = "content";
 const MANIFEST_FILE: &str = "metadata.json";
+const SWEEP_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub struct FileTransferStore {
@@ -169,7 +170,7 @@ impl FileTransferStore {
         token: &str,
         purpose: &str,
     ) -> Result<TransferReader, String> {
-        self.cleanup_expired()?;
+        self.sweep_expired().await;
         let directory = self.token_directory(owner, TransferKind::Upload, token)?;
         let manifest =
             self.read_manifest(&directory, owner, TransferKind::Upload, Some(purpose))?;
@@ -189,7 +190,6 @@ impl FileTransferStore {
         token: &str,
         purpose: &str,
     ) -> Result<ClaimedUpload, String> {
-        self.cleanup_expired()?;
         let directory = self.token_directory(owner, TransferKind::Upload, token)?;
         let manifest =
             self.read_manifest(&directory, owner, TransferKind::Upload, Some(purpose))?;
@@ -208,7 +208,7 @@ impl FileTransferStore {
         owner: Uuid,
         token: &str,
     ) -> Result<TransferReader, String> {
-        self.cleanup_expired()?;
+        self.sweep_expired().await;
         let directory = self.token_directory(owner, TransferKind::Download, token)?;
         let manifest = self.read_manifest(&directory, owner, TransferKind::Download, None)?;
         let claimed = directory.with_file_name(format!(".claimed-{}", Uuid::new_v4()));
@@ -232,49 +232,34 @@ impl FileTransferStore {
         let _ = fs::remove_dir_all(self.root.join(owner.to_string()));
     }
 
-    fn cleanup_expired(&self) -> Result<(), String> {
-        let sessions = match fs::read_dir(&self.root) {
-            Ok(sessions) => sessions,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(error.to_string()),
-        };
-        let now = unix_millis(SystemTime::now())?;
-        for session in sessions {
-            let session = session.map_err(|error| error.to_string())?;
-            if !session
-                .file_type()
-                .map_err(|error| error.to_string())?
-                .is_dir()
+    /// Removes expired transfers of every session. A token's own expiry is
+    /// checked on use, so this only reclaims disk space: it runs at most every
+    /// `SWEEP_INTERVAL` per root and off the async worker threads.
+    async fn sweep_expired(&self) {
+        static LAST_SWEEP: std::sync::Mutex<
+            Option<std::collections::HashMap<PathBuf, std::time::Instant>>,
+        > = std::sync::Mutex::new(None);
+        {
+            let mut last = LAST_SWEEP.lock().unwrap_or_else(|error| error.into_inner());
+            let last = last.get_or_insert_with(Default::default);
+            let now = std::time::Instant::now();
+            if last
+                .get(&self.root)
+                .is_some_and(|previous| now.duration_since(*previous) < SWEEP_INTERVAL)
             {
-                continue;
+                return;
             }
-            for kind in [TransferKind::Upload, TransferKind::Download] {
-                let entries = match fs::read_dir(session.path().join(kind.directory())) {
-                    Ok(entries) => entries,
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                    Err(error) => return Err(error.to_string()),
-                };
-                for entry in entries {
-                    let entry = entry.map_err(|error| error.to_string())?;
-                    if !entry
-                        .file_type()
-                        .map_err(|error| error.to_string())?
-                        .is_dir()
-                    {
-                        continue;
-                    }
-                    let expires_at = fs::read(entry.path().join(MANIFEST_FILE))
-                        .ok()
-                        .and_then(|bytes| serde_json::from_slice::<TransferManifest>(&bytes).ok())
-                        .map(|manifest| manifest.expires_at_millis)
-                        .or_else(|| fallback_expiry(&entry.path(), self.limits.ttl));
-                    if expires_at.is_some_and(|expires_at| expires_at <= now) {
-                        let _ = fs::remove_dir_all(entry.path());
-                    }
-                }
-            }
+            last.insert(self.root.clone(), now);
         }
-        Ok(())
+        let root = self.root.clone();
+        let ttl = self.limits.ttl;
+        let result = tokio::task::spawn_blocking(move || remove_expired_transfers(&root, ttl))
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result);
+        if let Err(error) = result {
+            log::warn!("Failed to sweep expired file transfers: {error}");
+        }
     }
 
     async fn store_stream<S, E>(
@@ -291,7 +276,7 @@ impl FileTransferStore {
         E: Display,
     {
         validate_purpose(purpose)?;
-        self.cleanup_expired()?;
+        self.sweep_expired().await;
         let parent = self.root.join(owner.to_string()).join(kind.directory());
         create_private_directory(&parent)?;
         if pending_transfer_count(&parent)? >= self.limits.max_pending_per_session {
@@ -387,6 +372,9 @@ impl FileTransferStore {
         let manifest = serde_json::from_slice::<TransferManifest>(&bytes)
             .map_err(|_| "File transfer token is invalid".to_string())?;
         let now = unix_millis(SystemTime::now())?;
+        if manifest.owner == owner && manifest.kind == kind && manifest.expires_at_millis <= now {
+            let _ = fs::remove_dir_all(directory);
+        }
         if manifest.owner != owner
             || manifest.kind != kind
             || manifest.expires_at_millis <= now
@@ -396,6 +384,52 @@ impl FileTransferStore {
         }
         Ok(manifest)
     }
+}
+
+/// Deletes every expired upload and download below `root`.
+fn remove_expired_transfers(root: &Path, ttl: Duration) -> Result<(), String> {
+    let sessions = match fs::read_dir(root) {
+        Ok(sessions) => sessions,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let now = unix_millis(SystemTime::now())?;
+    for session in sessions {
+        let session = session.map_err(|error| error.to_string())?;
+        if !session
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+        {
+            continue;
+        }
+        for kind in [TransferKind::Upload, TransferKind::Download] {
+            let entries = match fs::read_dir(session.path().join(kind.directory())) {
+                Ok(entries) => entries,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.to_string()),
+            };
+            for entry in entries {
+                let entry = entry.map_err(|error| error.to_string())?;
+                if !entry
+                    .file_type()
+                    .map_err(|error| error.to_string())?
+                    .is_dir()
+                {
+                    continue;
+                }
+                let expires_at = fs::read(entry.path().join(MANIFEST_FILE))
+                    .ok()
+                    .and_then(|bytes| serde_json::from_slice::<TransferManifest>(&bytes).ok())
+                    .map(|manifest| manifest.expires_at_millis)
+                    .or_else(|| fallback_expiry(&entry.path(), ttl));
+                if expires_at.is_some_and(|expires_at| expires_at <= now) {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 impl TransferKind {

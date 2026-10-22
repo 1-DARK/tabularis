@@ -1,4 +1,4 @@
-use super::{safe_content_type, safe_file_name, FileTransferStore};
+use super::{remove_expired_transfers, safe_content_type, safe_file_name, FileTransferStore};
 use bytes::Bytes;
 use futures::stream;
 use std::io;
@@ -219,4 +219,45 @@ async fn expired_tokens_are_removed_before_use() {
         .join("uploads")
         .join(metadata.token)
         .exists());
+}
+
+#[tokio::test]
+async fn sweeping_removes_expired_transfers_of_every_session() {
+    let temp = tempfile::tempdir().unwrap();
+    let expired = FileTransferStore::with_limits(temp.path(), 1024, Duration::ZERO);
+    let fresh = FileTransferStore::with_limits(temp.path(), 1024, Duration::from_secs(60));
+    let stale_owner = Uuid::new_v4();
+    let live_owner = Uuid::new_v4();
+    let stale = expired
+        .store_upload(
+            stale_owner,
+            "notebook-import",
+            "old.json",
+            None,
+            bytes_stream([b"{}".as_slice()]),
+        )
+        .await
+        .unwrap();
+    let live = fresh
+        .store_upload(
+            live_owner,
+            "notebook-import",
+            "new.json",
+            None,
+            bytes_stream([b"{}".as_slice()]),
+        )
+        .await
+        .unwrap();
+
+    remove_expired_transfers(&fresh.root, Duration::from_secs(60)).unwrap();
+
+    let uploads = |owner: Uuid, token: &str| {
+        fresh
+            .root
+            .join(owner.to_string())
+            .join("uploads")
+            .join(token)
+    };
+    assert!(!uploads(stale_owner, &stale.token).exists());
+    assert!(uploads(live_owner, &live.token).exists());
 }
