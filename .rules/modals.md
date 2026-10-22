@@ -265,7 +265,7 @@ export const CreateModal = ({ isOpen, onClose, onSubmit }: CreateModalProps) => 
         <div className="flex items-center justify-between p-4 border-b border-default bg-base">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-accent-primary/15 rounded-lg">
-              <Plus size={20} className="text-accent-primary" />
+              <Plus size={20} className="text-accent" />
             </div>
             <div>
               <h2 className="text-lg font-semibold text-primary">{t("create.title")}</h2>
