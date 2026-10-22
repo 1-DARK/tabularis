@@ -161,6 +161,9 @@ pub async fn run(options: WebServerOptions) -> Result<(), String> {
     println!("Tabularis Web is available at {public_url}");
     if options.open_browser && open::that(&launch_url).is_err() {
         log::warn!("Failed to open the Web UI in the default browser");
+        // The user asked for a browser, so hand over the URL instead. It goes to
+        // the terminal only: `--no-open` services never print it.
+        eprintln!("Open this URL in a browser to sign in (valid once, for one minute):\n  {launch_url}");
     }
     drop(launch_url);
 

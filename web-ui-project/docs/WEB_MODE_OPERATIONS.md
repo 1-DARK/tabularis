@@ -59,7 +59,7 @@ Local mode is authenticated even though it listens only on loopback:
 
 The local cookie is sent over loopback HTTP and is not marked `Secure`; remote cookies are `Secure` whenever their public origin is HTTPS, which it must be except on a loopback host. Closing a browser tab does not stop the server. Stop the foreground process with `Ctrl+C`, or stop its service unit. Sessions, active jobs, pools, tunnels, and temporary transfer state are cleaned up on logout, expiry, disconnect where applicable, or process shutdown.
 
-`--no-open` intentionally does not print the secret bootstrap URL. It is therefore unsuitable for creating a new interactive loopback session by hand. If browser launch fails, configure a working system browser opener and restart `tabularis web` to obtain a fresh one-time bootstrap.
+`--no-open` intentionally does not print the secret bootstrap URL, so it never ends up in a service log. It is therefore unsuitable for creating a new interactive loopback session by hand. If the browser launch fails, for example on a headless machine or over SSH, Tabularis prints the one-time URL to the terminal instead. It is valid once, for one minute; restart `tabularis web` for a fresh one.
 
 ## Remote deployment and reverse proxy
 
@@ -174,7 +174,7 @@ An enabled UI extension is trusted application code running in the shared page, 
 - **Local 401 after launch:** the bootstrap token is expired or was already consumed. Restart the process and let it open a fresh URL; do not bookmark bootstrap URLs.
 - **Remote 401:** verify the password or that the trusted proxy replaces both required identity headers.
 - **HTTP 403:** check the public `Host`, exact HTTPS origin allowlist, proxy header handling, CSRF/session state, and the command's authorization level.
-- **HTTP 429:** the process-wide remote login lockout is active after repeated failures. Wait for the five-minute lockout and correct the credentials before retrying.
+- **HTTP 429:** this client is locked out after repeated failed logins. Wait for the five-minute lockout and correct the credentials before retrying. Other clients are not affected.
 - **WebSocket disconnects or missing progress:** enable HTTP/1.1 WebSocket upgrades and suitable idle timeouts on the reverse proxy. Confirm the public origin and session cookie are preserved.
 - **Browser did not open locally:** `--no-open` suppresses bootstrap launch. Otherwise configure the OS default-browser opener and restart the process.
 
