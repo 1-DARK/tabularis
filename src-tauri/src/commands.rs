@@ -7,7 +7,7 @@ use urlencoding::encode;
 use crate::credential_cache;
 use crate::models::{
     BatchStatementResult, ConnectionGroup, ConnectionParams,
-    ExportPayload, QueryResult, SavedConnection,
+    QueryResult, SavedConnection,
 };
 
 // Constants
@@ -18,12 +18,6 @@ async fn driver_for(
     crate::drivers::registry::get_driver(id)
         .await
         .ok_or_else(|| format!("Unsupported driver: {}", id))
-}
-
-pub(crate) async fn driver_for_params(
-    params: &ConnectionParams,
-) -> Result<Arc<dyn crate::drivers::driver_trait::DatabaseDriver>, String> {
-    crate::drivers::registry::get_connection_driver(params).await
 }
 
 const DEFAULT_MYSQL_PORT: u16 = 3306;
@@ -1881,21 +1875,5 @@ pub(crate) fn reject_if_would_create_cycle(
         "Connection-group tree is deeper than the number of groups; refusing to modify it"
             .to_string(),
     )
-}
-
-pub async fn encrypt_export_payload(
-    payload: ExportPayload,
-    password: String,
-) -> Result<crate::export_crypto::EncryptedEnvelope, String> {
-    let plaintext = serde_json::to_string(&payload).map_err(|e| e.to_string())?;
-    crate::export_crypto::encrypt(&plaintext, &password)
-}
-
-pub async fn decrypt_export_payload(
-    envelope: crate::export_crypto::EncryptedEnvelope,
-    password: String,
-) -> Result<ExportPayload, String> {
-    let plaintext = crate::export_crypto::decrypt(&envelope, &password)?;
-    serde_json::from_str(&plaintext).map_err(|e| format!("Invalid export payload: {e}"))
 }
 

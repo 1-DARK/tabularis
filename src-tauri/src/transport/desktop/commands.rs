@@ -2,10 +2,10 @@ use crate::commands::*;
 use crate::credential_cache;
 use crate::keychain_utils;
 use crate::models::{
-    BatchStatementResult, ColumnDefinition, ConnectionParams, ExplainQueryOutput, ExportPayload,
-    ForeignKey, Index, K8sConnection, K8sConnectionInput, QueryResult, RoutineInfo,
-    RoutineParameter, SavedConnection, SshConnection, SshConnectionInput, SshTestParams,
-    TableColumn, TableInfo, TestConnectionRequest, TriggerInfo,
+    BatchStatementResult, ColumnDefinition, ConnectionParams, ExplainQueryOutput, ForeignKey,
+    Index, K8sConnection, K8sConnectionInput, QueryResult, RoutineInfo, RoutineParameter,
+    SavedConnection, SshConnection, SshConnectionInput, SshTestParams, TableColumn, TableInfo,
+    TestConnectionRequest, TriggerInfo,
 };
 use crate::persistence;
 use std::collections::HashMap;
@@ -1293,36 +1293,6 @@ pub async fn update_record<R: Runtime>(
 }
 
 #[tauri::command]
-pub async fn save_blob_to_file<R: Runtime>(
-    app: AppHandle<R>,
-    connection_id: String,
-    table: String,
-    col_name: String,
-    pk_map: std::collections::HashMap<String, serde_json::Value>,
-    file_path: String,
-    schema: Option<String>,
-    database: Option<String>,
-) -> Result<(), String> {
-    let saved_conn = find_connection_by_id(&app, &connection_id)?;
-    let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
-    let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
-    let mut params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
-    if let Some(db) = database.filter(|d| !d.is_empty()) {
-        params.database = crate::models::DatabaseSelection::Single(db);
-    }
-    let drv = driver_for_params(&params).await?;
-    drv.save_blob_to_file(
-        &params,
-        &table,
-        &col_name,
-        &pk_map,
-        schema.as_deref(),
-        &file_path,
-    )
-    .await
-}
-
-#[tauri::command]
 pub async fn fetch_blob<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
@@ -2393,48 +2363,6 @@ pub async fn get_server_now<R: Runtime>(
     .await
 }
 
-#[tauri::command]
-pub async fn export_connections_payload<R: Runtime>(
-    app: AppHandle<R>,
-    include_secrets: Option<bool>,
-    connection_ids: Option<Vec<String>>,
-) -> Result<ExportPayload, String> {
-    crate::application::connection_files::export_payload(
-        app.state::<crate::runtime::RuntimeContext>().inner(),
-        include_secrets.unwrap_or(true),
-        connection_ids,
-    )
-    .await
-}
-
-#[tauri::command]
-pub async fn import_connections_payload<R: Runtime>(
-    app: AppHandle<R>,
-    payload: ExportPayload,
-) -> Result<(), String> {
-    apply_export_payload(app, payload).await
-}
-
-/// Merge an `ExportPayload` into the user's stored connections, groups, SSH and
-/// K8s records, moving any inline secrets into the keychain. Shared by the JSON
-/// import command above and the foreign-app import flow.
-pub async fn apply_export_payload<R: Runtime>(
-    app: AppHandle<R>,
-    payload: ExportPayload,
-) -> Result<(), String> {
-    crate::application::connection_files::apply_export_payload(
-        app.state::<crate::runtime::RuntimeContext>().inner(),
-        app.state::<std::sync::Arc<crate::connection_cache::ConnectionCache>>()
-            .inner()
-            .as_ref(),
-        app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>()
-            .inner()
-            .as_ref(),
-        payload,
-    )
-    .await
-}
-
 /// Detects the MIME type of base64-encoded binary data using magic-byte analysis
 /// and returns the canonical blob wire format: "BLOB:<size>:<mime>:<base64>".
 /// Called by the frontend after the user selects a file to upload.
@@ -2488,20 +2416,4 @@ pub async fn get_driver_manifest(
     driver_id: String,
 ) -> Option<crate::plugins::connection_metadata::DriverManifestDetails> {
     crate::commands::get_driver_manifest(driver_id).await
-}
-
-#[tauri::command]
-pub async fn encrypt_export_payload(
-    payload: ExportPayload,
-    password: String,
-) -> Result<crate::export_crypto::EncryptedEnvelope, String> {
-    crate::commands::encrypt_export_payload(payload, password).await
-}
-
-#[tauri::command]
-pub async fn decrypt_export_payload(
-    envelope: crate::export_crypto::EncryptedEnvelope,
-    password: String,
-) -> Result<ExportPayload, String> {
-    crate::commands::decrypt_export_payload(envelope, password).await
 }

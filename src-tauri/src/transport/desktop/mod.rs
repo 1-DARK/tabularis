@@ -19,7 +19,6 @@ pub mod e2e_dialog_mock;
 pub mod explain_import;
 pub mod export;
 pub mod health_check;
-pub mod json_viewer;
 pub mod log_commands;
 pub mod mcp;
 pub mod notebooks;
@@ -27,7 +26,6 @@ pub mod plugins;
 pub mod preferences;
 pub mod proxy;
 pub mod query_history;
-pub mod results_window;
 pub mod runtime;
 pub mod saved_queries;
 pub mod sql_file;
@@ -136,8 +134,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
         .manage(application_state.connection_cache.clone())
         .manage(application_state.import_envelope_cache.clone())
         .manage(application_state.pending_explain_file.clone())
-        .manage(application_state.json_viewer_store.clone())
-        .manage(application_state.results_window_store.clone())
         .manage(application_state.clone())
         .manage(window_placement::WindowPlacementCache::default())
         .setup(move |app| {
@@ -391,20 +387,14 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             commands::update_connection_tag,
             commands::delete_connection_tag,
             commands::set_connection_tags,
-            commands::export_connections_payload,
-            commands::encrypt_export_payload,
             connection_import_commands::export_connections_file,
             backup::get_connections_backup_status,
             backup::set_connections_backup_password,
             backup::set_connections_backup_target_password,
             backup::run_connections_backup,
-            commands::decrypt_export_payload,
-            commands::import_connections_payload,
             connection_import_commands::list_connection_import_sources,
             connection_import_commands::preview_connection_import,
             connection_import_commands::apply_connection_import,
-            connection_import_commands::preview_tabularis_import,
-            connection_import_commands::apply_tabularis_import,
             connection_import_commands::preview_tabularis_import_file,
             connection_import_commands::apply_prepared_tabularis_import,
             commands::get_schemas,
@@ -417,7 +407,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             commands::delete_record,
             commands::update_record,
             commands::insert_record,
-            commands::save_blob_to_file,
             commands::fetch_blob,
             commands::fetch_blob_as_data_url,
             commands::load_blob_from_file,
@@ -446,7 +435,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             commands::open_er_diagram_window,
             explain_import::load_explain_from_file,
             explain_import::get_pending_explain_file,
-            explain_import::open_visual_explain_window,
             export::export_query_to_file,
             export::cancel_export,
             sql_file::read_sql_file,
@@ -592,7 +580,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             theme_commands::update_personal_snapshot,
             theme_commands::duplicate_personal_theme,
             theme_commands::get_all_themes,
-            theme_commands::get_theme,
             theme_commands::save_custom_theme,
             theme_commands::delete_custom_theme,
             theme_commands::import_theme,
@@ -619,7 +606,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             preferences::save_editor_preferences,
             preferences::load_editor_preferences,
             preferences::delete_editor_preferences,
-            preferences::list_all_preferences,
             // Notebooks
             notebooks::create_notebook,
             notebooks::save_notebook,
@@ -645,11 +631,6 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             plugins::manager::get_plugin_startup_errors,
             plugins::runtime_version::get_plugin_runtime_warnings,
             // JSON Viewer
-            json_viewer::open_json_viewer_window,
-            json_viewer::get_json_viewer_session,
-            json_viewer::complete_json_viewer_session,
-            results_window::open_results_window,
-            results_window::close_results_window,
             // Connection Window
             connection_window::open_connection_window,
             // Task Manager

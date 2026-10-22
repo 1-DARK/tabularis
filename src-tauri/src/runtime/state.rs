@@ -13,8 +13,6 @@ pub struct ApplicationState {
     pub connection_cache: Arc<crate::connection_cache::ConnectionCache>,
     pub import_envelope_cache: Arc<ImportEnvelopeCache>,
     pub pending_explain_file: Arc<crate::explain_import::PendingExplainFile>,
-    pub json_viewer_store: Arc<crate::json_viewer::JsonViewerStore>,
-    pub results_window_store: Arc<crate::results_window::ResultsWindowStore>,
     pub web_active_connections: Mutex<HashMap<Uuid, HashSet<String>>>,
     pub web_approval_owners: Mutex<HashMap<String, Uuid>>,
     pub web_preferences:
@@ -54,8 +52,6 @@ impl Default for ApplicationState {
             connection_cache: Arc::new(crate::connection_cache::ConnectionCache::default()),
             import_envelope_cache: Arc::new(ImportEnvelopeCache::default()),
             pending_explain_file: Arc::new(crate::explain_import::PendingExplainFile::default()),
-            json_viewer_store: Arc::new(crate::json_viewer::JsonViewerStore::default()),
-            results_window_store: Arc::new(crate::results_window::ResultsWindowStore::default()),
             web_active_connections: Mutex::new(HashMap::new()),
             web_approval_owners: Mutex::new(HashMap::new()),
             web_preferences: Mutex::new(HashMap::new()),

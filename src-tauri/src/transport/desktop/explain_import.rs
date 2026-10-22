@@ -51,15 +51,6 @@ pub fn spawn_visual_explain_window<R: Runtime, M: Manager<R>>(
     Ok(())
 }
 
-/// Tauri command wrapper around [`spawn_visual_explain_window`].
-#[tauri::command]
-pub async fn open_visual_explain_window<R: Runtime>(
-    app: tauri::AppHandle<R>,
-    file: Option<String>,
-) -> Result<(), String> {
-    spawn_visual_explain_window(&app, file)
-}
-
 /// Tauri command: read an EXPLAIN file from disk.
 ///
 /// The content comes back untouched; the frontend sniffs the format and

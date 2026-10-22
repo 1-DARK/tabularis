@@ -21,22 +21,6 @@ pub fn get_all_themes(app: AppHandle) -> Result<Vec<Value>, String> {
 }
 
 #[tauri::command]
-pub fn get_theme(app: AppHandle, theme_id: String) -> Result<Value, String> {
-    let entry = themes::catalog(&app.state::<RuntimeContext>())
-        .themes
-        .into_iter()
-        .find(|entry| entry.id == theme_id)
-        .ok_or("Theme not found or unavailable")?;
-    if entry.format != "legacy" || entry.editor.is_some() {
-        return Err("Use get_theme_catalog for v1 definitions and independent snapshots".into());
-    }
-    let mut value: Value = serde_json::from_str(&entry.source).map_err(|e| e.to_string())?;
-    value["isPreset"] = Value::Bool(entry.origin["kind"] == "builtin");
-    value["isReadOnly"] = Value::Bool(entry.read_only);
-    Ok(value)
-}
-
-#[tauri::command]
 pub fn save_custom_theme(app: AppHandle, theme: Value) -> Result<(), String> {
     crate::application::persistence::save_custom_theme(&app.state::<RuntimeContext>(), theme)
 }

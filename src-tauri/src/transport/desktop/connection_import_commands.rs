@@ -8,7 +8,6 @@ use crate::application::connection_files::{
     TabularisImportPreviewResult,
 };
 use crate::connection_import::{analyzer, convert};
-use crate::models::ExportPayload;
 
 pub use crate::application::connection_files::ImportEnvelopeCache;
 
@@ -73,42 +72,6 @@ pub async fn apply_connection_import<R: Runtime>(
         None,
         source_id,
         resolutions,
-    )
-    .await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn preview_tabularis_import<R: Runtime>(
-    app: AppHandle<R>,
-    payload: ExportPayload,
-) -> Result<analyzer::ImportPreview, String> {
-    connection_files::preview_tabularis_payload(
-        app.state::<crate::runtime::RuntimeContext>().inner(),
-        &payload,
-    )
-    .await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn apply_tabularis_import<R: Runtime>(
-    app: AppHandle<R>,
-    connection_cache: tauri::State<'_, std::sync::Arc<crate::connection_cache::ConnectionCache>>,
-    credential_cache: tauri::State<'_, std::sync::Arc<crate::credential_cache::CredentialCache>>,
-    payload: ExportPayload,
-    resolutions: Vec<convert::ImportResolution>,
-) -> Result<(), String> {
-    let runtime = app.state::<crate::runtime::RuntimeContext>();
-    let groups = crate::persistence::load_connections_file(&runtime.paths.connections_file())
-        .unwrap_or_default()
-        .groups;
-    let payload = crate::connection_import::tabularis::apply(&payload, &resolutions, &groups);
-    connection_files::apply_export_payload(
-        &runtime,
-        connection_cache.inner().as_ref(),
-        credential_cache.inner().as_ref(),
-        payload,
     )
     .await
 }

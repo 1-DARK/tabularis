@@ -62,7 +62,6 @@ pub mod health_check;
 pub mod heartbeat;
 #[cfg(test)]
 pub mod heartbeat_tests;
-pub mod json_viewer;
 pub mod k8s_tunnel;
 pub mod keychain_utils;
 #[cfg(test)]
@@ -90,7 +89,6 @@ pub mod proxy;
 pub mod query_history;
 #[cfg(test)]
 pub mod query_history_tests;
-pub mod results_window;
 pub mod runtime;
 pub mod sandbox;
 #[cfg(test)]
