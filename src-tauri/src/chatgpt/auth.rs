@@ -158,11 +158,13 @@ async fn callback(
     }
 }
 
+#[cfg(feature = "desktop")]
 pub(super) async fn sign_in(
     app: &tauri::AppHandle,
     store: Store,
     profile_id: Option<&str>,
 ) -> Result<Store, String> {
+    #[cfg(feature = "desktop")]
     use tauri_plugin_opener::OpenerExt;
     let existing = profile_id
         .map(|id| {

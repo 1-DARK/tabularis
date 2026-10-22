@@ -24,6 +24,7 @@
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 
@@ -136,6 +137,7 @@ fn is_valid_slug(s: &str) -> bool {
     bytes.iter().all(valid_char) && bytes.first().is_some_and(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
+#[cfg(feature = "desktop")]
 /// Dispatch a single URL to the frontend. Called from:
 ///   * the deep-link plugin's `on_open_url` handler (warm handoff),
 ///   * the cold-start `get_current()` path on app boot,
@@ -182,6 +184,7 @@ pub fn handle_url(app: &AppHandle, raw: &str) {
 /// Drains the pending deep-link install request, if any. Called from the
 /// frontend immediately after the listener mounts to recover URLs that
 /// arrived during cold-start before the event subscription existed.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn consume_pending_deep_link_install(
     state: tauri::State<'_, PendingInstall>,

@@ -3,7 +3,7 @@ use crate::paths::get_app_config_dir;
 
 pub use crate::application::notebooks::NotebookMetadata;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_notebook(
     connection_id: String,
     notebook_id: String,
@@ -20,7 +20,7 @@ pub async fn create_notebook(
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn save_notebook(
     connection_id: String,
     notebook_id: String,
@@ -37,7 +37,7 @@ pub async fn save_notebook(
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn load_notebook(
     connection_id: String,
     notebook_id: String,
@@ -52,7 +52,7 @@ pub async fn load_notebook(
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn delete_notebook(connection_id: String, notebook_id: String) -> Result<(), String> {
     execute(
         &get_app_config_dir(),
@@ -64,7 +64,7 @@ pub async fn delete_notebook(connection_id: String, notebook_id: String) -> Resu
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn rename_notebook(
     connection_id: String,
     notebook_id: String,
@@ -81,7 +81,7 @@ pub async fn rename_notebook(
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_notebooks(connection_id: String) -> Result<Vec<NotebookMetadata>, String> {
     let value = execute(
         &get_app_config_dir(),

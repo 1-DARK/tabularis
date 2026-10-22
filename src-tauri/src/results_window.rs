@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use urlencoding::encode;
 
@@ -31,6 +32,7 @@ fn window_label(tab_id: &str) -> String {
 /// Open (or focus) the detached results window for a given tab. Result data is
 /// streamed from the main window via `resultsSyncEvent(tabId)` in
 /// `src/utils/resultsWindowSync.ts`, so no payload is passed here.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_results_window(
     app: AppHandle,
@@ -111,6 +113,7 @@ pub async fn open_results_window(
 
 /// Programmatically close a tab's detached results window (used by the
 /// "Re-attach" button and when the bound tab is closed).
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn close_results_window(app: AppHandle, tab_id: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&window_label(&tab_id)) {

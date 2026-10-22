@@ -38,9 +38,10 @@ pub async fn shutdown_headless_runtime(state: &super::state::ApplicationState) {
     crate::drivers::registry::shutdown_external_drivers().await;
 }
 
+#[cfg(feature = "desktop")]
 pub fn start_desktop_schedulers(app: tauri::AppHandle, ping_interval_secs: u64) {
     let health_check_app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::async_rt::spawn(async move {
         crate::health_check::start_ping_loop(health_check_app, ping_interval_secs).await;
     });
     crate::ai_approval_watcher::spawn(app.clone());

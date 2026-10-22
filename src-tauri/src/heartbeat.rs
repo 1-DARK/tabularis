@@ -97,7 +97,7 @@ pub fn is_alive() -> bool {
 
 /// Owns the approval host ticker; dropping it stops refreshing the shared file.
 #[must_use = "Keep the heartbeat task alive for the lifetime of the approval host"]
-pub struct HeartbeatTask(tauri::async_runtime::JoinHandle<()>);
+pub struct HeartbeatTask(crate::async_rt::JoinHandle<()>);
 
 impl HeartbeatTask {
     pub fn stop(&self) {
@@ -117,7 +117,7 @@ pub fn spawn_in(base: PathBuf) -> HeartbeatTask {
     if let Err(error) = write_now_in(&base) {
         log::warn!("Failed to write initial heartbeat: {}", error);
     }
-    let task = tauri::async_runtime::spawn(async move {
+    let task = crate::async_rt::spawn(async move {
         let mut ticker = tokio::time::interval(TICK_INTERVAL);
         ticker.tick().await;
         loop {

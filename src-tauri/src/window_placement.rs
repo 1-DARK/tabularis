@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window};
 
 const MIN_WIDTH: u32 = 480;
@@ -26,6 +27,7 @@ fn placement_path() -> PathBuf {
     crate::paths::get_app_config_dir().join("main-window-placement.json")
 }
 
+#[cfg(feature = "desktop")]
 fn overlaps_monitor(
     saved: WindowPlacement,
     monitor_position: PhysicalPosition<i32>,
@@ -45,6 +47,7 @@ fn overlaps_monitor(
     overlap_x >= 80 && overlap_y >= 80
 }
 
+#[cfg(feature = "desktop")]
 /// Called before the existing start_maximized preference is applied.
 /// Missing/corrupt state falls back to Tauri's configured 1280x800 window.
 pub(crate) fn restore(window: &WebviewWindow) {
@@ -92,6 +95,7 @@ pub(crate) fn restore(window: &WebviewWindow) {
         .unwrap() = Some(saved);
 }
 
+#[cfg(feature = "desktop")]
 /// Update only in normal mode. Maximizing/minimizing must not overwrite the
 /// last non-maximized bounds with screen-sized or zero dimensions.
 pub(crate) fn remember<R: Runtime>(window: &Window<R>) {
@@ -122,6 +126,7 @@ pub(crate) fn remember<R: Runtime>(window: &Window<R>) {
         .unwrap() = Some(placement);
 }
 
+#[cfg(feature = "desktop")]
 /// Save the latest bounds captured by move/resize events. App exit and restart
 /// can bypass CloseRequested, so they persist the cache directly.
 pub(crate) fn persist_cached<R: Runtime>(app: &AppHandle<R>) {
@@ -140,6 +145,7 @@ pub(crate) fn persist_cached<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Capture the final normal bounds when a window close event is available.
 pub(crate) fn persist<R: Runtime>(window: &Window<R>) {
     remember(window);

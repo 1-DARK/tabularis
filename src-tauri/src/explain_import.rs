@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use tauri::{Manager, Runtime, State};
 
 /// A plan file read from disk, parsed on the frontend by `@tabularis/explain`.
@@ -44,7 +45,7 @@ impl PendingExplainFile {
 ///
 /// The content comes back untouched; the frontend sniffs the format and
 /// parses it with `@tabularis/explain`.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn load_explain_from_file(path: String) -> Result<ExplainFileContent, String> {
     load_from_file(&path).await
 }
@@ -53,11 +54,13 @@ pub async fn load_explain_from_file(path: String) -> Result<ExplainFileContent, 
 ///
 /// Returns `None` after the first successful read, allowing the window to
 /// differentiate "cold start from CLI" from "opened manually".
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_pending_explain_file(state: State<'_, PendingExplainFile>) -> Option<String> {
     state.take()
 }
 
+#[cfg(feature = "desktop")]
 /// Creates (or focuses) the standalone Visual Explain window.
 ///
 /// Runs fully synchronously so it can be invoked from the Tauri `setup` hook
@@ -66,6 +69,7 @@ pub fn spawn_visual_explain_window<R: Runtime, M: Manager<R>>(
     app: &M,
     file: Option<String>,
 ) -> Result<(), String> {
+    #[cfg(feature = "desktop")]
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     if let Some(path) = file.as_ref() {
@@ -98,6 +102,7 @@ pub fn spawn_visual_explain_window<R: Runtime, M: Manager<R>>(
 }
 
 /// Tauri command wrapper around [`spawn_visual_explain_window`].
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_visual_explain_window<R: Runtime>(
     app: tauri::AppHandle<R>,

@@ -15,6 +15,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+#[cfg(feature = "desktop")]
 use tauri::State;
 
 use crate::commands::AbortHandleMap;
@@ -34,6 +35,7 @@ impl Default for ExportCancellationState {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_export(
     state: State<'_, ExportCancellationState>,
@@ -42,6 +44,7 @@ pub async fn cancel_export(
     crate::application::generic_exports::cancel_export(state.inner(), None, &connection_id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn export_query_to_file(

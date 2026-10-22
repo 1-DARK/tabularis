@@ -11,6 +11,7 @@ use chrono::NaiveDateTime;
 use keyring::Entry;
 use std::fs;
 use std::path::PathBuf;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::runtime::RuntimeContext;
@@ -416,6 +417,7 @@ pub async fn run_backup_for_runtime(
     })
 }
 
+#[cfg(feature = "desktop")]
 pub async fn run_backup<R: Runtime>(app: AppHandle<R>, trigger: &str) -> Result<String, String> {
     Ok(
         run_backup_for_runtime(app.state::<RuntimeContext>().inner(), trigger)
@@ -432,12 +434,14 @@ fn backup_mode(config: &crate::config::AppConfig) -> String {
         .unwrap_or_else(|| "manual".to_string())
 }
 
+#[cfg(feature = "desktop")]
 async fn run_and_log<R: Runtime>(app: &AppHandle<R>, trigger: &str) {
     if let Err(e) = run_backup(app.clone(), trigger).await {
         log::warn!("Connections backup ({trigger}) failed: {e}");
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Interval mode: runs one backup when the newest one is older than the
 /// configured interval.
 async fn run_if_due<R: Runtime>(app: &AppHandle<R>) {
@@ -457,6 +461,7 @@ async fn run_if_due<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Called from the `RunEvent::Exit` handler. In on-close mode every exit
 /// writes a backup so the freshest state is what gets saved. Synchronous:
 /// the process is about to end.
@@ -479,13 +484,14 @@ pub fn run_exit_backup(app: &AppHandle) {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Background task started at app launch. In on-launch mode it writes one
 /// backup right away; in interval mode it checks periodically whether a
 /// backup is due. Config is re-read on every tick so settings changes apply
 /// without a restart (a switch to on-launch only takes effect at the next
 /// start, like the mode's name says).
 pub fn spawn_scheduler(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    crate::async_rt::spawn(async move {
         if backup_mode(&crate::config::load_config_internal(&app)) == "onLaunch" {
             run_and_log(&app, "on launch").await;
         }
@@ -572,6 +578,7 @@ pub fn set_backup_target_password(
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connections_backup_status<R: Runtime>(
     app: AppHandle<R>,
@@ -579,6 +586,7 @@ pub async fn get_connections_backup_status<R: Runtime>(
     backup_status(app.state::<RuntimeContext>().inner()).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_connections_backup_password<R: Runtime>(
     app: AppHandle<R>,
@@ -589,6 +597,7 @@ pub async fn set_connections_backup_password<R: Runtime>(
 
 /// Stores (or clears, with an empty password) the credential of one backup
 /// target, keyed by its id (e.g. `"webdav"`).
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_connections_backup_target_password<R: Runtime>(
     app: AppHandle<R>,
@@ -598,6 +607,7 @@ pub async fn set_connections_backup_target_password<R: Runtime>(
     set_backup_target_password(app.state::<RuntimeContext>().inner(), &target_id, &password)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn run_connections_backup<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
     Ok(

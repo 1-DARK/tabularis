@@ -41,13 +41,14 @@ fn http_client() -> Result<reqwest::Client, String> {
     crate::proxy::ai_http_client("chatgpt")
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_chatgpt_session() -> Result<ChatGptSession, String> {
     let _guard = SESSION_LOCK.lock().await;
     let disk = storage::LockedStore::open()?;
     Ok(session(&disk.load()?))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn sign_in_chatgpt(
     app: tauri::AppHandle,
@@ -84,7 +85,7 @@ pub async fn sign_in_chatgpt(
     Ok(session(&result?))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn cancel_chatgpt_sign_in() {
     if let Ok(mut sender) = SIGN_IN_CANCEL.lock() {
         if let Some(sender) = sender.take() {
@@ -93,7 +94,7 @@ pub fn cancel_chatgpt_sign_in() {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn select_chatgpt_profile(profile_id: String) -> Result<ChatGptSession, String> {
     let _guard = SESSION_LOCK.lock().await;
     let disk = storage::LockedStore::open()?;
@@ -106,7 +107,7 @@ pub async fn select_chatgpt_profile(profile_id: String) -> Result<ChatGptSession
     Ok(session(&state))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn sign_out_chatgpt(profile_id: String) -> Result<Option<String>, String> {
     let _guard = SESSION_LOCK.lock().await;
     let disk = storage::LockedStore::open()?;
@@ -130,8 +131,10 @@ pub async fn sign_out_chatgpt(profile_id: String) -> Result<Option<String>, Stri
     Ok(warning)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn open_chatgpt_usage(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(feature = "desktop")]
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .open_url("https://chatgpt.com/#settings/Usage", None::<&str>)
@@ -140,7 +143,7 @@ pub fn open_chatgpt_usage(app: tauri::AppHandle) -> Result<(), String> {
 
 pub use inference::{generate, list_models};
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_chatgpt_models() -> Result<Vec<inference::ChatGptModel>, String> {
     list_models().await
 }

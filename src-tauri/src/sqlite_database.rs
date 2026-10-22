@@ -3,6 +3,7 @@ use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{Connection, Executor, SqliteConnection};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Runtime};
 
 const SQLITE_EXTENSIONS: [&str; 3] = ["db", "sqlite", "sqlite3"];
@@ -101,7 +102,7 @@ pub(crate) async fn initialize_sqlite_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_sqlite_file(path: String) -> Result<String, String> {
     let path = normalize_sqlite_path(&path)?;
     initialize_sqlite_file(&path).await?;
@@ -111,6 +112,7 @@ pub async fn create_sqlite_file(path: String) -> Result<String, String> {
         .ok_or_else(|| "The selected SQLite database path is not valid UTF-8.".to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_sqlite_database<R: Runtime>(
     app: AppHandle<R>,

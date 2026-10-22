@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio::task::AbortHandle;
 use urlencoding::encode;
@@ -33,6 +34,7 @@ async fn driver_for_params(
     crate::drivers::registry::get_connection_driver(params).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connection_metadata<R: Runtime>(
     app: AppHandle<R>,
@@ -103,6 +105,7 @@ pub(crate) fn unregister_abort_handle(
 
 // --- Persistence Helpers ---
 
+#[cfg(feature = "desktop")]
 pub async fn expand_ssh_connection_params<R: Runtime>(
     app: &AppHandle<R>,
     params: &ConnectionParams,
@@ -230,6 +233,7 @@ pub fn resolve_connection_params_with_id(
     resolve_connection_params(&with_id)
 }
 
+#[cfg(feature = "desktop")]
 pub fn get_config_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
     let config_dir = crate::paths::get_app_config_dir();
     if !config_dir.exists() {
@@ -238,6 +242,7 @@ pub fn get_config_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, Strin
     Ok(crate::paths::resolve_connections_path(&config_dir))
 }
 
+#[cfg(feature = "desktop")]
 pub fn get_ssh_config_path<R: Runtime>(_app: &AppHandle<R>) -> Result<PathBuf, String> {
     let config_dir = crate::paths::get_app_config_dir();
     if !config_dir.exists() {
@@ -463,6 +468,7 @@ fn restore_runtime_connection_uri(
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Saved connection as stored, without any keychain secret.
 fn lookup_saved_connection<R: Runtime>(
     app: &AppHandle<R>,
@@ -489,6 +495,7 @@ fn lookup_saved_connection<R: Runtime>(
     Ok(conn)
 }
 
+#[cfg(feature = "desktop")]
 /// Load a saved connection with its host-owned credentials (keychain password,
 /// SSH secrets, connection URI) but without plugin-owned secrets. Used by the
 /// edit modal and by the Test Connection / Load Databases flows, which resolve
@@ -533,6 +540,7 @@ pub fn find_connection_metadata_by_id<R: Runtime>(
     Ok(conn)
 }
 
+#[cfg(feature = "desktop")]
 /// Load a connection for driver execution. Unlike the metadata/edit path,
 /// this resolves plugin-owned secrets into `params.extra` only in memory.
 pub fn find_connection_by_id<R: Runtime>(
@@ -591,6 +599,7 @@ fn validate_environment(env: Option<String>) -> Result<Option<String>, String> {
     }
 }
 
+#[cfg(feature = "desktop")]
 pub(crate) fn save_connections_and_invalidate<R: Runtime>(
     app: &AppHandle<R>,
     path: &std::path::Path,
@@ -604,6 +613,7 @@ pub(crate) fn save_connections_and_invalidate<R: Runtime>(
 
 // --- Commands ---
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connection_by_id<R: Runtime>(
     app: AppHandle<R>,
@@ -612,6 +622,7 @@ pub async fn get_connection_by_id<R: Runtime>(
     find_connection_metadata_by_id(&app, &id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_schemas<R: Runtime>(
     app: AppHandle<R>,
@@ -627,6 +638,7 @@ pub async fn get_schemas<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_available_databases<R: Runtime>(
     app: AppHandle<R>,
@@ -640,6 +652,7 @@ pub async fn get_available_databases<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_selected_databases<R: Runtime>(
     app: AppHandle<R>,
@@ -657,6 +670,7 @@ pub async fn set_selected_databases<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_routines<R: Runtime>(
     app: AppHandle<R>,
@@ -674,6 +688,7 @@ pub async fn get_routines<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_routine_parameters<R: Runtime>(
     app: AppHandle<R>,
@@ -696,6 +711,7 @@ pub async fn get_routine_parameters<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_routine_definition<R: Runtime>(
     app: AppHandle<R>,
@@ -720,6 +736,7 @@ pub async fn get_routine_definition<R: Runtime>(
 }
 
 /// Preview generation only; the returned SQL is never executed here.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_table_query_template<R: Runtime>(
     app: AppHandle<R>,
@@ -740,6 +757,7 @@ pub async fn get_table_query_template<R: Runtime>(
 /// Column statistics through the optional plugin RPC (issue #1137). `None`
 /// means the driver doesn't provide them; the frontend then falls back to its
 /// generic SQL or hides the entry.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_column_stats<R: Runtime>(
     app: AppHandle<R>,
@@ -757,6 +775,7 @@ pub async fn get_column_stats<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn build_routine_call_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -778,6 +797,7 @@ pub async fn build_routine_call_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_routine_create_template<R: Runtime>(
     app: AppHandle<R>,
@@ -796,6 +816,7 @@ pub async fn get_routine_create_template<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_routine_edit_script<R: Runtime>(
     app: AppHandle<R>,
@@ -819,6 +840,7 @@ pub async fn get_routine_edit_script<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_routine<R: Runtime>(
     app: AppHandle<R>,
@@ -842,6 +864,7 @@ pub async fn drop_routine<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_schema_snapshot<R: Runtime>(
     app: AppHandle<R>,
@@ -859,6 +882,7 @@ pub async fn get_schema_snapshot<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_ai_schema_context<R: Runtime>(
     app: AppHandle<R>,
@@ -889,6 +913,7 @@ pub async fn get_ai_schema_context<R: Runtime>(
     ))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1034,6 +1059,7 @@ pub async fn save_connection<R: Runtime>(
     Ok(returned_conn)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_connection<R: Runtime>(app: AppHandle<R>, id: String) -> Result<(), String> {
     log::info!("Deleting connection: {}", id);
@@ -1109,6 +1135,7 @@ pub async fn delete_connection<R: Runtime>(app: AppHandle<R>, id: String) -> Res
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1365,6 +1392,7 @@ fn set_appearance_impl(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_connection_appearance<R: Runtime>(
     app: AppHandle<R>,
@@ -1378,6 +1406,7 @@ pub async fn set_connection_appearance<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn duplicate_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1551,6 +1580,7 @@ pub async fn duplicate_connection<R: Runtime>(
     Ok(returned_conn)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connections<R: Runtime>(
     app: AppHandle<R>,
@@ -1565,6 +1595,7 @@ pub async fn get_connections<R: Runtime>(
 
 // ==================== SSH Connection Management ====================
 
+#[cfg(feature = "desktop")]
 /// Migrates old embedded SSH connections to separate SSH connection entries
 async fn migrate_ssh_connections<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let conn_path = get_config_path(app)?;
@@ -1698,6 +1729,7 @@ async fn migrate_ssh_connections<R: Runtime>(app: &AppHandle<R>) -> Result<(), S
 // core, and invalidate the connection cache only if it actually rewrote
 // something.
 
+#[cfg(feature = "desktop")]
 /// Migrates already-persisted `ssl_mode` values on postgres-dialect
 /// connections (driver id other than the builtin `"postgres"`) from the
 /// stale MySQL-style spelling to the Postgres-style spelling the plugin
@@ -1718,6 +1750,7 @@ async fn migrate_postgres_ssl_mode_spelling<R: Runtime>(app: &AppHandle<R>) -> R
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_ssh_connections<R: Runtime>(
     app: AppHandle<R>,
@@ -1728,6 +1761,7 @@ pub async fn get_ssh_connections<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_ssh_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1742,6 +1776,7 @@ pub async fn save_ssh_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_ssh_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1758,6 +1793,7 @@ pub async fn update_ssh_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_ssh_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1769,6 +1805,7 @@ pub async fn delete_ssh_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn test_ssh_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1786,6 +1823,7 @@ pub async fn test_ssh_connection<R: Runtime>(
 // Kubernetes Connections
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_connections<R: Runtime>(
     app: AppHandle<R>,
@@ -1793,6 +1831,7 @@ pub async fn get_k8s_connections<R: Runtime>(
     crate::application::tunnels::get_k8s_connections(&app.state::<crate::runtime::RuntimeContext>())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_k8s_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1804,6 +1843,7 @@ pub async fn save_k8s_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_k8s_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1817,6 +1857,7 @@ pub async fn update_k8s_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_k8s_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -1828,6 +1869,7 @@ pub async fn delete_k8s_connection<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn test_k8s_connection_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1840,6 +1882,7 @@ pub async fn test_k8s_connection_cmd<R: Runtime>(
     crate::k8s_tunnel::test_k8s_connection(&context, &namespace, &options)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_contexts_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1850,6 +1893,7 @@ pub async fn get_k8s_contexts_cmd<R: Runtime>(
     crate::k8s_tunnel::get_k8s_contexts(&options)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_namespaces_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1861,6 +1905,7 @@ pub async fn get_k8s_namespaces_cmd<R: Runtime>(
     crate::k8s_tunnel::get_k8s_namespaces(&context, &options)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_resources_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1874,6 +1919,7 @@ pub async fn get_k8s_resources_cmd<R: Runtime>(
     crate::k8s_tunnel::get_k8s_resources(&context, &namespace, &resource_type, &options)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_resource_ports_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1894,6 +1940,7 @@ pub async fn get_k8s_resource_ports_cmd<R: Runtime>(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn validate_k8s_path_cmd<R: Runtime>(
     _app: AppHandle<R>,
@@ -1907,6 +1954,7 @@ pub async fn validate_k8s_path_cmd<R: Runtime>(
 // AWS SSM
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn test_ssm_connection_cmd<R: Runtime>(
     app: AppHandle<R>,
@@ -1931,6 +1979,7 @@ pub async fn test_ssm_connection_cmd<R: Runtime>(
     serde_json::from_value(result).map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "desktop")]
 /// Expand K8s connection params by loading saved config and creating/reusing a tunnel.
 pub async fn expand_k8s_connection_params<R: Runtime>(
     app: &AppHandle<R>,
@@ -1944,6 +1993,7 @@ pub async fn expand_k8s_connection_params<R: Runtime>(
     crate::application::tunnels::resolve_expanded_connection_params(&expanded, None)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn test_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -2131,6 +2181,7 @@ pub async fn test_connection<R: Runtime>(
     Ok("Connection successful!".to_string())
 }
 
+#[cfg(feature = "desktop")]
 /// Emits one step of a connection test's live progress log. A no-op when the
 /// caller did not request progress (no id).
 fn emit_test_progress<R: Runtime>(
@@ -2152,6 +2203,7 @@ fn emit_test_progress<R: Runtime>(
     );
 }
 
+#[cfg(feature = "desktop")]
 /// Emits a failed step and passes the error through, for use in `map_err`.
 fn emit_test_failure<R: Runtime>(
     app: &AppHandle<R>,
@@ -3625,6 +3677,7 @@ mod tests {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn list_databases<R: Runtime>(
     app: AppHandle<R>,
@@ -3694,6 +3747,7 @@ pub async fn list_databases<R: Runtime>(
     drv.get_databases(&resolved_params).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_tables<R: Runtime>(
     app: AppHandle<R>,
@@ -3711,6 +3765,7 @@ pub async fn get_tables<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_columns<R: Runtime>(
     app: AppHandle<R>,
@@ -3730,6 +3785,7 @@ pub async fn get_columns<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_foreign_keys<R: Runtime>(
     app: AppHandle<R>,
@@ -3749,6 +3805,7 @@ pub async fn get_foreign_keys<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_indexes<R: Runtime>(
     app: AppHandle<R>,
@@ -3768,6 +3825,7 @@ pub async fn get_indexes<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_record<R: Runtime>(
     app: AppHandle<R>,
@@ -3789,6 +3847,7 @@ pub async fn delete_record<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_record<R: Runtime>(
     app: AppHandle<R>,
@@ -3814,6 +3873,7 @@ pub async fn update_record<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_blob_to_file<R: Runtime>(
     app: AppHandle<R>,
@@ -3844,6 +3904,7 @@ pub async fn save_blob_to_file<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_blob<R: Runtime>(
     app: AppHandle<R>,
@@ -3870,6 +3931,7 @@ pub async fn fetch_blob<R: Runtime>(
 
 /// Fetches a BLOB column from the database and returns it as a data: URL for image preview.
 /// Same query logic as save_blob_to_file but returns the data in-memory instead of writing to disk.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_blob_as_data_url<R: Runtime>(
     app: AppHandle<R>,
@@ -3896,7 +3958,7 @@ pub async fn fetch_blob_as_data_url<R: Runtime>(
 /// Detects the MIME type of base64-encoded binary data using magic-byte analysis
 /// and returns the canonical blob wire format: "BLOB:<size>:<mime>:<base64>".
 /// Called by the frontend after the user selects a file to upload.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn detect_blob_mime(base64_data: String) -> Result<String, String> {
     crate::application::records::detect_blob_mime(&base64_data)
 }
@@ -3905,6 +3967,7 @@ pub fn detect_blob_mime(base64_data: String) -> Result<String, String> {
 /// The actual file content is NOT transferred over IPC, avoiding massive string allocations.
 /// The file content will be read directly from disk when needed (e.g., during INSERT/UPDATE).
 /// Returns a special "BLOB_FILE_REF" format that includes file path, size, and MIME type.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn load_blob_from_file<R: Runtime>(
     app: AppHandle<R>,
@@ -3957,14 +4020,14 @@ pub async fn load_blob_from_file<R: Runtime>(
 /// Detects the MIME type from a small base64-encoded header (first ~8KB).
 /// Returns only the MIME type string — the frontend constructs the wire format
 /// locally, avoiding a full round-trip of the entire file over IPC.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn detect_mime_type(header_base64: String) -> Result<String, String> {
     crate::application::records::detect_mime_type(&header_base64)
 }
 
 /// Gets file statistics (size and MIME type) without reading the entire file.
 /// Used after streaming upload to construct the final wire format.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_file_stats(file_path: String) -> Result<serde_json::Value, String> {
     use std::io::Read;
 
@@ -3995,7 +4058,7 @@ pub fn get_file_stats(file_path: String) -> Result<serde_json::Value, String> {
 /// Reads a file from disk and returns it as a base64-encoded data URL.
 /// Used for image preview of BLOB_FILE_REF values without requiring frontend FS permissions.
 /// Only available for image files; returns an error for non-image MIME types.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn read_file_as_data_url(file_path: String) -> Result<String, String> {
     use base64::Engine;
     use std::io::Read;
@@ -4030,6 +4093,7 @@ pub async fn read_file_as_data_url(file_path: String) -> Result<String, String> 
     .map_err(|e| format!("Task join error: {}", e))?
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn insert_record<R: Runtime>(
     app: AppHandle<R>,
@@ -4059,6 +4123,7 @@ pub(crate) fn cancel_query_impl(
     crate::application::queries::cancel_registered_queries(state, None, connection_id, None)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_query(
     state: State<'_, QueryCancellationState>,
@@ -4067,6 +4132,7 @@ pub async fn cancel_query(
     crate::application::queries::cancel_query(&state, None, &connection_id, None)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn execute_query<R: Runtime>(
     app: AppHandle<R>,
@@ -4095,6 +4161,7 @@ pub async fn execute_query<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 pub(crate) async fn release_connection_sessions<R: Runtime>(
     app: &AppHandle<R>,
     connection_id: &str,
@@ -4108,6 +4175,7 @@ pub(crate) async fn release_connection_sessions<R: Runtime>(
     .await;
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn release_query_session<R: Runtime>(
     app: AppHandle<R>,
@@ -4135,6 +4203,7 @@ pub async fn release_query_session<R: Runtime>(
 /// When `batch_id` is supplied, a `batch-statement-complete` event is emitted
 /// after each statement so the UI updates result tabs progressively. The full
 /// `Vec` is still returned at the end for final reconciliation / fallback.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn execute_query_batch<R: Runtime>(
     app: AppHandle<R>,
@@ -4167,6 +4236,7 @@ pub async fn execute_query_batch<R: Runtime>(
 
 // --- Explain Query Plan ---
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn explain_query_plan<R: Runtime>(
     app: AppHandle<R>,
@@ -4224,6 +4294,7 @@ pub(crate) async fn read_in_open_transaction(
 
 // --- Count Query ---
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn count_query<R: Runtime>(
     app: AppHandle<R>,
@@ -4257,6 +4328,7 @@ pub async fn count_query<R: Runtime>(
 /// See: https://github.com/tauri-apps/tauri/issues/13749
 ///
 /// This workaround should be removed once the upstream issue is resolved.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_window_title(app: AppHandle, title: String) -> Result<(), String> {
     // Get the main window
@@ -4272,7 +4344,9 @@ pub async fn set_window_title(app: AppHandle, title: String) -> Result<(), Strin
     // Apply Wayland-specific workaround on Linux
     #[cfg(target_os = "linux")]
     {
+        #[cfg(feature = "desktop")]
         use gtk::prelude::{BinExt, Cast, GtkWindowExt, HeaderBarExt};
+        #[cfg(feature = "desktop")]
         use gtk::{EventBox, HeaderBar};
 
         // Get the GTK window
@@ -4297,6 +4371,7 @@ pub async fn set_window_title(app: AppHandle, title: String) -> Result<(), Strin
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_er_diagram_window(
     app: AppHandle,
@@ -4307,6 +4382,7 @@ pub async fn open_er_diagram_window(
     schema: Option<String>,
     database: Option<String>,
 ) -> Result<(), String> {
+    #[cfg(feature = "desktop")]
     use tauri::{WebviewUrl, WebviewWindowBuilder};
     use urlencoding::encode;
 
@@ -4518,6 +4594,7 @@ fn resolve_ssh_test_password(
 
 // ==================== View Management Commands ====================
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_views<R: Runtime>(
     app: AppHandle<R>,
@@ -4535,6 +4612,7 @@ pub async fn get_views<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_view_definition<R: Runtime>(
     app: AppHandle<R>,
@@ -4554,6 +4632,7 @@ pub async fn get_view_definition<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_view<R: Runtime>(
     app: AppHandle<R>,
@@ -4575,6 +4654,7 @@ pub async fn create_view<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn alter_view<R: Runtime>(
     app: AppHandle<R>,
@@ -4596,6 +4676,7 @@ pub async fn alter_view<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_view<R: Runtime>(
     app: AppHandle<R>,
@@ -4615,6 +4696,7 @@ pub async fn drop_view<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_view_columns<R: Runtime>(
     app: AppHandle<R>,
@@ -4634,6 +4716,7 @@ pub async fn get_view_columns<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_materialized_views<R: Runtime>(
     app: AppHandle<R>,
@@ -4651,6 +4734,7 @@ pub async fn get_materialized_views<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_materialized_view_columns<R: Runtime>(
     app: AppHandle<R>,
@@ -4670,6 +4754,7 @@ pub async fn get_materialized_view_columns<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_materialized_view_definition<R: Runtime>(
     app: AppHandle<R>,
@@ -4689,6 +4774,7 @@ pub async fn get_materialized_view_definition<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn refresh_materialized_view<R: Runtime>(
     app: AppHandle<R>,
@@ -4708,6 +4794,7 @@ pub async fn refresh_materialized_view<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_triggers<R: Runtime>(
     app: AppHandle<R>,
@@ -4725,6 +4812,7 @@ pub async fn get_triggers<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_trigger_definition<R: Runtime>(
     app: AppHandle<R>,
@@ -4746,6 +4834,7 @@ pub async fn get_trigger_definition<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_trigger<R: Runtime>(
     app: AppHandle<R>,
@@ -4765,6 +4854,7 @@ pub async fn create_trigger<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_trigger<R: Runtime>(
     app: AppHandle<R>,
@@ -4788,6 +4878,7 @@ pub async fn drop_trigger<R: Runtime>(
 
 // --- User management (gated by `DriverCapabilities::user_management`) -------
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_db_privilege_catalog<R: Runtime>(
     app: AppHandle<R>,
@@ -4800,6 +4891,7 @@ pub async fn get_db_privilege_catalog<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_db_users<R: Runtime>(
     app: AppHandle<R>,
@@ -4813,6 +4905,7 @@ pub async fn get_db_users<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_db_user_grants<R: Runtime>(
     app: AppHandle<R>,
@@ -4830,6 +4923,7 @@ pub async fn get_db_user_grants<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_db_user<R: Runtime>(
     app: AppHandle<R>,
@@ -4849,6 +4943,7 @@ pub async fn create_db_user<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_db_user<R: Runtime>(
     app: AppHandle<R>,
@@ -4866,6 +4961,7 @@ pub async fn drop_db_user<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_db_user_password<R: Runtime>(
     app: AppHandle<R>,
@@ -4885,6 +4981,7 @@ pub async fn set_db_user_password<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_db_user_privileges<R: Runtime>(
     app: AppHandle<R>,
@@ -4902,6 +4999,7 @@ pub async fn get_db_user_privileges<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn apply_db_user_privileges<R: Runtime>(
     app: AppHandle<R>,
@@ -4928,6 +5026,7 @@ pub async fn apply_db_user_privileges<R: Runtime>(
 }
 
 /// Register a connection as active for health-check pinging.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn register_active_connection<R: Runtime>(app: AppHandle<R>, connection_id: String) {
     crate::application::connections::register_active_connection(
@@ -4941,12 +5040,13 @@ pub async fn register_active_connection<R: Runtime>(app: AppHandle<R>, connectio
 
 /// Snapshot of connection ids currently open in the shared backend (across all
 /// windows). Used by each window to render cross-window connection status.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_active_connections() -> Vec<String> {
     crate::health_check::active_connections().await
 }
 
 /// Disconnect from a database connection by closing all of its connection pools
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn disconnect_connection<R: Runtime>(
     app: AppHandle<R>,
@@ -4963,7 +5063,7 @@ pub async fn disconnect_connection<R: Runtime>(
 
 // --- Type Registry ---
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_data_types(driver: String) -> Result<crate::models::DataTypeRegistry, String> {
     log::debug!("Fetching data types for driver: {}", driver);
 
@@ -4975,6 +5075,7 @@ pub async fn get_data_types(driver: String) -> Result<crate::models::DataTypeReg
 
 /// Maps generic inferred types (emitted by the clipboard parser) to
 /// driver-specific type names. Returns names in the same order as `kinds`.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn map_inferred_column_types<R: Runtime>(
     app: AppHandle<R>,
@@ -5054,6 +5155,7 @@ pub(crate) fn sql_builder_params(
     params
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_create_table_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5074,6 +5176,7 @@ pub async fn get_create_table_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_add_column_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5094,6 +5197,7 @@ pub async fn get_add_column_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_alter_column_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5116,6 +5220,7 @@ pub async fn get_alter_column_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_create_index_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5140,6 +5245,7 @@ pub async fn get_create_index_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_create_foreign_key_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5174,6 +5280,7 @@ pub async fn get_create_foreign_key_sql<R: Runtime>(
 /// explorer build its generic `DROP TABLE`. Only plugins declaring
 /// `capabilities.drop_table_sql` are asked; every other driver (built-ins
 /// included) returns `None` without resolving credentials or params.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_drop_table_sql<R: Runtime>(
     app: AppHandle<R>,
@@ -5192,6 +5299,7 @@ pub async fn get_drop_table_sql<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_index_action<R: Runtime>(
     app: AppHandle<R>,
@@ -5213,6 +5321,7 @@ pub async fn drop_index_action<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn drop_foreign_key_action<R: Runtime>(
     app: AppHandle<R>,
@@ -5234,16 +5343,18 @@ pub async fn drop_foreign_key_action<R: Runtime>(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_registered_drivers() -> Vec<crate::drivers::driver_trait::PluginManifest> {
     crate::drivers::registry::list_drivers().await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_keybindings<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
     crate::application::persistence::get_keybindings(&app.state::<crate::runtime::RuntimeContext>())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_keybindings<R: Runtime>(
     app: AppHandle<R>,
@@ -5255,7 +5366,7 @@ pub async fn save_keybindings<R: Runtime>(
     )
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_driver_manifest(
     driver_id: String,
 ) -> Option<crate::plugins::connection_metadata::DriverManifestDetails> {
@@ -5271,6 +5382,7 @@ pub async fn get_driver_manifest(
 
 // ==================== Connection Groups Management ====================
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connection_groups<R: Runtime>(
     app: AppHandle<R>,
@@ -5279,6 +5391,7 @@ pub async fn get_connection_groups<R: Runtime>(
     persistence::load_groups(&path)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_connections_with_groups<R: Runtime>(
     app: AppHandle<R>,
@@ -5291,6 +5404,7 @@ pub async fn get_connections_with_groups<R: Runtime>(
     persistence::load_connections_file(&path)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_connection_group<R: Runtime>(
     app: AppHandle<R>,
@@ -5362,6 +5476,7 @@ pub(crate) fn find_child_group<'a>(
 /// missing segments are created in order. The final segment is returned.
 /// The hierarchy is created atomically: either every missing segment is
 /// persisted or none are.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_group_path<R: Runtime>(
     app: AppHandle<R>,
@@ -5411,6 +5526,7 @@ pub async fn create_group_path<R: Runtime>(
     last_created.ok_or_else(|| "Group path resolved to an empty hierarchy".to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_connection_group<R: Runtime>(
     app: AppHandle<R>,
@@ -5445,6 +5561,7 @@ pub async fn update_connection_group<R: Runtime>(
 }
 /// Re-parent a group. Pass `Some(id)` to make it a child of that group,
 /// or `None` to make it a top-level root. Cycles are rejected.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn move_group_to_parent<R: Runtime>(
     app: AppHandle<R>,
@@ -5524,6 +5641,7 @@ pub(crate) fn reject_if_would_create_cycle(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_connection_group<R: Runtime>(
     app: AppHandle<R>,
@@ -5577,6 +5695,7 @@ pub async fn delete_connection_group<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn move_connection_to_group<R: Runtime>(
     app: AppHandle<R>,
@@ -5604,6 +5723,7 @@ pub async fn move_connection_to_group<R: Runtime>(
     Ok(updated)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn reorder_groups<R: Runtime>(
     app: AppHandle<R>,
@@ -5622,6 +5742,7 @@ pub async fn reorder_groups<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn reorder_connections_in_group<R: Runtime>(
     app: AppHandle<R>,
@@ -5640,6 +5761,7 @@ pub async fn reorder_connections_in_group<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_server_now<R: Runtime>(
     app: AppHandle<R>,
@@ -5653,6 +5775,7 @@ pub async fn get_server_now<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn export_connections_payload<R: Runtime>(
     app: AppHandle<R>,
@@ -5667,7 +5790,7 @@ pub async fn export_connections_payload<R: Runtime>(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn encrypt_export_payload(
     payload: ExportPayload,
     password: String,
@@ -5676,7 +5799,7 @@ pub async fn encrypt_export_payload(
     crate::export_crypto::encrypt(&plaintext, &password)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn decrypt_export_payload(
     envelope: crate::export_crypto::EncryptedEnvelope,
     password: String,
@@ -5685,6 +5808,7 @@ pub async fn decrypt_export_payload(
     serde_json::from_str(&plaintext).map_err(|e| format!("Invalid export payload: {e}"))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn import_connections_payload<R: Runtime>(
     app: AppHandle<R>,
@@ -5693,6 +5817,7 @@ pub async fn import_connections_payload<R: Runtime>(
     apply_export_payload(app, payload).await
 }
 
+#[cfg(feature = "desktop")]
 /// Merge an `ExportPayload` into the user's stored connections, groups, SSH and
 /// K8s records, moving any inline secrets into the keychain. Shared by the JSON
 /// import command above and the foreign-app import flow.

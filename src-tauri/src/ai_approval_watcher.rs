@@ -8,6 +8,7 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::ai_approval;
@@ -109,22 +110,24 @@ pub fn spawn_headless(
     })
 }
 
+#[cfg(feature = "desktop")]
 /// Spawn the watcher + cleanup tasks. The watcher returns immediately if it
 /// fails to initialise (e.g. unsupported filesystem); cleanup keeps running.
 pub fn spawn<R: Runtime>(app: AppHandle<R>) {
     let app_for_watcher = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::async_rt::spawn_blocking(move || {
         if let Err(e) = run_watcher(app_for_watcher) {
             log::warn!("AI approval watcher disabled: {}", e);
         }
     });
 
     let app_for_cleanup = app.clone();
-    tauri::async_runtime::spawn(async move {
+    crate::async_rt::spawn(async move {
         run_cleanup_loop(app_for_cleanup).await;
     });
 }
 
+#[cfg(feature = "desktop")]
 fn run_watcher<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     let dir = ai_approval::approvals_dir_path();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -149,6 +152,7 @@ fn run_watcher<R: Runtime>(app: AppHandle<R>) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 fn handle_event<R: Runtime>(app: &AppHandle<R>, event: &Event) {
     if !matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_)) {
         return;
@@ -173,6 +177,7 @@ fn handle_event<R: Runtime>(app: &AppHandle<R>, event: &Event) {
     }
 }
 
+#[cfg(feature = "desktop")]
 async fn run_cleanup_loop<R: Runtime>(_app: AppHandle<R>) {
     let mut ticker = tokio::time::interval(Duration::from_secs(CLEANUP_INTERVAL_SECS));
     // Skip the immediate first tick.

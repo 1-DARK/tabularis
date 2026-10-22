@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager};
 
 // --- Data Structures ---
@@ -384,6 +385,7 @@ async fn fetch_custom_openai_models(base_url: &str, api_key: &str) -> Vec<String
 
 // --- Commands ---
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn clear_ai_models_cache(app: AppHandle) -> Result<(), String> {
     clear_models_cache(&app.state::<RuntimeContext>())
@@ -397,6 +399,7 @@ pub fn clear_models_cache(runtime: &RuntimeContext) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_ai_models(
     app: AppHandle,
@@ -580,6 +583,7 @@ pub async fn get_models(
     Ok(models)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn generate_ai_query(app: AppHandle, req: AiGenerateRequest) -> Result<String, String> {
     generate_query(
@@ -590,6 +594,7 @@ pub async fn generate_ai_query(app: AppHandle, req: AiGenerateRequest) -> Result
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn explain_ai_query(app: AppHandle, req: AiExplainRequest) -> Result<String, String> {
     explain_query(
@@ -600,6 +605,7 @@ pub async fn explain_ai_query(app: AppHandle, req: AiExplainRequest) -> Result<S
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn analyze_ai_explain_plan(
     app: AppHandle,
@@ -613,6 +619,7 @@ pub async fn analyze_ai_explain_plan(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn generate_cell_name(app: AppHandle, req: AiCellNameRequest) -> Result<String, String> {
     generate_cellname(
@@ -893,6 +900,7 @@ pub async fn generate_cellname(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn suggest_table_name(
     app: AppHandle,
@@ -969,6 +977,7 @@ pub async fn suggest_table_name_with_runtime(
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn generate_tab_rename(
     app: AppHandle,

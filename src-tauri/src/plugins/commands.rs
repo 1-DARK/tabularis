@@ -2,8 +2,10 @@ use crate::drivers::driver_trait::PluginManifest;
 use crate::plugins::installer::{self, InstalledPluginInfo};
 use crate::plugins::registry::{PluginReadme, RegistryPluginWithStatus};
 use crate::runtime::RuntimeContext;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, State};
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_plugin_registry(
     runtime: State<'_, RuntimeContext>,
@@ -11,6 +13,7 @@ pub async fn fetch_plugin_registry(
     crate::application::plugins::fetch_plugin_registry(runtime.inner()).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn install_plugin(
     runtime: State<'_, RuntimeContext>,
@@ -22,11 +25,12 @@ pub async fn install_plugin(
         .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn cancel_plugin_install(plugin_id: String) -> bool {
     crate::application::plugins::cancel_plugin_install(plugin_id).unwrap_or(false)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn uninstall_plugin(
     runtime: State<'_, RuntimeContext>,
@@ -35,6 +39,7 @@ pub async fn uninstall_plugin(
     crate::application::plugins::uninstall_plugin(runtime.inner(), plugin_id).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_installed_plugins(
     runtime: State<'_, RuntimeContext>,
@@ -44,11 +49,12 @@ pub async fn get_installed_plugins(
     ))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn disable_plugin(plugin_id: String) -> Result<(), String> {
     crate::application::plugins::disable_plugin(plugin_id).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn enable_plugin(
     runtime: State<'_, RuntimeContext>,
@@ -57,6 +63,7 @@ pub async fn enable_plugin(
     crate::application::plugins::enable_plugin(runtime.inner(), plugin_id).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_plugin_manifest(
     runtime: State<'_, RuntimeContext>,
@@ -67,7 +74,7 @@ pub async fn get_plugin_manifest(
 
 /// Returns the absolute filesystem path of an installed plugin's directory.
 /// Desktop-only: browser RPC deliberately does not expose server filesystem paths.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_plugin_dir(plugin_id: String) -> Result<String, String> {
     let plugin_dir = installer::resolve_plugin_dir(&plugin_id)?;
     plugin_dir
@@ -78,8 +85,10 @@ pub fn get_plugin_dir(plugin_id: String) -> Result<String, String> {
 
 /// Opens the plugins directory in the desktop file manager.
 /// Browser sessions never receive an equivalent server-path operation.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn open_plugins_dir(app: AppHandle) -> Result<(), String> {
+    #[cfg(feature = "desktop")]
     use tauri_plugin_opener::OpenerExt;
     let plugins_dir = installer::get_plugins_dir()?;
     app.opener()
@@ -87,6 +96,7 @@ pub fn open_plugins_dir(app: AppHandle) -> Result<(), String> {
         .map_err(|error| format!("Failed to open plugins directory: {error}"))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_tabularium_plugin_preview(
     runtime: State<'_, RuntimeContext>,
@@ -98,6 +108,7 @@ pub async fn fetch_tabularium_plugin_preview(
         .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_plugin_readme(
     runtime: State<'_, RuntimeContext>,
@@ -111,6 +122,7 @@ pub async fn fetch_plugin_readme(
 
 /// Reads a file from an installed plugin's directory for the desktop UI loader.
 /// Browser plugin assets use the authenticated asset route implemented separately.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn read_plugin_file(
     runtime: State<'_, RuntimeContext>,

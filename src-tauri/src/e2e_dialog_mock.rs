@@ -22,6 +22,7 @@
 //! / `Value::Null` satisfy.
 
 use serde_json::{json, Value};
+#[cfg(feature = "desktop")]
 use tauri::{plugin::{Builder, TauriPlugin}, Runtime};
 
 fn env_path(var: &str) -> Value {
@@ -31,27 +32,27 @@ fn env_path(var: &str) -> Value {
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn ask(_message: Value, _title: Option<Value>, _kind: Option<Value>, _yes_button_label: Option<Value>, _no_button_label: Option<Value>) -> Result<Value, String> {
     Ok(json!(true))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn confirm(_message: Value, _title: Option<Value>, _kind: Option<Value>, _ok_button_label: Option<Value>, _cancel_button_label: Option<Value>) -> Result<Value, String> {
     Ok(json!(true))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn message(_message: Value, _title: Option<Value>, _kind: Option<Value>, _ok_button_label: Option<Value>, _buttons: Option<Value>) -> Result<Value, String> {
     Ok(Value::Null)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn open(_options: Value) -> Result<Value, String> {
     Ok(env_path("E2E_DIALOG_OPEN_PATH"))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 async fn save(_options: Value) -> Result<Value, String> {
     Ok(env_path("E2E_DIALOG_SAVE_PATH"))
 }

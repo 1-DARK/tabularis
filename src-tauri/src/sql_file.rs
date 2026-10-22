@@ -50,7 +50,7 @@ pub fn write_sql_file_to_disk(path: &Path, content: &str) -> Result<(), String> 
         .map_err(|e| format!("Failed to write SQL file {}: {}", path.display(), e))
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn read_sql_file(path: String) -> Result<String, String> {
     let path = validate_sql_file_path(&path)?;
     spawn_blocking(move || read_sql_file_from_disk(&path, MAX_SQL_FILE_BYTES))
@@ -58,7 +58,7 @@ pub async fn read_sql_file(path: String) -> Result<String, String> {
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn write_sql_file(path: String, content: String) -> Result<(), String> {
     let path = validate_sql_file_path(&path)?;
     spawn_blocking(move || write_sql_file_to_disk(&path, &content))

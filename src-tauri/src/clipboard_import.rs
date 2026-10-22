@@ -3,6 +3,7 @@ use crate::models::TableColumn;
 use crate::{drivers::driver_trait::DatabaseDriver, models::ColumnDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Deserialize, Debug)]
@@ -172,6 +173,7 @@ fn table_ref(table_name: &str, schema: Option<&str>, quote: &str) -> String {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn execute_clipboard_import<R: Runtime>(
     app: AppHandle<R>,

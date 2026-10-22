@@ -1,3 +1,8 @@
+// ponytail: without `desktop`, helpers used only by Tauri command wrappers go
+// unused; silenced here instead of gating each one. The desktop build still
+// reports real dead code.
+#![cfg_attr(not(feature = "desktop"), allow(unused_imports, dead_code))]
+
 pub mod ai;
 pub mod ai_activity;
 #[cfg(test)]
@@ -8,6 +13,7 @@ pub mod ai_approval;
 #[cfg(test)]
 pub mod ai_approval_tests;
 pub mod ai_approval_watcher;
+#[cfg(feature = "desktop")]
 pub mod ai_commands;
 pub mod ai_notebook_export;
 #[cfg(test)]
@@ -30,11 +36,13 @@ pub mod connection_cache;
 #[cfg(test)]
 pub mod connection_cache_tests;
 pub mod connection_import;
+#[cfg(feature = "desktop")]
 pub mod connection_import_commands;
 pub mod connection_migrations;
 #[cfg(test)]
 pub mod connection_migrations_tests;
 pub mod connection_tags;
+#[cfg(feature = "desktop")]
 pub mod connection_window;
 #[cfg(test)]
 pub mod connection_window_tests;
@@ -70,6 +78,7 @@ pub mod mcp;
 pub mod models;
 #[cfg(test)]
 pub mod models_tests;
+#[cfg(feature = "desktop")]
 pub mod notebooks;
 pub mod paths; // Added
 #[cfg(test)]
@@ -111,24 +120,39 @@ pub mod ssm_tunnel;
 pub mod storage_location;
 #[cfg(test)]
 pub mod storage_location_tests;
+#[cfg(feature = "desktop")]
 mod system_theme;
+#[cfg(feature = "desktop")]
 pub mod task_manager;
 pub mod team_share;
+#[cfg(feature = "desktop")]
 pub mod theme_commands;
 pub mod theme_models;
 pub mod theme_packages;
 pub mod transport;
 pub mod ui_state;
+#[cfg(feature = "desktop")]
 pub mod ui_state_commands;
 #[cfg(test)]
 pub mod ui_state_tests;
+#[cfg(feature = "desktop")]
 pub mod updater;
+#[cfg(feature = "desktop")]
 pub mod window_decorations;
 // E2E-only mock of the `dialog` plugin (auto-accepts ask/confirm, stubs
 // open/save via env vars). Only compiled with --features e2e-testing.
 #[cfg(feature = "e2e-testing")]
 pub mod e2e_dialog_mock;
+#[cfg(feature = "desktop")]
 mod window_placement;
+/// Tauri's global runtime in the desktop app; the ambient Tokio runtime of
+/// `tabularis web` and `--mcp` otherwise.
+pub mod async_rt {
+    #[cfg(feature = "desktop")]
+    pub use tauri::async_runtime::{spawn, spawn_blocking, JoinHandle};
+    #[cfg(not(feature = "desktop"))]
+    pub use tokio::task::{spawn, spawn_blocking, JoinHandle};
+}
 pub mod drivers {
     pub mod common;
     pub mod driver_trait;
@@ -146,21 +170,24 @@ pub mod drivers {
     pub mod sqlite;
 }
 
+#[cfg(feature = "desktop")]
 use tauri::Manager;
 
 pub use runtime::bootstrap::get_log_buffer;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 fn is_debug_mode() -> bool {
     runtime::bootstrap::is_debug_mode()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn open_devtools(window: tauri::WebviewWindow) {
     window.open_devtools();
     log::info!("DevTools opened");
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn close_devtools(window: tauri::WebviewWindow) {
     window.close_devtools();
@@ -263,6 +290,18 @@ pub fn run() {
         return;
     }
 
+    #[cfg(feature = "desktop")]
+    run_desktop(args, log_buffer);
+    #[cfg(not(feature = "desktop"))]
+    {
+        drop(log_buffer);
+        eprintln!("This build has no desktop app. Run `tabularis web` or `tabularis --mcp`.");
+        std::process::exit(2);
+    }
+}
+
+#[cfg(feature = "desktop")]
+fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
     // Log startup message
     log::info!("Tabularis application starting...");
     if args.debug {
@@ -436,6 +475,7 @@ pub fn run() {
             // has neither `xdg-mime` nor write access to the host's
             // mimeapps.list — so skip the call instead of logging a failure.
             {
+                #[cfg(feature = "desktop")]
                 use tauri_plugin_deep_link::DeepLinkExt;
                 let handle = app.handle().clone();
                 let deep_link = app.deep_link();

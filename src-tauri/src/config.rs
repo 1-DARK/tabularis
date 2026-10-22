@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::RwLock;
+#[cfg(feature = "desktop")]
 use tauri::AppHandle;
+#[cfg(feature = "desktop")]
 use tauri::Manager;
 
 use std::collections::HashMap;
@@ -306,6 +308,7 @@ pub enum MigrationMode {
 
 static CONFIG_CACHE: Lazy<RwLock<AppConfig>> = Lazy::new(|| RwLock::new(AppConfig::default()));
 
+#[cfg(feature = "desktop")]
 pub fn get_config_dir<R: tauri::Runtime>(_app: &AppHandle<R>) -> Option<PathBuf> {
     Some(crate::paths::get_app_config_dir())
 }
@@ -391,6 +394,7 @@ pub fn is_connection_readonly(config: &AppConfig, connection_id: &str) -> bool {
 }
 
 // Internal load
+#[cfg(feature = "desktop")]
 pub fn load_config_internal<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfig {
     if let Some(config_dir) = get_config_dir(app) {
         let config_path = config_dir.join("config.json");
@@ -409,11 +413,13 @@ pub fn load_config_internal<R: tauri::Runtime>(app: &AppHandle<R>) -> AppConfig 
     default_config
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_config(app: AppHandle) -> AppConfig {
     crate::application::persistence::load_config(&app.state::<crate::runtime::RuntimeContext>())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     let runtime = app.state::<crate::runtime::RuntimeContext>();
@@ -430,7 +436,7 @@ pub fn save_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
         let interval = saved
             .ping_interval
             .unwrap_or(crate::health_check::DEFAULT_PING_INTERVAL);
-        tauri::async_runtime::spawn(crate::health_check::restart_ping_loop(app, interval as u64));
+        crate::async_rt::spawn(crate::health_check::restart_ping_loop(app, interval as u64));
     }
     Ok(())
 }
@@ -471,6 +477,7 @@ pub(crate) fn resolve_schema_preference(
     None
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_schema_preference(
     app: AppHandle,
@@ -484,6 +491,7 @@ pub fn get_schema_preference(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_schema_preference(
     app: AppHandle,
@@ -499,12 +507,14 @@ pub fn set_schema_preference(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_last_active_connection(app: AppHandle) -> Option<String> {
     crate::application::persistence::load_config(&app.state::<crate::runtime::RuntimeContext>())
         .last_active_connection_id
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_last_active_connection(
     app: AppHandle,
@@ -516,6 +526,7 @@ pub fn set_last_active_connection(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_last_open_connections(app: AppHandle) -> Vec<String> {
     crate::application::persistence::load_config(&app.state::<crate::runtime::RuntimeContext>())
@@ -523,6 +534,7 @@ pub fn get_last_open_connections(app: AppHandle) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_last_open_connections(
     app: AppHandle,
@@ -534,6 +546,7 @@ pub fn set_last_open_connections(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_selected_schemas(
     app: AppHandle,
@@ -547,6 +560,7 @@ pub fn get_selected_schemas(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_selected_schemas(
     app: AppHandle,
@@ -562,6 +576,7 @@ pub fn set_selected_schemas(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_ai_key(app: AppHandle, provider: String, key: String) -> Result<(), String> {
     crate::application::ai::set_key(
@@ -572,6 +587,7 @@ pub fn set_ai_key(app: AppHandle, provider: String, key: String) -> Result<(), S
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn delete_ai_key(app: AppHandle, provider: String) -> Result<(), String> {
     crate::application::ai::delete_key(
@@ -581,6 +597,7 @@ pub fn delete_ai_key(app: AppHandle, provider: String) -> Result<(), String> {
     )
 }
 
+#[cfg(feature = "desktop")]
 /// Get the configured maximum BLOB size in bytes, or DEFAULT_MAX_BLOB_SIZE if not set
 pub fn get_max_blob_size<R: tauri::Runtime>(app: &AppHandle<R>) -> u64 {
     let config = load_config_internal(app);
@@ -589,6 +606,7 @@ pub fn get_max_blob_size<R: tauri::Runtime>(app: &AppHandle<R>) -> u64 {
         .unwrap_or(crate::drivers::common::DEFAULT_MAX_BLOB_SIZE)
 }
 
+#[cfg(feature = "desktop")]
 pub fn get_ai_api_key(app: &AppHandle, provider: &str) -> Result<String, String> {
     // 1. Try Keychain First (Override) — via the in-memory credential cache so
     //    repeated lookups don't trigger a macOS Keychain authorization prompt
@@ -632,6 +650,7 @@ pub struct AiKeyStatus {
     pub from_env: bool,
 }
 
+#[cfg(feature = "desktop")]
 pub fn get_ai_api_key_status(app: &AppHandle, provider: &str) -> AiKeyStatus {
     // 1. Check Keychain (through the cache to avoid repeated auth prompts)
     let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
@@ -678,6 +697,7 @@ pub fn get_ai_api_key_status(app: &AppHandle, provider: &str) -> AiKeyStatus {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn check_ai_key(app: AppHandle, provider: String) -> bool {
     crate::application::ai::get_api_key(
@@ -688,6 +708,7 @@ pub fn check_ai_key(app: AppHandle, provider: String) -> bool {
     .is_ok()
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn check_ai_key_status(
     app: AppHandle,
@@ -700,6 +721,7 @@ pub fn check_ai_key_status(
     )
 }
 
+#[cfg(feature = "desktop")]
 fn prompt_kind(app: &AppHandle, kind: crate::application::persistence::PromptKind) -> String {
     crate::application::persistence::get_prompt(
         &app.state::<crate::runtime::RuntimeContext>(),
@@ -707,6 +729,7 @@ fn prompt_kind(app: &AppHandle, kind: crate::application::persistence::PromptKin
     )
 }
 
+#[cfg(feature = "desktop")]
 fn save_prompt_kind(
     app: &AppHandle,
     kind: crate::application::persistence::PromptKind,
@@ -719,6 +742,7 @@ fn save_prompt_kind(
     )
 }
 
+#[cfg(feature = "desktop")]
 fn reset_prompt_kind(
     app: &AppHandle,
     kind: crate::application::persistence::PromptKind,
@@ -729,10 +753,12 @@ fn reset_prompt_kind(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_system_prompt(app: AppHandle) -> String {
     prompt_kind(&app, crate::application::persistence::PromptKind::System)
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_system_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
     save_prompt_kind(
@@ -741,15 +767,18 @@ pub fn save_system_prompt(app: AppHandle, prompt: String) -> Result<(), String> 
         &prompt,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn reset_system_prompt(app: AppHandle) -> Result<String, String> {
     reset_prompt_kind(&app, crate::application::persistence::PromptKind::System)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_explain_prompt(app: AppHandle) -> String {
     prompt_kind(&app, crate::application::persistence::PromptKind::Explain)
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_explain_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
     save_prompt_kind(
@@ -758,11 +787,13 @@ pub fn save_explain_prompt(app: AppHandle, prompt: String) -> Result<(), String>
         &prompt,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn reset_explain_prompt(app: AppHandle) -> Result<String, String> {
     reset_prompt_kind(&app, crate::application::persistence::PromptKind::Explain)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_explainplan_prompt(app: AppHandle) -> String {
     prompt_kind(
@@ -770,6 +801,7 @@ pub fn get_explainplan_prompt(app: AppHandle) -> String {
         crate::application::persistence::PromptKind::ExplainPlan,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_explainplan_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
     save_prompt_kind(
@@ -778,6 +810,7 @@ pub fn save_explainplan_prompt(app: AppHandle, prompt: String) -> Result<(), Str
         &prompt,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn reset_explainplan_prompt(app: AppHandle) -> Result<String, String> {
     reset_prompt_kind(
@@ -786,10 +819,12 @@ pub fn reset_explainplan_prompt(app: AppHandle) -> Result<String, String> {
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_cellname_prompt(app: AppHandle) -> String {
     prompt_kind(&app, crate::application::persistence::PromptKind::CellName)
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_cellname_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
     save_prompt_kind(
@@ -798,15 +833,18 @@ pub fn save_cellname_prompt(app: AppHandle, prompt: String) -> Result<(), String
         &prompt,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn reset_cellname_prompt(app: AppHandle) -> Result<String, String> {
     reset_prompt_kind(&app, crate::application::persistence::PromptKind::CellName)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_tabrename_prompt(app: AppHandle) -> String {
     prompt_kind(&app, crate::application::persistence::PromptKind::TabRename)
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_tabrename_prompt(app: AppHandle, prompt: String) -> Result<(), String> {
     save_prompt_kind(
@@ -815,11 +853,13 @@ pub fn save_tabrename_prompt(app: AppHandle, prompt: String) -> Result<(), Strin
         &prompt,
     )
 }
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn reset_tabrename_prompt(app: AppHandle) -> Result<String, String> {
     reset_prompt_kind(&app, crate::application::persistence::PromptKind::TabRename)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn get_config_json(app: AppHandle) -> Result<String, String> {
     crate::application::persistence::get_config_json_for_desktop(
@@ -827,12 +867,14 @@ pub fn get_config_json(app: AppHandle) -> Result<String, String> {
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn relaunch_app(app: AppHandle) {
     crate::window_placement::persist_cached(&app);
     app.restart();
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_config_json(app: AppHandle, json: String) -> Result<(), String> {
     crate::application::persistence::save_config_json_for_desktop(

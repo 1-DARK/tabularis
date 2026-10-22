@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use tauri::AppHandle;
 
 use crate::config::PluginConfig;
@@ -41,7 +42,7 @@ pub struct PluginLoadError {
     pub error: String,
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_plugin_startup_errors() -> Vec<PluginLoadError> {
     crate::application::plugins::get_plugin_startup_errors()
 }
@@ -110,6 +111,7 @@ pub struct ConfigManifest {
 /// swallowed because the built-in of the same id is already registered.
 const BUILTIN_DRIVER_IDS: [&str; 3] = ["mysql", "postgres", "sqlite"];
 
+#[cfg(feature = "desktop")]
 /// Load installed plugins at startup.
 ///
 /// `enabled_ids` controls which plugins are started:

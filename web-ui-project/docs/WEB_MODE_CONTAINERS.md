@@ -2,9 +2,9 @@
 
 The official image `ghcr.io/tabularisdb/tabularis` is published to the GitHub Container Registry for `linux/amd64` and `linux/arm64`, tagged `latest`, `0.30` and `0.30.0`. Prereleases get only their exact version tag (`0.30.0-beta.1`).
 
-It is based on Debian slim, so registry driver plugins (built for glibc) run unchanged. It runs as UID `10001`, keeps all state in `/data`, and includes `ssh` for SSH tunnels. `kubectl` and the AWS CLI are not included; extend the image if you use Kubernetes or SSM tunnels.
+It is based on Debian slim, so registry driver plugins (built for glibc) run unchanged, and is about 60 MB to pull. It runs as UID `10001`, keeps all state in `/data`, and includes `ssh` for SSH tunnels. `kubectl` and the AWS CLI are not included; extend the image if you use Kubernetes or SSM tunnels.
 
-The server binary still links WebKitGTK because the desktop and Web modes ship as one executable, so the image is larger than a typical web service. `tabularis web` never opens a window and needs no display.
+The image contains a server-only build (`cargo build --no-default-features`): it has no desktop app and links neither GTK nor WebKitGTK, and it only runs `tabularis web` and `tabularis --mcp`.
 
 ## Quick start on your machine
 
@@ -83,4 +83,4 @@ docker build -f docker/Dockerfile -t tabularis .
 docker/smoke-test.sh tabularis
 ```
 
-The build compiles the frontend once on the build platform and the Rust server for the target platform. Release builds run on native `amd64` and `arm64` runners by `.github/workflows/docker.yml`, which also publishes the Helm chart.
+The build compiles the frontend once on the build platform and the Rust server, without the `desktop` feature, for the target platform. Release builds run on native `amd64` and `arm64` runners by `.github/workflows/docker.yml`, which also publishes the Helm chart.

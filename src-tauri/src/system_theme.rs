@@ -2,7 +2,7 @@
 mod portal;
 
 /// Linux desktop preference, independent of the GTK theme name.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn get_linux_system_theme() -> Option<String> {
     #[cfg(target_os = "linux")]
     {
@@ -15,10 +15,12 @@ pub async fn get_linux_system_theme() -> Option<String> {
     None
 }
 
+#[cfg(feature = "desktop")]
 #[cfg(target_os = "linux")]
 pub fn watch(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
+    crate::async_rt::spawn(async move {
         if let Err(error) = portal::watch(move |theme| {
+            #[cfg(feature = "desktop")]
             use tauri::Emitter;
             if let Err(error) = app.emit("linux-system-theme-changed", theme) {
                 log::warn!("Failed to emit system theme change: {error}");

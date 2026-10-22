@@ -1,5 +1,6 @@
 use crate::application::productivity::{self, ProductivityCommand};
 use serde_json::from_value;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime, State};
 
 pub use crate::application::productivity::backfill_history_entries as backfill_missing_database;
@@ -12,6 +13,7 @@ pub use crate::application::productivity::{QueryHistoryEntry, QueryHistoryRespon
 #[derive(Default)]
 pub struct QueryHistoryState;
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_query_history<R: Runtime>(
     app: AppHandle<R>,
@@ -30,6 +32,7 @@ pub async fn get_query_history<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn add_query_history_entry<R: Runtime>(
@@ -65,6 +68,7 @@ pub async fn add_query_history_entry<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_query_history_entry<R: Runtime>(
     app: AppHandle<R>,
@@ -82,6 +86,7 @@ pub async fn delete_query_history_entry<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn clear_query_history<R: Runtime>(
     app: AppHandle<R>,
@@ -98,6 +103,7 @@ pub async fn clear_query_history<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 pub async fn backfill_missing_database_for_connection<R: Runtime>(
     app: &AppHandle<R>,
     connection_id: &str,
@@ -108,6 +114,7 @@ pub async fn backfill_missing_database_for_connection<R: Runtime>(
     productivity::backfill_query_history_for_connection(config_dir, connection_id, database)
 }
 
+#[cfg(feature = "desktop")]
 pub async fn remove_history_for_connection<R: Runtime>(
     app: &AppHandle<R>,
     connection_id: &str,

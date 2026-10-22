@@ -18,9 +18,11 @@ pub struct DriverManifestDetails {
     pub connection_metadata: Option<bool>,
 }
 
+#[cfg(feature = "desktop")]
 /// The UI invalidates only discovery-enabled contexts. Emitting for every
 /// replacement also covers an update that removes a plugin's discovery opt-in.
 pub async fn notify_plugin_reload<R: tauri::Runtime>(app: &tauri::AppHandle<R>, driver_id: &str) {
+    #[cfg(feature = "desktop")]
     use tauri::Emitter;
     let _ = app.emit(
         "connection-metadata-invalidated",

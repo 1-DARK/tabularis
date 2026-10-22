@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::Path;
 use sha2::{Digest, Sha256};
+#[cfg(feature = "desktop")]
 use tauri::AppHandle;
 
 pub(crate) const MAX_ICON_BYTES: u64 = 512 * 1024;
@@ -175,6 +176,7 @@ pub fn copy_icon_for_duplicate(
     Ok(format!("connection-icons/{filename}"))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_connection_icon(
     _app: AppHandle,
@@ -187,6 +189,7 @@ pub async fn save_connection_icon(
         .map_err(|e| e.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_connection_icon(
     _app: AppHandle,

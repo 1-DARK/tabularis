@@ -2,7 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+#[cfg(feature = "desktop")]
 use tauri::Emitter;
+#[cfg(feature = "desktop")]
 use tauri::AppHandle;
 
 mod installation_source;
@@ -61,12 +63,13 @@ struct GitHubAsset {
 const GITHUB_REPO: &str = "TabularisDB/tabularis";
 const CACHE_DURATION_SECS: u64 = 43200; // 12 hours
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_installation_source() -> Option<String> {
     detect_installation_source()
 }
 
 // Helper functions
+#[cfg(feature = "desktop")]
 fn get_cache_path(_app: &AppHandle) -> Option<PathBuf> {
     Some(crate::paths::get_app_config_dir().join("update_check_cache.json"))
 }
@@ -178,6 +181,7 @@ fn categorize_asset(name: &str) -> String {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Effective update channel from config. Anything other than "nightly" ⇒ stable.
 fn release_channel<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
     crate::config::load_config_internal(app)
@@ -186,6 +190,7 @@ fn release_channel<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
 }
 
 // Tauri commands
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn check_for_updates(app: AppHandle, force: bool) -> Result<UpdateCheckResult, String> {
     // Package-managed installations should not use the built-in updater.
@@ -213,6 +218,7 @@ pub async fn check_for_updates(app: AppHandle, force: bool) -> Result<UpdateChec
 
         // Ask the updater plugin (prerelease-aware semver) whether this nightly
         // is newer than the running build.
+        #[cfg(feature = "desktop")]
         use tauri_plugin_updater::UpdaterExt;
         let updater = app
             .updater_builder()
@@ -334,6 +340,7 @@ pub async fn check_for_updates(app: AppHandle, force: bool) -> Result<UpdateChec
     Ok(result)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
     if is_managed_package() {
@@ -341,6 +348,7 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
     }
 
     // Use tauri-plugin-updater to handle the download and installation.
+    #[cfg(feature = "desktop")]
     use tauri_plugin_updater::UpdaterExt;
 
     let mut builder = app.updater_builder();

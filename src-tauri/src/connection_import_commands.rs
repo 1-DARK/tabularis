@@ -1,5 +1,6 @@
 //! Desktop transport wrappers for shared connection import and export services.
 
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
 use crate::application::connection_files::{
@@ -11,6 +12,7 @@ use crate::models::ExportPayload;
 
 pub use crate::application::connection_files::ImportEnvelopeCache;
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn export_connections_file<R: Runtime>(
     app: AppHandle<R>,
@@ -28,11 +30,12 @@ pub async fn export_connections_file<R: Runtime>(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn list_connection_import_sources() -> Result<Vec<ImportSourceInfo>, String> {
     connection_files::list_import_sources().await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn preview_connection_import<R: Runtime>(
     app: AppHandle<R>,
@@ -52,6 +55,7 @@ pub async fn preview_connection_import<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn apply_connection_import<R: Runtime>(
     app: AppHandle<R>,
@@ -73,6 +77,7 @@ pub async fn apply_connection_import<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn preview_tabularis_import<R: Runtime>(
     app: AppHandle<R>,
@@ -85,6 +90,7 @@ pub async fn preview_tabularis_import<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn apply_tabularis_import<R: Runtime>(
     app: AppHandle<R>,
@@ -107,6 +113,7 @@ pub async fn apply_tabularis_import<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn preview_tabularis_import_file<R: Runtime>(
     app: AppHandle<R>,
@@ -124,6 +131,7 @@ pub async fn preview_tabularis_import_file<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn apply_prepared_tabularis_import<R: Runtime>(
     app: AppHandle<R>,

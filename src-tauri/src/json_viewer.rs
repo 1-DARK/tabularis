@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use ulid::Ulid;
 use urlencoding::encode;
@@ -36,6 +37,7 @@ pub struct JsonViewerStore {
     pub last_bounds: Mutex<Option<WindowBounds>>,
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_json_viewer_window(
     app: AppHandle,
@@ -180,6 +182,7 @@ pub async fn open_json_viewer_window(
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_json_viewer_session(
     store: State<'_, JsonViewerStore>,
@@ -195,6 +198,7 @@ pub async fn get_json_viewer_session(
         .ok_or_else(|| format!("JSON viewer session '{}' not found", session_id))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn complete_json_viewer_session(
     app: AppHandle,

@@ -157,6 +157,7 @@ fn shutdown_hooks_run_without_a_tauri_runtime() {
 #[tokio::test]
 async fn desktop_productivity_commands_use_the_managed_custom_config_directory() {
     use crate::{query_history, saved_queries};
+    #[cfg(feature = "desktop")]
     use tauri::Manager;
     let root = tempfile::tempdir().unwrap();
     let config = root.path().join("custom-config");

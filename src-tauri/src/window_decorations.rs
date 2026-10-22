@@ -1,4 +1,5 @@
 use crate::config::{get_cached_config, WindowDecorationsMode};
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
 #[cfg(target_os = "linux")]
@@ -23,6 +24,7 @@ pub fn native_decorations_enabled() -> bool {
     })
 }
 
+#[cfg(feature = "desktop")]
 pub fn apply_to_all_windows<R: Runtime>(app: &AppHandle<R>, mode: Option<&WindowDecorationsMode>) {
     let enabled = native_decorations_enabled_for_mode(mode, |name| std::env::var(name).ok());
 

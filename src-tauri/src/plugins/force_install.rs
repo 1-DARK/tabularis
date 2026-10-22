@@ -15,6 +15,7 @@
 //! [`MIGRATABLE_DRIVERS`] and a call site, not a new function.
 
 use serde::Serialize;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
 use crate::config::{self, AppConfig};
@@ -46,6 +47,7 @@ struct PluginActivatedPayload<'a> {
     plugin_id: &'a str,
 }
 
+#[cfg(feature = "desktop")]
 /// Ensure the plugin for `builtin_id` is installed, but only when at least one
 /// saved connection is still on the built-in driver. A user with no such
 /// connection is left untouched — no plugin they don't need.
@@ -63,6 +65,7 @@ pub async fn ensure_plugin_installed_if_needed(app: &AppHandle, builtin_id: &str
     ensure_plugin_installed(app, plugin_id).await;
 }
 
+#[cfg(feature = "desktop")]
 /// Install (and activate) `plugin_id` if it isn't already installed and the
 /// latest release is compatible with this app build. Every failure path
 /// logs and returns silently — there's no UI-visible error and no retry loop
@@ -111,6 +114,7 @@ pub async fn ensure_plugin_installed(app: &AppHandle, plugin_id: &str) {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Persist `plugin_id` into `active_external_drivers` via the `save_config`
 /// merge, leaving every other config field untouched. Idempotent: a no-op if
 /// the id is already active.
@@ -185,6 +189,7 @@ pub(crate) fn merge_active_driver(
     }
 }
 
+#[cfg(feature = "desktop")]
 /// True when at least one saved connection has `params.driver == driver_id`.
 /// Reads the connections file directly via `persistence::load_connections`
 /// (the same path `get_connections` uses internally) rather than invoking the
@@ -196,6 +201,7 @@ fn connections_use_driver(app: &AppHandle, driver_id: &str) -> Result<bool, Stri
     Ok(connections.iter().any(|c| c.params.driver == driver_id))
 }
 
+#[cfg(feature = "desktop")]
 /// Check the latest release's `min_tabularis_version` against the running
 /// app's own version. `install_plugin` doesn't gate on this itself, so without
 /// this check an unattended install could silently install a release that

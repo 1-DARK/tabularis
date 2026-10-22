@@ -1,10 +1,12 @@
 use crate::application::productivity::{self, ProductivityCommand};
 use serde_json::from_value;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
 pub use crate::application::productivity::{SavedQuery, SavedQueryMeta};
 use crate::saved_query_folders::SavedQueryFolder;
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_saved_queries<R: Runtime>(
     app: AppHandle<R>,
@@ -22,6 +24,7 @@ pub async fn get_saved_queries<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_query<R: Runtime>(
     app: AppHandle<R>,
@@ -47,6 +50,7 @@ pub async fn save_query<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_saved_query<R: Runtime>(
     app: AppHandle<R>,
@@ -74,6 +78,7 @@ pub async fn update_saved_query<R: Runtime>(
     .map_err(|error| error.to_string())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_saved_query<R: Runtime>(
     app: AppHandle<R>,
@@ -92,6 +97,7 @@ pub async fn delete_saved_query<R: Runtime>(
 
 pub use crate::application::productivity::backfill_saved_query_metadata as backfill_missing_database;
 
+#[cfg(feature = "desktop")]
 pub fn backfill_missing_database_for_connection<R: Runtime>(
     app: &AppHandle<R>,
     connection_id: &str,
@@ -102,6 +108,7 @@ pub fn backfill_missing_database_for_connection<R: Runtime>(
     productivity::backfill_saved_queries_for_connection(config_dir, connection_id, database)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_saved_query_folders<R: Runtime>(
     app: AppHandle<R>,
@@ -110,6 +117,7 @@ pub async fn get_saved_query_folders<R: Runtime>(
     execute_typed(&app, ProductivityCommand::GetSavedQueryFolders { connection_id }).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_saved_query_folder<R: Runtime>(
     app: AppHandle<R>,
@@ -126,6 +134,7 @@ pub async fn create_saved_query_folder<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn rename_saved_query_folder<R: Runtime>(
     app: AppHandle<R>,
@@ -145,6 +154,7 @@ pub async fn rename_saved_query_folder<R: Runtime>(
 }
 
 /// Only empty folders can be deleted; see `saved_query_folders::delete_folder`.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_saved_query_folder<R: Runtime>(
     app: AppHandle<R>,
@@ -159,6 +169,7 @@ pub async fn delete_saved_query_folder<R: Runtime>(
 }
 
 /// Moves a saved query into a folder, or to Unfiled when `folder_id` is null.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn move_saved_query<R: Runtime>(
     app: AppHandle<R>,
@@ -177,6 +188,7 @@ pub async fn move_saved_query<R: Runtime>(
     .await
 }
 
+#[cfg(feature = "desktop")]
 async fn execute_typed<R: Runtime, T: serde::de::DeserializeOwned>(
     app: &AppHandle<R>,
     command: ProductivityCommand,

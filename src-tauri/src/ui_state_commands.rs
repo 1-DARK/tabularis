@@ -3,8 +3,10 @@
 use crate::application::ui_state::{execute, UiStateCommand};
 use crate::runtime::RuntimeContext;
 use serde_json::Value;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, Runtime};
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_ui_state<R: Runtime>(
     app: AppHandle<R>,
@@ -13,6 +15,7 @@ pub async fn get_ui_state<R: Runtime>(
     execute(&app.state::<RuntimeContext>(), UiStateCommand::Get { keys }).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_ui_state<R: Runtime>(
     app: AppHandle<R>,
@@ -27,6 +30,7 @@ pub async fn set_ui_state<R: Runtime>(
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_ui_state<R: Runtime>(app: AppHandle<R>, key: String) -> Result<(), String> {
     execute(

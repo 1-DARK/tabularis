@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use once_cell::sync::Lazy;
+#[cfg(feature = "desktop")]
 use tauri::Emitter;
 use tokio::sync::{oneshot, Mutex, RwLock};
 
@@ -42,6 +43,7 @@ pub async fn active_connections() -> Vec<String> {
     ACTIVE_CONNECTIONS.read().await.iter().cloned().collect()
 }
 
+#[cfg(feature = "desktop")]
 /// Broadcast the current active-connection set to all windows.
 pub async fn emit_active_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     let ids = active_connections().await;
@@ -54,6 +56,7 @@ pub async fn emit_active_changed<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Start the periodic ping loop. If a loop is already running it is stopped first.
 pub async fn start_ping_loop(app: tauri::AppHandle, interval_secs: u64) {
     // Stop any existing loop
@@ -101,12 +104,14 @@ pub async fn stop_ping_loop() {
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Restart the ping loop with a new interval.
 pub async fn restart_ping_loop(app: tauri::AppHandle, interval_secs: u64) {
     stop_ping_loop().await;
     start_ping_loop(app, interval_secs).await;
 }
 
+#[cfg(feature = "desktop")]
 /// Ping every registered connection. On failure beyond the threshold,
 /// close the pool and emit an event to the frontend.
 async fn ping_all_connections(app: &tauri::AppHandle, failure_counts: &mut HashMap<String, u32>) {
@@ -158,6 +163,7 @@ async fn ping_all_connections(app: &tauri::AppHandle, failure_counts: &mut HashM
     }
 }
 
+#[cfg(feature = "desktop")]
 /// Ping a single connection by resolving its params and calling driver.ping().
 async fn ping_single_connection(app: &tauri::AppHandle, connection_id: &str) -> Result<(), String> {
     let saved_conn = crate::commands::find_connection_by_id(app, connection_id)?;
@@ -184,6 +190,7 @@ async fn ping_single_connection(app: &tauri::AppHandle, connection_id: &str) -> 
         .map_err(|_| "Ping timed out".to_string())?
 }
 
+#[cfg(feature = "desktop")]
 /// Close the pool, unregister the connection, and emit a failure event.
 async fn handle_connection_failure(app: &tauri::AppHandle, connection_id: &str, error: &str) {
     // Unregister first to prevent further pings.

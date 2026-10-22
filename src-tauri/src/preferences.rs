@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -8,6 +9,7 @@ pub struct EditorPreferences {
     pub active_tab_id: Option<String>,
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn save_editor_preferences(
     app: AppHandle,
@@ -21,6 +23,7 @@ pub async fn save_editor_preferences(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn load_editor_preferences(
     app: AppHandle,
@@ -32,6 +35,7 @@ pub async fn load_editor_preferences(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_editor_preferences(
     app: AppHandle,
@@ -43,6 +47,7 @@ pub async fn delete_editor_preferences(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn list_all_preferences(
     app: AppHandle,

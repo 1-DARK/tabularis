@@ -3,8 +3,9 @@
 # Tabularis Web as a container image:
 #   docker build -f docker/Dockerfile -t tabularis .
 #
-# The binary still links WebKitGTK (Tauri is not optional), so the runtime
-# carries those shared libraries even though `tabularis web` never opens a window.
+# The server is built without the desktop app, so the image carries no GUI
+# libraries. Debian rather than Alpine: registry driver plugins are glibc
+# binaries and do not run on musl, not even through gcompat.
 
 ARG NODE_VERSION=24.18.0
 ARG DEBIAN_VERSION=trixie
@@ -24,55 +25,36 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     && pnpm build
 
 # ── Server ───────────────────────────────────────────────────────────────────
+# Built without the `desktop` feature: no Tauri, GTK or WebKitGTK, only the
+# `tabularis web` and `--mcp` entry points.
 FROM rust:1-${DEBIAN_VERSION} AS server
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev libdbus-1-dev \
-        pkg-config perl make \
-    && rm -rf /var/lib/apt/lists/*
-
-# Reported by the server contract (`option_env!`); empty for local builds.
 ARG TABULARIS_BUILD_COMMIT=
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libdbus-1-dev pkg-config perl make \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
-# The crate embeds the built frontend (`tauri::generate_context!`) and a few
-# JSON schemas from outside src-tauri.
+# JSON schemas and themes the crate embeds from outside src-tauri.
 COPY plugins/manifest.schema.json ./plugins/manifest.schema.json
 COPY packages/web-ui/src/schemas ./packages/web-ui/src/schemas
 COPY packages/web-ui/src/themes ./packages/web-ui/src/themes
-COPY --from=web-ui /src/packages/web-ui/dist ./packages/web-ui/dist
 COPY src-tauri ./src-tauri
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-target,target=/src/src-tauri/target \
     cd src-tauri \
-    && cargo build --release --locked --bin tabularis \
+    && cargo build --release --locked --no-default-features --bin tabularis \
     && install -Dm755 target/release/tabularis /out/tabularis
 
-# ── Shared libraries ─────────────────────────────────────────────────────────
-# Installing WebKitGTK drags in Mesa/LLVM, GStreamer, speech synthesis and more
-# (~700 MB) that `tabularis web` never loads: GTK is never initialised. Only
-# the libraries the binary links (its `ldd` closure) go into the runtime,
-# under their canonical directory so merged-/usr symlinks such as /lib stay.
-FROM debian:${DEBIAN_VERSION}-slim AS libs
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libdbus-1-3
-COPY --from=server /out/tabularis /usr/bin/tabularis
-RUN mkdir /libs \
-    && ldd /usr/bin/tabularis | awk '/=> \// { print $3 }' | while read -r lib; do \
-        dir="$(readlink -f "$(dirname "$lib")")"; \
-        mkdir -p "/libs$dir" && cp -L "$lib" "/libs$dir/"; \
-    done
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 FROM debian:${DEBIAN_VERSION}-slim
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tini openssh-client \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates curl tini openssh-client libdbus-1-3 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --user-group --home-dir /data --no-create-home tabularis \
     && install -d -o 10001 -g 10001 -m 0750 /data
-COPY --from=libs /libs/ /
 COPY --from=server /out/tabularis /usr/bin/tabularis
-# Fails the build if a linked library is missing.
-RUN ldconfig && tabularis --help >/dev/null
+RUN tabularis --help >/dev/null
 COPY --from=web-ui /src/packages/web-ui/dist /usr/lib/tabularis/web-ui
 COPY docker/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 ENV HOME=/data \

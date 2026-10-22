@@ -87,6 +87,11 @@ jobs:
       - name: Test
         run: pnpm run test:all
 
+      # The container image builds the server without Tauri.
+      - name: Check the server-only build
+        working-directory: src-tauri
+        run: cargo check --locked --no-default-features --bin tabularis
+
   web-e2e:
     runs-on: ubuntu-24.04
 

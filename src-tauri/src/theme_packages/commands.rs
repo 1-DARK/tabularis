@@ -2,8 +2,10 @@ use super::{catalog::PACKAGES_DIR, lifecycle, *};
 use crate::plugins::{install_cancellation, registry, tabularium};
 use sha2::{Digest, Sha256};
 use std::path::Path;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
+#[cfg(feature = "desktop")]
 fn registry_base(app: &AppHandle) -> Result<String, String> {
     let config = crate::config::load_config_internal(app);
     let base = config
@@ -17,6 +19,7 @@ fn operation_id(registry: &str, package: &str) -> String {
     format!("theme:{registry}:{package}")
 }
 
+#[cfg(feature = "desktop")]
 fn refresh(app: &AppHandle) {
     if let Err(error) = app.emit("theme-catalog-changed", ()) {
         log::warn!(
@@ -27,7 +30,7 @@ fn refresh(app: &AppHandle) {
 }
 
 /// Standalone import preview validates without creating a personal file.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_theme_document(source: String, name: String) -> Result<ThemeContribution, String> {
     catalog::validate_name(&name)?;
     let value = parse_bounded_json(source.as_bytes(), legacy::LEGACY_BYTES * 2, 128, 262_144)?;
@@ -61,7 +64,7 @@ pub fn preview_theme_document(source: String, name: String) -> Result<ThemeContr
 pub async fn preview_local_package_bytes(
     bytes: Vec<u8>,
 ) -> Result<lifecycle::LocalThemePreview, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::async_rt::spawn_blocking(move || {
         lifecycle::local_preview(&bytes, env!("CARGO_PKG_VERSION"))
     })
     .await
@@ -79,7 +82,7 @@ pub async fn install_local_package(
     let key = lifecycle::local_registry_key();
     let guard = install_cancellation::begin(&operation_id(&key, &package_name))?;
     let cancellation = guard.cancellation().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    crate::async_rt::spawn_blocking(move || {
         cancellation.check()?;
         let bytes = read_archive()?;
         if format!("{:x}", Sha256::digest(&bytes)) != expected_digest {
@@ -111,11 +114,11 @@ pub fn read_local_archive(path: &Path) -> Result<Vec<u8>, String> {
 /// Largest accepted local theme archive.
 pub const MAX_LOCAL_ARCHIVE_BYTES: usize = lifecycle::ARCHIVE_BYTES;
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn preview_local_theme_package(
     path: String,
 ) -> Result<lifecycle::LocalThemePreview, String> {
-    let bytes = tauri::async_runtime::spawn_blocking(move || {
+    let bytes = crate::async_rt::spawn_blocking(move || {
         lifecycle::read_local_archive(Path::new(&path))
     })
     .await
@@ -123,6 +126,7 @@ pub async fn preview_local_theme_package(
     preview_local_package_bytes(bytes).await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn install_local_theme_package(
     app: AppHandle,
@@ -148,6 +152,7 @@ pub struct ThemeRegistrySnapshot {
     pub plugins: Vec<registry::RegistryPlugin>,
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_theme_registry(
     app: AppHandle,
@@ -191,6 +196,7 @@ pub async fn fetch_registry(
 }
 
 /// Read-only details: never resolve a tracked download during discovery.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn fetch_theme_package_detail(
     app: AppHandle,
@@ -231,6 +237,7 @@ pub async fn fetch_package_detail(
     Ok(detail)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn install_registry_theme(
     app: AppHandle,
@@ -267,11 +274,12 @@ pub async fn install_registry(
     .await
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn cancel_theme_install(registry_key: String, package_name: String) -> bool {
     install_cancellation::cancel(&operation_id(&registry_key, &package_name))
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn set_theme_package_enabled(
     app: AppHandle,
@@ -298,6 +306,7 @@ pub fn set_package_enabled(
 }
 
 /// Recovery is an explicit action, never a catalog-read or hydration side effect.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn recover_theme_packages(app: AppHandle) -> Result<Vec<String>, String> {
     let failures = recover_packages();
@@ -316,6 +325,7 @@ pub fn recover_packages() -> Vec<String> {
     }
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn uninstall_theme_package(
     app: AppHandle,

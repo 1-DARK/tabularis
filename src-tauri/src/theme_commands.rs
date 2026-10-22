@@ -1,8 +1,10 @@
 use crate::paths::{get_app_config_dir, get_default_app_data_dir};
 use crate::theme_packages::{self, ThemeCatalog, ThemeContribution};
 use serde_json::Value;
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
 
+#[cfg(feature = "desktop")]
 fn committed<T>(app: &AppHandle, result: Result<T, String>) -> Result<T, String> {
     let value = result?;
     if let Err(error) = app.emit("theme-catalog-changed", ()) {
@@ -11,7 +13,7 @@ fn committed<T>(app: &AppHandle, result: Result<T, String>) -> Result<T, String>
     Ok(value)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_theme_catalog() -> ThemeCatalog {
     theme_packages::read_theme_catalog(
         &get_app_config_dir(),
@@ -22,7 +24,7 @@ pub fn get_theme_catalog() -> ThemeCatalog {
 
 /// Legacy command names and argument names remain available. Raw metadata is
 /// retained instead of round-tripping files through the historical Rust model.
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_all_themes() -> Result<Vec<Value>, String> {
     get_theme_catalog()
         .themes
@@ -38,7 +40,7 @@ pub fn get_all_themes() -> Result<Vec<Value>, String> {
         .collect()
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_theme(theme_id: String) -> Result<Value, String> {
     let entry = get_theme_catalog()
         .themes
@@ -54,6 +56,7 @@ pub fn get_theme(theme_id: String) -> Result<Value, String> {
     Ok(value)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_custom_theme(app: AppHandle, theme: Value) -> Result<(), String> {
     committed(
@@ -62,6 +65,7 @@ pub fn save_custom_theme(app: AppHandle, theme: Value) -> Result<(), String> {
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn delete_custom_theme(app: AppHandle, theme_id: String) -> Result<(), String> {
     committed(
@@ -70,6 +74,7 @@ pub fn delete_custom_theme(app: AppHandle, theme_id: String) -> Result<(), Strin
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn import_theme(
     app: AppHandle,
@@ -84,11 +89,12 @@ pub fn import_theme(
     committed(&app, result)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn export_theme(theme_id: String) -> Result<String, String> {
     theme_packages::export_personal_theme(&get_app_config_dir(), &theme_id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn create_personal_theme(
     app: AppHandle,
@@ -101,6 +107,7 @@ pub fn create_personal_theme(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn create_personal_snapshot(
     app: AppHandle,
@@ -113,6 +120,7 @@ pub fn create_personal_snapshot(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn update_personal_theme(
     app: AppHandle,
@@ -133,6 +141,7 @@ pub fn update_personal_theme(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn update_personal_snapshot(
     app: AppHandle,
@@ -155,6 +164,7 @@ pub fn update_personal_snapshot(
     )
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn duplicate_personal_theme(
     app: AppHandle,

@@ -3,8 +3,10 @@ use crate::application::database_transfers::{self, DumpDestination, ImportSource
 pub use crate::application::database_transfers::{DumpCancellationState, DumpOptions};
 use crate::runtime::RuntimeContext;
 use std::path::PathBuf;
+#[cfg(feature = "desktop")]
 use tauri::State;
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_dump(
     state: State<'_, DumpCancellationState>,
@@ -13,6 +15,7 @@ pub async fn cancel_dump(
     database_transfers::cancel_job(state.inner(), None, JobKind::Dump, &connection_id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn dump_database(
     runtime: State<'_, RuntimeContext>,
@@ -36,6 +39,7 @@ pub async fn dump_database(
     .await
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_import(
     state: State<'_, DumpCancellationState>,
@@ -44,6 +48,7 @@ pub async fn cancel_import(
     database_transfers::cancel_job(state.inner(), None, JobKind::Import, &connection_id)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn import_database(
     runtime: State<'_, RuntimeContext>,

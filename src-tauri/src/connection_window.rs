@@ -1,3 +1,4 @@
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 use urlencoding::encode;
 
@@ -29,6 +30,7 @@ pub fn connection_route(connection_id: &str) -> String {
 /// Open (or focus) a standalone window bound to a specific connection. The new
 /// window loads the shared connections route with a `connect` query parameter,
 /// which the frontend reads on startup to auto-connect and jump to the editor.
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn open_connection_window(
     app: AppHandle,
@@ -74,7 +76,7 @@ pub async fn open_connection_window(
         if let WindowEvent::CloseRequested { .. } = event {
             let app = close_app.clone();
             let connection_id = close_connection_id.clone();
-            tauri::async_runtime::spawn(async move {
+            crate::async_rt::spawn(async move {
                 if let Err(e) =
                     crate::commands::disconnect_connection(app, connection_id.clone()).await
                 {

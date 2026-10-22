@@ -2,9 +2,11 @@
 //! `connections.json` next to the groups. Tags are purely organizational;
 //! assignment lives on `SavedConnection.tag_ids`.
 
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Runtime};
 use uuid::Uuid;
 
+#[cfg(feature = "desktop")]
 use crate::commands::{get_config_path, save_connections_and_invalidate};
 use crate::models::{ConnectionTag, ConnectionsFile};
 use crate::persistence;
@@ -172,6 +174,7 @@ pub fn merge_imported_tags(
 
 // ---------- Tauri commands ----------
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn list_connection_tags<R: Runtime>(
     app: AppHandle<R>,
@@ -180,6 +183,7 @@ pub async fn list_connection_tags<R: Runtime>(
     Ok(persistence::load_connections_file(&path)?.tags)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn create_connection_tag<R: Runtime>(
     app: AppHandle<R>,
@@ -193,6 +197,7 @@ pub async fn create_connection_tag<R: Runtime>(
     Ok(tag)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn update_connection_tag<R: Runtime>(
     app: AppHandle<R>,
@@ -206,6 +211,7 @@ pub async fn update_connection_tag<R: Runtime>(
     save_connections_and_invalidate(&app, &path, &file)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn delete_connection_tag<R: Runtime>(
     app: AppHandle<R>,
@@ -217,6 +223,7 @@ pub async fn delete_connection_tag<R: Runtime>(
     save_connections_and_invalidate(&app, &path, &file)
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn set_connection_tags<R: Runtime>(
     app: AppHandle<R>,

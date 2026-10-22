@@ -56,7 +56,7 @@ pub fn take_runtime_warnings() -> Vec<PluginRuntimeWarning> {
     std::mem::take(&mut *guard)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_plugin_runtime_warnings() -> Vec<PluginRuntimeWarning> {
     take_runtime_warnings()
 }
