@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "cd ../.. && eslint . && node scripts/check-theme-tokens.mjs",
+    "lint": "cd ../.. && eslint . && prettier --check . && node scripts/check-theme-tokens.mjs",
     "preview": "vite preview",
     "test": "cd ../.. && vitest --config packages/web-ui/vitest.config.ts",
     "test:contract": "cd ../.. && vitest --config packages/web-ui/vitest.config.ts run packages/web-ui/tests/api/dualTransportContract.test.ts",

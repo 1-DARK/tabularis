@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
     ports:
       # Loopback only: the plain-HTTP URL below is accepted for localhost alone.
-      - "127.0.0.1:${TABULARIS_HTTP_PORT:-8080}:8080"
+      - '127.0.0.1:${TABULARIS_HTTP_PORT:-8080}:8080'
     environment:
       TABULARIS_PUBLIC_URL: ${TABULARIS_PUBLIC_URL:-http://localhost:${TABULARIS_HTTP_PORT:-8080}}
       TABULARIS_WEB_PASSWORD: ${TABULARIS_WEB_PASSWORD:-}

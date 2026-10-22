@@ -18,10 +18,10 @@ All utility functions and testable logic must be placed in `packages/web-ui/src/
 - ~~`packages/web-ui/src/utils/dataGridUtils.ts`~~ (wrong naming - no Utils suffix)
 
 ### Test Files
-All frontend test files must be placed in `packages/web-ui/tests/`, mirroring `packages/web-ui/src/`.
+All test files must be placed in a parallel `packages/web-ui/tests/` directory that mirrors the structure of `packages/web-ui/src/`.
 
 ```
-packages/web-ui/
+project-root/
 ├── src/
 │   ├── utils/
 │   │   ├── dataGrid.ts
@@ -43,33 +43,31 @@ packages/web-ui/
 
 ## Import Conventions
 
+`@/` is an alias for `packages/web-ui/src/` (`tsconfig.app.json`, `vite.config.ts`, `packages/web-ui/vitest.config.ts`).
+
 ### In Source Files
-Use standard relative or absolute imports:
+Import from the same folder with `./`; import anything else through `@/`. Never use `../`:
 
 ```typescript
 // From a component
-import { formatCellValue } from "../../utils/dataGrid";
+import { formatCellValue } from "@/utils/dataGrid";
 
-// From another util
+// From another util in the same folder
 import { hexToRgb } from "./colorUtils";
-
-// Using path alias
-import { splitQueries } from "@/utils/sql";
 ```
 
 ### In Test Files
-Always use relative imports from `packages/web-ui/tests/` to `packages/web-ui/src/`:
+Always import the code under test through `@/`:
 
 ```typescript
 // Correct - from packages/web-ui/tests/utils/dataGrid.test.ts
-import { formatCellValue } from "../../src/utils/dataGrid";
+import { formatCellValue } from "@/utils/dataGrid";
 
-// Correct - from packages/web-ui/tests/themes/colorUtils.test.ts
-import { hexToRgb } from "../../src/themes/colorUtils";
-
-// Incorrect - relative to same directory (would fail after move)
-~~import { formatCellValue } from "./dataGrid";~~
+// Incorrect - relative paths break when a test or a module moves
+~~import { formatCellValue } from "../../src/utils/dataGrid";~~
 ```
+
+Tests live only under `packages/web-ui/tests/`: Vitest does not collect `*.test.*` files placed in `packages/web-ui/src/`.
 
 ## Test File Naming
 
@@ -101,7 +99,7 @@ const formatCellValue = (value: unknown): string => {
 
 **After (extracted):**
 ```typescript
-// In packages/web-ui/src/utils/dataGrid.ts
+// In src/utils/dataGrid.ts
 export function formatCellValue(value: unknown, nullLabel = "NULL"): string {
   if (value === null || value === undefined) return nullLabel;
   if (typeof value === "boolean") return value ? "true" : "false";
@@ -110,7 +108,7 @@ export function formatCellValue(value: unknown, nullLabel = "NULL"): string {
 }
 
 // In DataGrid.tsx
-import { formatCellValue } from "../../utils/dataGrid";
+import { formatCellValue } from "@/utils/dataGrid";
 ```
 
 ## Test Organization
@@ -149,7 +147,7 @@ pnpm test
 pnpm test --watch
 
 # Run specific test file
-pnpm test packages/web-ui/tests/utils/dataGrid.test.ts
+pnpm test tests/utils/dataGrid.test.ts
 
 # Run with coverage
 pnpm test --coverage
@@ -157,10 +155,19 @@ pnpm test --coverage
 
 ## Configuration
 
-Tests are configured in `vitest.config.ts`:
-- Test files are discovered in `tests/` directory
-- Setup file: `./packages/web-ui/tests/setup.ts`
+Tests are configured in `packages/web-ui/vitest.config.ts`:
+- Test files are discovered in `packages/web-ui/tests/` directory
+- Setup file: `./tests/setup.ts`
 - Environment: `jsdom` for DOM-related tests
+
+### Browser storage in the test environment
+
+`packages/web-ui/tests/setup.ts` binds `localStorage` and `sessionStorage` to the current
+Vitest jsdom window before test modules load. Keep this shared setup: Node's
+native storage globals can otherwise shadow jsdom, yielding unavailable or
+non-browser storage. Do not work around it with per-test storage shims or a
+shared `--localstorage-file`. `packages/web-ui/tests/storageEnvironment.test.ts` verifies the
+real DOM storage identity, separate stores, and restoration after global stubs.
 
 ### Browser storage in the test environment
 

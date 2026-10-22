@@ -1,7 +1,7 @@
-import { useCallback } from "react";
-import { useDatabase } from "./useDatabase";
-import { usePlatformCapabilities } from "./usePlatformCapabilities";
-import { useTabularisClient } from "./useTabularisClient";
+import {useCallback} from 'react';
+import {useDatabase} from './useDatabase';
+import {usePlatformCapabilities} from './usePlatformCapabilities';
+import {useTabularisClient} from './useTabularisClient';
 
 /**
  * Open a connection in its own dedicated window.
@@ -17,39 +17,33 @@ import { useTabularisClient } from "./useTabularisClient";
  * stays alive and is reused by the new window, which disconnects it on close).
  */
 export function useOpenConnectionInNewWindow() {
-  const client = useTabularisClient();
-  const platform = usePlatformCapabilities();
-  const { detachConnection, isConnectionOpen, isConnectionOpenAnywhere } = useDatabase();
+    const client = useTabularisClient();
+    const platform = usePlatformCapabilities();
+    const {detachConnection, isConnectionOpen, isConnectionOpenAnywhere} = useDatabase();
 
-  return useCallback(
-    async (connectionId: string, name?: string | null) => {
-      // Validate connectivity before spawning the window, unless the connection
-      // is already open somewhere (then it's known-good and the window either
-      // reuses the warm pool or just gets focused).
-      if (!isConnectionOpenAnywhere(connectionId)) {
-        const connections = await client.call("get_connections", undefined);
-        const conn = connections.find((c) => c.id === connectionId);
-        if (!conn) throw new Error("Connection not found");
-        await client.call("test_connection", {
-          request: { params: conn.params, connection_id: connectionId },
-        });
-      }
+    return useCallback(
+        async (connectionId: string, name?: string | null) => {
+            // Validate connectivity before spawning the window, unless the connection
+            // is already open somewhere (then it's known-good and the window either
+            // reuses the warm pool or just gets focused).
+            if (!isConnectionOpenAnywhere(connectionId)) {
+                const connections = await client.call('get_connections', undefined);
+                const conn = connections.find((c) => c.id === connectionId);
+                if (!conn) throw new Error('Connection not found');
+                await client.call('test_connection', {
+                    request: {params: conn.params, connection_id: connectionId},
+                });
+            }
 
-      await platform.openConnectionRoute({
-        connectionId,
-        title: name ?? null,
-      });
+            await platform.openConnectionRoute({
+                connectionId,
+                title: name ?? null,
+            });
 
-      if (isConnectionOpen(connectionId)) {
-        detachConnection(connectionId);
-      }
-    },
-    [
-      client,
-      detachConnection,
-      isConnectionOpen,
-      isConnectionOpenAnywhere,
-      platform,
-    ],
-  );
+            if (isConnectionOpen(connectionId)) {
+                detachConnection(connectionId);
+            }
+        },
+        [client, detachConnection, isConnectionOpen, isConnectionOpenAnywhere, platform],
+    );
 }

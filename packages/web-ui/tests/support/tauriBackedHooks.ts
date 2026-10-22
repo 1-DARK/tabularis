@@ -7,33 +7,33 @@
  * assertions on `invoke`, `listen` or `openUrl` keep describing the desktop
  * transport without mounting the real providers.
  */
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
-import { TauriPlatformCapabilities } from "../../src/platform/tauriCapabilities";
-import type { TabularisClient } from "../../src/api/client";
+import {invoke} from '@tauri-apps/api/core';
+import {emit, listen} from '@tauri-apps/api/event';
+import {TauriPlatformCapabilities} from '@/platform/tauriCapabilities';
+import type {TabularisClient} from '@/api/client';
 
 function forward(command: string, request: unknown) {
-  return request === undefined
-    ? invoke(command)
-    : invoke(command, request as Record<string, unknown>);
+    return request === undefined
+        ? invoke(command)
+        : invoke(command, request as Record<string, unknown>);
 }
 
 export const tauriBackedClient = {
-  call: forward,
-  callUnmigrated: forward,
-  subscribe: (event: string, handler: (payload: unknown) => void) =>
-    listen(event, ({ payload }) => handler(payload)),
-  emit: (event: string, payload: unknown) => emit(event, payload),
-  readPluginAsset: (pluginId: string, filePath: string) =>
-    invoke("read_plugin_file", { pluginId, filePath }),
+    call: forward,
+    callUnmigrated: forward,
+    subscribe: (event: string, handler: (payload: unknown) => void) =>
+        listen(event, ({payload}) => handler(payload)),
+    emit: (event: string, payload: unknown) => emit(event, payload),
+    readPluginAsset: (pluginId: string, filePath: string) =>
+        invoke('read_plugin_file', {pluginId, filePath}),
 } as unknown as TabularisClient;
 
 const platform = new TauriPlatformCapabilities();
 
 export function useTabularisClient() {
-  return tauriBackedClient;
+    return tauriBackedClient;
 }
 
 export function usePlatformCapabilities() {
-  return platform;
+    return platform;
 }

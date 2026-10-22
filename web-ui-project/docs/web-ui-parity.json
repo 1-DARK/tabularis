@@ -29,23 +29,9 @@
       "users",
       "windows"
     ],
-    "eventUse": [
-      "none",
-      "emits",
-      "event-coordinated"
-    ],
-    "filesystemUse": [
-      "none",
-      "read",
-      "write",
-      "read-write"
-    ],
-    "authorizationLevel": [
-      "session",
-      "database",
-      "sensitive",
-      "local-admin"
-    ]
+    "eventUse": ["none", "emits", "event-coordinated"],
+    "filesystemUse": ["none", "read", "write", "read-write"],
+    "authorizationLevel": ["session", "database", "sensitive", "local-admin"]
   },
   "classificationNotes": {
     "eventUse": "Whether command completion or progress participates in the frontend event bus.",

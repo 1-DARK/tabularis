@@ -15,9 +15,9 @@ services:
     depends_on:
       - tabularis
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
     environment:
       TABULARIS_DOMAIN: ${TABULARIS_DOMAIN}
     volumes:

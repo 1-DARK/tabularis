@@ -1,6 +1,6 @@
 # -- External URL the browser uses, e.g. https://tabularis.example.com.
 # Required. Must be HTTPS unless it is a localhost URL (port-forwarding).
-publicUrl: ""
+publicUrl: ''
 
 # -- Extra origins allowed to call the API (the public URL is always allowed).
 allowedOrigins: []
@@ -12,7 +12,7 @@ trustedProxies: []
 image:
   repository: ghcr.io/tabularisdb/tabularis
   # -- Defaults to the chart appVersion.
-  tag: ""
+  tag: ''
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -23,20 +23,20 @@ auth:
   mode: password
   # -- Secret with the keys `web-password` (password mode) or `proxy-secret`
   # (proxy mode), and `secret-key`. Overrides the three values below.
-  existingSecret: ""
+  existingSecret: ''
   # -- Login password (min. 12 characters). When empty, the container generates
   # one on the data volume (`/data/web-password`) and prints it in its log.
-  password: ""
+  password: ''
   # -- Proxy secret (min. 32 characters). Required in proxy mode, because the
   # proxy must send the same value.
-  proxySecret: ""
+  proxySecret: ''
 
 secretStore:
   # -- Encrypts saved connection credentials on the volume (min. 16
   # characters). When empty, the container generates `/data/secrets.key` next
   # to the data; set it to keep the key out of volume backups. Losing it makes
   # the saved credentials unreadable.
-  key: ""
+  key: ''
 
 # -- Grants every session host-level operations (plugin management, server
 # file access). Only for a single trusted user.
@@ -50,8 +50,8 @@ extraEnv: []
 
 persistence:
   enabled: true
-  existingClaim: ""
-  storageClass: ""
+  existingClaim: ''
+  storageClass: ''
   accessModes:
     - ReadWriteOnce
   size: 2Gi
@@ -62,13 +62,13 @@ service:
 
 ingress:
   enabled: false
-  className: ""
+  className: ''
   annotations: {}
   # -- The host is taken from publicUrl.
   tls:
     enabled: true
     # -- Defaults to <release>-tls.
-    secretName: ""
+    secretName: ''
 
 resources: {}
 #  requests:

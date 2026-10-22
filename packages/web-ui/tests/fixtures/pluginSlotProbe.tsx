@@ -3,13 +3,13 @@ import { render } from '@testing-library/react';
 import { vi } from 'vitest';
 import i18n from 'i18next';
 import { invoke } from '@tauri-apps/api/core';
-import { PluginSlotProvider } from '../../src/contexts/PluginSlotProvider';
-import { SettingsContext, DEFAULT_SETTINGS } from '../../src/contexts/SettingsContext';
-import { TabularisClient } from '../../src/api/client';
-import { TauriTransport } from '../../src/api/transports/tauriTransport';
-import { TabularisClientProvider } from '../../src/contexts/TabularisClientProvider';
-import { API_VERSION } from '../../src/pluginApiVersion';
-import type { SlotName } from '../../src/types/pluginSlots';
+import { PluginSlotProvider } from '@/contexts/PluginSlotProvider';
+import { SettingsContext, DEFAULT_SETTINGS } from '@/contexts/SettingsContext';
+import { TabularisClient } from '@/api/client';
+import { TauriTransport } from '@/api/transports/tauriTransport';
+import { TabularisClientProvider } from '@/contexts/TabularisClientProvider';
+import { API_VERSION } from '@/pluginApiVersion';
+import type { SlotName } from '@/types/pluginSlots';
 
 /** Load probe bundles through the real manifest loader and driver filter. */
 export async function renderWithSlotProbe(children: ReactNode, slots: SlotName[]) {

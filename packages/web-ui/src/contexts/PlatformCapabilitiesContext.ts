@@ -1,5 +1,4 @@
-import { createContext } from "react";
-import type { PlatformCapabilities } from "../platform/capabilities";
+import {createContext} from 'react';
+import type {PlatformCapabilities} from '@/platform/capabilities';
 
-export const PlatformCapabilitiesContext =
-  createContext<PlatformCapabilities | null>(null);
+export const PlatformCapabilitiesContext = createContext<PlatformCapabilities | null>(null);
