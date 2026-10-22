@@ -5,6 +5,10 @@ publicUrl: ""
 # -- Extra origins allowed to call the API (the public URL is always allowed).
 allowedOrigins: []
 
+# -- Proxy source networks allowed to supply X-Forwarded-For, in CIDR notation.
+# Empty means headers are ignored. Restrict to your actual reverse proxies.
+trustedProxies: []
+
 image:
   repository: ghcr.io/tabularisdb/tabularis
   # -- Defaults to the chart appVersion.

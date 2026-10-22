@@ -24,7 +24,7 @@ tabularis web \
   --allowed-origin https://tabularis.example.com
 ```
 
-Passwords must contain at least 12 characters. The server provides a minimal, same-origin `/login` form, stores only a SHA-256 verifier in runtime memory, and exchanges valid credentials for an `HttpOnly`, `SameSite=Strict`, `Secure` session cookie. Five failed attempts from one client within one minute lock that client out for five minutes; other clients can still log in. Behind a reverse proxy on a loopback or private address, the client is the last `X-Forwarded-For` entry, so the proxy must append the client address to that header (Nginx `$proxy_add_x_forwarded_for` and Caddy do).
+Passwords must contain at least 12 characters. The server provides a minimal, same-origin `/login` form, stores only a SHA-256 verifier in runtime memory, and exchanges valid credentials for an `HttpOnly`, `SameSite=Strict`, `Secure` session cookie. Five failed attempts from one client within one minute lock that client out for five minutes; other clients can still log in. `X-Forwarded-For` is ignored by default, including from private and loopback peers. Configure each trusted proxy source network explicitly, for example `--trusted-proxy 127.0.0.1/32` for a local proxy, or repeat the flag for IPv4/IPv6 CIDRs. Only requests from those networks use the last header entry, which the proxy must append (Nginx `$proxy_add_x_forwarded_for`). Trust only proxy addresses, not client networks. Restrict direct access to the upstream listener with firewall rules or a Kubernetes NetworkPolicy; a configured HTTPS public URL does not enable TLS or prevent direct HTTP access to that listener.
 
 ## Authenticated reverse-proxy mode
 

@@ -51,6 +51,7 @@ The entrypoint translates these into `tabularis web` flags. Arguments after the 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TABULARIS_PUBLIC_URL` | `http://localhost:8080` | URL the browser uses. HTTPS, or HTTP on a loopback host. Becomes `--public-url` and the first `--allowed-origin`. |
+| `TABULARIS_TRUSTED_PROXIES` | | Trusted proxy source CIDRs, comma separated (`--trusted-proxy`); Helm: `trustedProxies`. Headers are ignored by default. |
 | `TABULARIS_ALLOWED_ORIGINS` | | Further origins, comma separated. |
 | `TABULARIS_AUTH` | `password` | `password` or `proxy` (an authenticating reverse proxy). |
 | `TABULARIS_WEB_PASSWORD` | generated | Login password, at least 12 characters. When unset, a password is generated on first start, stored in `/data/web-password`, and printed once. |

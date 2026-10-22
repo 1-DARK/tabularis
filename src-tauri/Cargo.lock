@@ -6742,6 +6742,7 @@ dependencies = [
  "gtk",
  "http-body-util",
  "infer 0.16.0",
+ "ipnet",
  "jsonschema",
  "keyring",
  "libc",

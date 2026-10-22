@@ -22,6 +22,7 @@ The Web-specific options are:
 | `--web-root` | Development or test override for a directory containing a built `index.html`. Packaged installations locate their matching Web UI resources automatically. |
 | `--auth` | Remote authentication mode: `password` or `proxy`. It requires `--public-url` and at least one `--allowed-origin`. |
 | `--public-url` | Public HTTPS origin seen by browsers, for example `https://tabularis.example.com`. Plain HTTP is accepted only for a loopback host such as `http://localhost:8080` (a container published on `127.0.0.1`). It must not contain a path, query, fragment, or credentials. |
+| `--trusted-proxy` | Proxy source CIDR allowed to supply `X-Forwarded-For`; repeat as needed. Empty by default. |
 | `--allowed-origin` | Allowed HTTPS (or loopback HTTP) browser origin. Repeat the option for additional origins; the public URL must be included. |
 | `--allow-high-risk` | Give remote sessions `local-admin` authority. Without it, remote sessions are restricted to database operations. Do not enable it for shared deployments. |
 | `--server-file-browser-root` | Allow the Web UI to browse one server directory. Repeat it to expose additional roots. Paths outside these roots remain inaccessible; remote sessions also require `--allow-high-risk`. |

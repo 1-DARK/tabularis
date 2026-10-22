@@ -221,6 +221,7 @@ pub fn run() {
 
             let server_result =
                 transport::web::server::run(transport::web::server::WebServerOptions {
+                    trusted_proxies: web_args.trusted_proxies.clone(),
                     host: web_args.host.clone(),
                     port: web_args.port,
                     web_root,

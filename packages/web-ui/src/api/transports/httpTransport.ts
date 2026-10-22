@@ -164,6 +164,7 @@ export class HttpTransport implements TabularisTransport {
       throw normalizeTabularisError(error, "UPLOAD_NETWORK_ERROR", requestId);
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         response.status === 413 ? "UPLOAD_TOO_LARGE" : "UPLOAD_FAILED",
@@ -209,6 +210,7 @@ export class HttpTransport implements TabularisTransport {
       throw normalizeTabularisError(error, "DOWNLOAD_NETWORK_ERROR", requestId);
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         "DOWNLOAD_FAILED",
@@ -267,6 +269,7 @@ export class HttpTransport implements TabularisTransport {
       );
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         response.status === 404
@@ -309,6 +312,7 @@ export class HttpTransport implements TabularisTransport {
       throw normalizeTabularisError(error, "UPLOAD_NETWORK_ERROR", requestId);
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         "ICON_UPLOAD_FAILED",
@@ -357,6 +361,7 @@ export class HttpTransport implements TabularisTransport {
       throw normalizeTabularisError(error, "UPLOAD_NETWORK_ERROR", requestId);
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         response.status === 413 ? "BLOB_UPLOAD_TOO_LARGE" : "BLOB_UPLOAD_FAILED",
@@ -402,6 +407,7 @@ export class HttpTransport implements TabularisTransport {
     } catch (error) {
       throw normalizeTabularisError(error, "UPLOAD_NETWORK_ERROR", requestId);
     }
+    await this.checkSessionResponse(response, session, response.headers.get("x-request-id") ?? requestId);
     if (!response.ok) {
       throw clientError(
         "BLOB_UPLOAD_READ_FAILED",
@@ -439,6 +445,7 @@ export class HttpTransport implements TabularisTransport {
       throw normalizeTabularisError(error, "DOWNLOAD_NETWORK_ERROR", requestId);
     }
     const responseRequestId = response.headers.get("x-request-id") ?? requestId;
+    await this.checkSessionResponse(response, session, responseRequestId);
     if (!response.ok) {
       throw clientError(
         "BLOB_DOWNLOAD_FAILED",
@@ -541,6 +548,7 @@ export class HttpTransport implements TabularisTransport {
     const requestId = response.headers.get("x-request-id") ?? createRequestId();
     // Password mode answers a missing session with a redirect to its login form.
     if (response.redirected && new URL(response.url).pathname === LOGIN_PATH) {
+      this.openLogin(this.url(LOGIN_PATH));
       throw clientError("LOGIN_REQUIRED", "Log in to Tabularis Web again", requestId);
     }
     if (!response.ok) {
@@ -623,14 +631,7 @@ export class HttpTransport implements TabularisTransport {
 
     const responseRequestId =
       response.headers.get("x-request-id") ?? requestId;
-    if (isSessionRejection(response)) {
-      await this.renewSession(session);
-      throw clientError(
-        "SESSION_EXPIRED",
-        "The session expired. Repeat the last action.",
-        responseRequestId,
-      );
-    }
+    await this.checkSessionResponse(response, session, responseRequestId);
     const body = await readJson(response, responseRequestId);
     if (!isRpcResponse(body)) {
       throw clientError(
@@ -662,15 +663,32 @@ export class HttpTransport implements TabularisTransport {
     if (this.session === rejected) {
       this.session = undefined;
       this.sessionPromise = undefined;
+      this.clearReconnectTimer();
+      const socket = this.socket;
+      this.socket = null;
+      this.connectionPromise = null;
+      this.lastSequence = 0;
+      socket?.close();
     }
-    try {
-      await this.initialize();
-    } catch (error) {
-      if (error instanceof TabularisClientError && error.code === "LOGIN_REQUIRED") {
-        this.openLogin(this.url(LOGIN_PATH));
-      }
-      throw error;
+    await this.initialize();
+    this.scheduleReconnect();
+  }
+
+  private async checkSessionResponse(response: Response, session: SessionNegotiation, requestId: string): Promise<void> {
+    if (!isSessionRejection(response)) return;
+    await this.renewSession(session);
+    throw clientError("SESSION_EXPIRED", "The session expired. Repeat the last action.", requestId);
+  }
+
+  private async reconnect(): Promise<void> {
+    const previous = this.session;
+    const session = await this.loadSession();
+    if (this.session === previous) {
+      if (previous?.csrfToken !== session.csrfToken) this.lastSequence = 0;
+      this.session = session;
+      this.sessionPromise = undefined;
     }
+    await this.ensureConnected();
   }
 
   private ensureConnected(): Promise<void> {
@@ -846,7 +864,7 @@ export class HttpTransport implements TabularisTransport {
     this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.ensureConnected().catch(() => {
+      void this.reconnect().catch(() => {
         this.scheduleReconnect();
       });
     }, delay);
@@ -877,7 +895,8 @@ const LOGIN_PATH = "/login";
 /** The security gate rejects with an empty 401, or an empty 403 for a stale CSRF token. */
 function isSessionRejection(response: Response): boolean {
   const json = response.headers.get("content-type")?.includes("application/json") ?? false;
-  return response.status === 401 || (response.status === 403 && !json);
+  return response.status === 401 || (response.status === 403 && !json) ||
+    (response.redirected && new URL(response.url).pathname === LOGIN_PATH);
 }
 
 function openLogin(url: string): void {

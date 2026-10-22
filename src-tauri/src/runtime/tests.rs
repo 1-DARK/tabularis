@@ -155,8 +155,8 @@ fn shutdown_hooks_run_without_a_tauri_runtime() {
 }
 
 
-#[test]
-fn approval_heartbeat_lives_only_for_its_runtime_lifecycle() {
+#[tokio::test]
+async fn approval_heartbeat_lives_only_for_its_runtime_lifecycle() {
     let root = tempfile::tempdir().unwrap();
     let context = RuntimeContext::new(
         Arc::new(super::paths::FixedRuntimePaths::new(
@@ -185,8 +185,8 @@ fn approval_heartbeat_lives_only_for_its_runtime_lifecycle() {
     assert!(!crate::heartbeat::is_alive_in(root.path()));
 }
 
-#[test]
-fn stopping_approval_heartbeat_preserves_another_process_heartbeat() {
+#[tokio::test]
+async fn stopping_approval_heartbeat_preserves_another_process_heartbeat() {
     let root = tempfile::tempdir().unwrap();
     let context = RuntimeContext::new(
         Arc::new(super::paths::FixedRuntimePaths::new(
@@ -209,8 +209,8 @@ fn stopping_approval_heartbeat_preserves_another_process_heartbeat() {
     assert_eq!(saved, replacement);
 }
 
-#[test]
-fn stopping_one_approval_host_preserves_liveness_for_another() {
+#[tokio::test]
+async fn stopping_one_approval_host_preserves_liveness_for_another() {
     let root = tempfile::tempdir().unwrap();
     let desktop = crate::heartbeat::spawn_in(root.path().to_path_buf());
     let web = crate::heartbeat::spawn_in(root.path().to_path_buf());

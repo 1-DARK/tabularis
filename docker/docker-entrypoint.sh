@@ -99,6 +99,9 @@ for origin in $(printf '%s' "${TABULARIS_ALLOWED_ORIGINS:-}" | tr ',' ' '); do
     origin="${origin%/}"
     [ "$origin" = "$public_url" ] || set -- "$@" --allowed-origin "$origin"
 done
+for proxy in $(printf '%s' "${TABULARIS_TRUSTED_PROXIES:-}" | tr ',' ' '); do
+    set -- "$@" --trusted-proxy "$proxy"
+done
 for root in $(printf '%s' "${TABULARIS_SERVER_FILE_ROOTS:-}" | tr ',' ' '); do
     set -- "$@" --server-file-browser-root "$root"
 done

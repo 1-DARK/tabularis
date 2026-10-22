@@ -51,6 +51,7 @@ const CROSS_ORIGIN_RESOURCE_POLICY: HeaderName =
     HeaderName::from_static("cross-origin-resource-policy");
 
 pub struct WebServerOptions {
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     pub host: String,
     pub port: u16,
     pub web_root: PathBuf,
@@ -121,6 +122,7 @@ pub async fn run(options: WebServerOptions) -> Result<(), String> {
             };
             let security = LocalSessionSecurity::new_remote(
                 RemoteSessionSecurityConfig {
+                    trusted_proxies: options.trusted_proxies.clone(),
                     public_origin: public_url.clone(),
                     allowed_origins: options.allowed_origins.clone(),
                     session_ttl: LocalSessionSecurityConfig::default().session_ttl,
@@ -435,7 +437,7 @@ async fn login(
         );
         return login_page_response(StatusCode::UNAUTHORIZED, Some("Invalid credentials"));
     };
-    let client = super::auth::login_client(
+    let client = state.security.login_client(
         peer.map(|ConnectInfo(address)| address.ip()),
         headers
             .get("x-forwarded-for")

@@ -52,6 +52,7 @@ impl RuntimeSecrets for TestRuntimeSecrets {
 #[test]
 fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
     let config = RemoteSessionSecurityConfig {
+        trusted_proxies: Vec::new(),
         public_origin: "https://tabularis.example.com".to_string(),
         allowed_origins: vec![
             "https://tabularis.example.com".to_string(),
@@ -159,6 +160,7 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
 fn bounds_the_session_store_by_expiring_the_oldest_session() {
     let proxy_security = LocalSessionSecurity::new_remote(
         RemoteSessionSecurityConfig {
+        trusted_proxies: Vec::new(),
             public_origin: "https://tabularis.example.com".to_string(),
             allowed_origins: vec!["https://tabularis.example.com".to_string()],
             session_ttl: Duration::from_secs(60),
@@ -601,6 +603,7 @@ async fn rejects_non_loopback_binding_without_explicit_remote_authentication() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::write(temp.path().join("index.html"), "Tabularis").unwrap();
     let error = server::run(server::WebServerOptions {
+        trusted_proxies: Vec::new(),
         host: "0.0.0.0".to_string(),
         port: 0,
         web_root: temp.path().to_path_buf(),
@@ -628,6 +631,7 @@ async fn authenticates_remote_password_and_proxy_requests_with_auditing() {
     let log_buffer = crate::runtime::bootstrap::initialize_logging(false);
     let public_origin = "https://tabularis.example.com";
     let remote_config = RemoteSessionSecurityConfig {
+        trusted_proxies: Vec::new(),
         public_origin: public_origin.to_string(),
         allowed_origins: vec![public_origin.to_string()],
         session_ttl: Duration::from_secs(60),
@@ -3080,19 +3084,20 @@ async fn serves_plugin_assets_from_the_local_plugin_directory_with_custom_data_s
 #[test]
 fn login_attempts_are_counted_per_client_behind_a_proxy() {
     use super::auth::login_client;
-    let public: std::net::IpAddr = "203.0.113.7".parse().unwrap();
-    let proxy: std::net::IpAddr = "172.18.0.3".parse().unwrap();
-    // A direct client cannot pick its bucket with a forged header.
-    assert_eq!(login_client(Some(public), Some("198.51.100.1")), public);
-    // Behind a private proxy, the address the proxy appended counts.
-    assert_eq!(
-        login_client(Some(proxy), Some("198.51.100.1, 198.51.100.2")),
-        "198.51.100.2".parse::<std::net::IpAddr>().unwrap()
-    );
-    assert_eq!(login_client(Some(proxy), None), proxy);
-    assert_eq!(login_client(Some(proxy), Some("garbage")), proxy);
-    assert_eq!(
-        login_client(Some("::1".parse().unwrap()), Some("2001:db8::7")),
-        "2001:db8::7".parse::<std::net::IpAddr>().unwrap()
-    );
+    let public = "203.0.113.7".parse().unwrap();
+    let proxy = "172.18.0.3".parse().unwrap();
+    let trusted = ["172.18.0.3/32".parse().unwrap(), "::1/128".parse().unwrap()];
+    assert_eq!(login_client(Some(public), Some("198.51.100.1"), &trusted), public);
+    assert_eq!(login_client(Some(proxy), Some("198.51.100.1, 198.51.100.2"), &trusted), "198.51.100.2".parse::<std::net::IpAddr>().unwrap());
+    assert_eq!(login_client(Some(proxy), None, &trusted), proxy);
+    assert_eq!(login_client(Some(proxy), Some("garbage"), &trusted), proxy);
+    assert_eq!(login_client(Some("::1".parse().unwrap()), Some("2001:db8::7"), &trusted), "2001:db8::7".parse::<std::net::IpAddr>().unwrap());
+}
+
+#[test]
+fn private_clients_cannot_spoof_the_login_bucket_without_explicit_proxy_trust() {
+    for address in ["127.0.0.1", "172.18.0.3", "::1", "fd00::1"] {
+        let peer = address.parse().unwrap();
+        assert_eq!(super::auth::login_client(Some(peer), Some("198.51.100.1"), &[]), peer);
+    }
 }

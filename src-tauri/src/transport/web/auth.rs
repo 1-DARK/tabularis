@@ -52,6 +52,7 @@ impl Default for LoginRateLimitConfig {
 
 #[derive(Clone, Debug)]
 pub struct RemoteSessionSecurityConfig {
+    pub trusted_proxies: Vec<ipnet::IpNet>,
     pub public_origin: String,
     pub allowed_origins: Vec<String>,
     pub session_ttl: Duration,
@@ -94,6 +95,7 @@ pub struct LocalSessionSecurity {
 }
 
 struct SecurityInner {
+    trusted_proxies: Vec<ipnet::IpNet>,
     public_origin: String,
     public_host: String,
     allowed_origins: HashSet<String>,
@@ -183,6 +185,7 @@ impl LocalSessionSecurity {
         };
         let security = Self {
             inner: Arc::new(SecurityInner {
+                trusted_proxies: Vec::new(),
                 public_origin: origin.clone(),
                 public_host: host.clone(),
                 allowed_origins: HashSet::from([origin]),
@@ -249,6 +252,7 @@ impl LocalSessionSecurity {
 
         Ok(Self {
             inner: Arc::new(SecurityInner {
+                trusted_proxies: config.trusted_proxies,
                 public_origin,
                 public_host,
                 allowed_origins,
@@ -327,6 +331,10 @@ impl LocalSessionSecurity {
         }
         state.bootstrap = None;
         Some(self.issue_session(&mut state, now))
+    }
+
+    pub(crate) fn login_client(&self, peer: Option<IpAddr>, forwarded_for: Option<&str>) -> IpAddr {
+        login_client(peer, forwarded_for, &self.inner.trusted_proxies)
     }
 
     pub fn authenticate_password(
@@ -487,25 +495,14 @@ impl LocalSessionSecurity {
     }
 }
 
-/// The address login attempts are counted against. Behind a reverse proxy on
-/// a loopback or private address every request comes from the proxy, so the
-/// last `X-Forwarded-For` entry, which that proxy appended, names the client.
-pub(crate) fn login_client(peer: Option<IpAddr>, forwarded_for: Option<&str>) -> IpAddr {
+/// Only explicitly configured proxies may supply the client address.
+pub(crate) fn login_client(peer: Option<IpAddr>, forwarded_for: Option<&str>, trusted_proxies: &[ipnet::IpNet]) -> IpAddr {
     let peer = peer.unwrap_or(IpAddr::from([0, 0, 0, 0]));
-    let behind_proxy = match peer {
-        IpAddr::V4(address) => {
-            address.is_loopback() || address.is_private() || address.is_link_local()
-        }
-        IpAddr::V6(address) => {
-            address.is_loopback()
-                || (address.segments()[0] & 0xfe00) == 0xfc00
-                || (address.segments()[0] & 0xffc0) == 0xfe80
-                || address
-                    .to_ipv4_mapped()
-                    .is_some_and(|mapped| mapped.is_loopback() || mapped.is_private())
-        }
+    let address = match peer {
+        IpAddr::V6(address) => address.to_ipv4_mapped().map(IpAddr::V4).unwrap_or(peer),
+        _ => peer,
     };
-    if !behind_proxy {
+    if !trusted_proxies.iter().any(|network| network.contains(&address)) {
         return peer;
     }
     forwarded_for

@@ -84,6 +84,10 @@ pub struct WebArgs {
     )]
     pub allowed_origins: Vec<String>,
 
+    /// Trust X-Forwarded-For only from this proxy network; repeat as needed
+    #[arg(long = "trusted-proxy", value_name = "CIDR", requires = "auth")]
+    pub trusted_proxies: Vec<ipnet::IpNet>,
+
     /// Grant remote sessions high-risk local-administrator capabilities
     #[arg(long, requires = "auth")]
     pub allow_high_risk: bool,

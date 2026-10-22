@@ -69,6 +69,10 @@ spec:
             - name: TABULARIS_ALLOWED_ORIGINS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with .Values.trustedProxies }}
+            - name: TABULARIS_TRUSTED_PROXIES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.serverFileBrowserRoots }}
             - name: TABULARIS_SERVER_FILE_ROOTS
               value: {{ join "," . | quote }}

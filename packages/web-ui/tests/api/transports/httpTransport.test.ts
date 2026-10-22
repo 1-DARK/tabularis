@@ -488,6 +488,71 @@ describe("HttpTransport", () => {
     expect(openLogin).toHaveBeenCalledWith("http://localhost/login");
   });
 
+  it.each(["file", "icon", "blob"] as const)("renews an expired %s upload session without retrying the upload", async (kind) => {
+    const session = { ...SESSION, capabilities: { ...SESSION.capabilities, uploads: true } };
+    const fetchRequest = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(session))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse({ ...session, csrfToken: "fresh-csrf" }));
+    const transport = new HttpTransport({ fetch: fetchRequest });
+    const file = new Blob(["{}"]);
+    const upload = kind === "file"
+      ? transport.uploadFile({ fileName: "notebook.json", purpose: "notebook-import", contents: file })
+      : kind === "icon" ? transport.uploadConnectionIcon(file) : transport.uploadBlob(file);
+    await expect(upload).rejects.toMatchObject({ code: "SESSION_EXPIRED" });
+    expect((await transport.initialize()).csrfToken).toBe("fresh-csrf");
+    expect(fetchRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it("redirects an expired download session to password login instead of returning HTML", async () => {
+    const session = { ...SESSION, capabilities: { ...SESSION.capabilities, downloads: true } };
+    const loginPage = () => {
+      const response = new Response("<html>Login</html>", { headers: { "content-type": "text/html" } });
+      Object.defineProperties(response, { redirected: { value: true }, url: { value: "http://localhost/login" } });
+      return response;
+    };
+    const fetchRequest = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(session))
+      .mockResolvedValueOnce(loginPage())
+      .mockResolvedValueOnce(loginPage());
+    const openLogin = vi.fn();
+    const transport = new HttpTransport({ baseUrl: "http://localhost", fetch: fetchRequest, openLogin });
+    await expect(transport.consumeDownload("expired-token")).rejects.toMatchObject({ code: "LOGIN_REQUIRED" });
+    expect(openLogin).toHaveBeenCalledWith("http://localhost/login");
+  });
+
+  it("accepts new event sequences after a server restart without an RPC call", async () => {
+    vi.useFakeTimers();
+    const sockets: FakeWebSocket[] = [];
+    let negotiations = 0;
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({
+        ...SESSION, csrfToken: `csrf-${++negotiations}`,
+      })),
+      reconnectDelayMs: 100,
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    const handler = vi.fn();
+    await transport.initialize();
+    const subscribed = transport.subscribe("connection-health-failed", handler);
+    await Promise.resolve();
+    sockets[0].open();
+    const unsubscribe = await subscribed;
+    const event = { type: "event", event: "connection-health-failed", payload: { connectionId: "one", error: "offline" } };
+    sockets[0].message({ ...event, sequence: 100 });
+    sockets[0].disconnect();
+    await vi.advanceTimersByTimeAsync(100);
+    sockets[1].open();
+    sockets[1].message({ ...event, sequence: 1 });
+    expect(handler).toHaveBeenCalledTimes(2);
+    expect((await transport.initialize()).csrfToken).toBe("csrf-2");
+    unsubscribe();
+  });
+
   it("uses the same RPC path for tracked unmigrated commands", async () => {
     const fetchRequest = vi
       .fn<typeof fetch>()
@@ -519,7 +584,7 @@ describe("HttpTransport", () => {
     vi.useFakeTimers();
     const sockets: FakeWebSocket[] = [];
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse({
         ...SESSION,
         access: { remote: true, authorizationLevel: "database", highRiskCapabilities: false },
       })),
@@ -568,7 +633,7 @@ describe("HttpTransport", () => {
     const socket = new FakeWebSocket();
     socket.acknowledgeSubscriptions = false;
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(SESSION)),
       createWebSocket: () => socket,
     });
     await transport.initialize();
@@ -586,7 +651,7 @@ describe("HttpTransport", () => {
   it("keeps established subscriptions usable after a later subscription is rejected", async () => {
     const socket = new FakeWebSocket();
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(SESSION)),
       createWebSocket: () => socket,
     });
     await transport.initialize();
@@ -618,7 +683,7 @@ describe("HttpTransport", () => {
     const socket = new FakeWebSocket();
     socket.acknowledgeSubscriptions = false;
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(SESSION)),
       createWebSocket: () => socket,
     });
     await transport.initialize();
@@ -633,7 +698,7 @@ describe("HttpTransport", () => {
   it("ignores the close of a socket that a new subscription already replaced", async () => {
     const sockets: FakeWebSocket[] = [];
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(SESSION)),
       createWebSocket: () => {
         const socket = new FakeWebSocket();
         sockets.push(socket);
@@ -668,7 +733,7 @@ describe("HttpTransport", () => {
   it("does not reuse the connection attempt of a socket that was closed before opening", async () => {
     const sockets: FakeWebSocket[] = [];
     const transport = new HttpTransport({
-      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      fetch: vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(SESSION)),
       createWebSocket: () => {
         const socket = new FakeWebSocket();
         sockets.push(socket);
@@ -695,7 +760,7 @@ describe("HttpTransport", () => {
     vi.useFakeTimers();
     const fetchRequest = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(jsonResponse(SESSION));
+      .mockImplementation(async () => jsonResponse(SESSION));
     const sockets: FakeWebSocket[] = [];
     const transport = new HttpTransport({
       baseUrl: "http://127.0.0.1:8080",

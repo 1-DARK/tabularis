@@ -52,6 +52,7 @@ jsonschema = { version = "0.18", default-features = false }
 fs2 = "0.4"
 serde = { version = "1.0", features = ["derive"] }
 bytes = "1"
+ipnet = "2"
 toon-format = { version = "0.5.0", default-features = false }
 log = { version = "0.4", features = ["std"] }
 tauri = { version = "2.10.2", features = ["protocol-asset", "devtools"], optional = true }
