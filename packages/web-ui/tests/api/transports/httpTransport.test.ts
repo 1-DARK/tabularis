@@ -559,6 +559,67 @@ describe("HttpTransport", () => {
     await rejected;
   });
 
+  it("ignores the close of a socket that a new subscription already replaced", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    await transport.initialize();
+
+    const first = transport.subscribe("connection-health-failed", vi.fn());
+    await Promise.resolve();
+    sockets[0].open();
+    (await first)();
+
+    // The page remounts before the old socket reports its close.
+    const handler = vi.fn();
+    const second = transport.subscribe("connection-health-failed", handler);
+    await Promise.resolve();
+    expect(sockets).toHaveLength(2);
+    sockets[0].disconnect();
+    sockets[1].open();
+    await expect(second).resolves.toBeTypeOf("function");
+
+    sockets[1].message({
+      type: "event",
+      event: "connection-health-failed",
+      payload: { connectionId: "connection-1", error: "offline" },
+      sequence: 1,
+    });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("does not reuse the connection attempt of a socket that was closed before opening", async () => {
+    const sockets: FakeWebSocket[] = [];
+    const transport = new HttpTransport({
+      fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(SESSION)),
+      createWebSocket: () => {
+        const socket = new FakeWebSocket();
+        sockets.push(socket);
+        return socket;
+      },
+    });
+    await transport.initialize();
+
+    const first = transport.subscribe("connection-health-failed", vi.fn());
+    await Promise.resolve();
+    sockets[0].open();
+    (await first)();
+    const second = transport.subscribe("connection-health-failed", vi.fn());
+    await Promise.resolve();
+    // The replaced socket fails before it ever opened.
+    sockets[0].readyState = 0;
+    sockets[0].onerror?.(new Event("error"));
+    sockets[0].disconnect();
+    sockets[1].open();
+    await expect(second).resolves.toBeTypeOf("function");
+  });
+
   it("subscribes, dispatches typed events, and replays after reconnect", async () => {
     vi.useFakeTimers();
     const fetchRequest = vi

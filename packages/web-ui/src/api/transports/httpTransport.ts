@@ -472,10 +472,12 @@ export class HttpTransport implements TabularisTransport {
     const wasConnected = this.socket?.readyState === OPEN;
     handlers.add(handler);
     this.intentionalClose = false;
+    let ownPending: { resolve: () => void; reject: (error: unknown) => void } | undefined;
     const confirmation = firstForEvent || this.pendingSubscriptions.has(event)
       ? new Promise<void>((resolve, reject) => {
+          ownPending = { resolve, reject };
           const pending = this.pendingSubscriptions.get(event) ?? [];
-          pending.push({ resolve, reject });
+          pending.push(ownPending);
           this.pendingSubscriptions.set(event, pending);
         })
       : Promise.resolve();
@@ -491,7 +493,13 @@ export class HttpTransport implements TabularisTransport {
       ]);
     } catch (error) {
       const normalized = normalizeTabularisError(error, "EVENT_CONNECTION_FAILED");
-      this.rejectPendingSubscriptions(normalized);
+      // Only this call failed; a newer subscription may already wait on a new socket.
+      const pending = this.pendingSubscriptions.get(event);
+      if (pending && ownPending) {
+        const remaining = pending.filter((entry) => entry !== ownPending);
+        if (remaining.length > 0) this.pendingSubscriptions.set(event, remaining);
+        else this.pendingSubscriptions.delete(event);
+      }
       this.removeSubscription(event, handler);
       throw normalized;
     }
@@ -632,56 +640,57 @@ export class HttpTransport implements TabularisTransport {
     if (this.socket?.readyState === OPEN) return Promise.resolve();
     if (this.connectionPromise) return this.connectionPromise;
 
-    this.connectionPromise = new Promise<void>((resolve, reject) => {
+    let created = false;
+    const connection = new Promise<void>((resolve, reject) => {
       let connected = false;
       let socket: WebSocketLike;
       try {
         socket = this.createSocket(this.websocketUrl());
       } catch (error) {
-        this.connectionPromise = null;
         reject(normalizeTabularisError(error, "EVENT_CONNECTION_FAILED"));
         this.scheduleReconnect();
         return;
       }
+      created = true;
       this.socket = socket;
+      // A socket closed by removeSubscription may still report events after a
+      // new one replaced it; those must not touch the new socket's state.
+      const current = () => this.socket === socket;
+      const failBeforeOpen = (message: string) => {
+        if (connected) return;
+        if (this.connectionPromise === connection) this.connectionPromise = null;
+        reject(clientError("EVENT_CONNECTION_FAILED", message));
+      };
 
       socket.onopen = () => {
+        if (!current()) {
+          socket.close();
+          return;
+        }
         connected = true;
         this.reconnectAttempt = 0;
         this.connectionPromise = null;
         this.subscribeAll();
         resolve();
       };
-      socket.onmessage = (message) => this.handleSocketMessage(message.data);
+      socket.onmessage = (message) => {
+        if (current()) this.handleSocketMessage(message.data);
+      };
       socket.onerror = () => {
-        if (!connected) {
-          this.connectionPromise = null;
-          reject(
-            clientError(
-              "EVENT_CONNECTION_FAILED",
-              "The WebSocket event connection failed",
-            ),
-          );
-        }
+        failBeforeOpen("The WebSocket event connection failed");
       };
       socket.onclose = () => {
-        if (!connected) {
-          this.connectionPromise = null;
-          reject(
-            clientError(
-              "EVENT_CONNECTION_FAILED",
-              "The WebSocket event connection closed before opening",
-            ),
-          );
-        }
-        if (this.socket === socket) this.socket = null;
+        failBeforeOpen("The WebSocket event connection closed before opening");
+        if (!current()) return;
+        this.socket = null;
         this.rejectPendingSubscriptions(clientError(
           "EVENT_CONNECTION_FAILED", "The WebSocket event connection closed",
         ));
         this.scheduleReconnect();
       };
     });
-    return this.connectionPromise;
+    if (created) this.connectionPromise = connection;
+    return connection;
   }
 
   private subscribeAll(): void {
@@ -712,6 +721,7 @@ export class HttpTransport implements TabularisTransport {
       this.clearReconnectTimer();
       this.socket?.close();
       this.socket = null;
+      this.connectionPromise = null;
     }
   }
 
