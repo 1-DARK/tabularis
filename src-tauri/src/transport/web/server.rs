@@ -13,7 +13,7 @@ use crate::application::{ApplicationApi, AuthorizationLevel};
 use crate::cli::WebAuthMode;
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Extension, Path, Query, Request, State};
+use axum::extract::{ConnectInfo, Extension, Path, Query, Request, State};
 use axum::http::header::{
     CACHE_CONTROL, CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_SECURITY_POLICY, CONTENT_TYPE,
     COOKIE, HOST, LOCATION, ORIGIN, REFERRER_POLICY, RETRY_AFTER, SET_COOKIE,
@@ -27,6 +27,7 @@ use axum::{Json, Router};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -240,7 +241,11 @@ where
     );
     // Keep reclamation owned by the server future, including cancellation and shutdown.
     tokio::select! {
-        result = async { axum::serve(listener, router).with_graceful_shutdown(shutdown).await } => result,
+        result = async {
+            axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
+                .with_graceful_shutdown(shutdown)
+                .await
+        } => result,
         _ = reclaim_expired_sessions(state) => unreachable!("session reclamation runs until the server stops"),
     }
 }
@@ -409,6 +414,8 @@ async fn login_page(State(state): State<WebServerState>) -> Response {
 async fn login(
     State(state): State<WebServerState>,
     Extension(request_id): Extension<RequestId>,
+    peer: Option<ConnectInfo<SocketAddr>>,
+    headers: HeaderMap,
     body: Bytes,
 ) -> Response {
     if !state.security.password_authentication() {
@@ -423,7 +430,13 @@ async fn login(
         );
         return login_page_response(StatusCode::UNAUTHORIZED, Some("Invalid credentials"));
     };
-    match state.security.authenticate_password(&password) {
+    let client = super::auth::login_client(
+        peer.map(|ConnectInfo(address)| address.ip()),
+        headers
+            .get("x-forwarded-for")
+            .and_then(|value| value.to_str().ok()),
+    );
+    match state.security.authenticate_password(&password, client) {
         Ok(session) => {
             audit_event(
                 "authentication",

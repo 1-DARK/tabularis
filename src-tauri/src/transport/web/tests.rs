@@ -104,18 +104,24 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
     assert!(password_security.origin_allowed("https://admin.example.com"));
     assert!(password_security.host_allowed("tabularis.example.com"));
     assert!(!password_security.origin_allowed("https://attacker.invalid"));
+    let attacker: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+    let user: std::net::IpAddr = "198.51.100.20".parse().unwrap();
     assert!(matches!(
-        password_security.authenticate_password("wrong"),
+        password_security.authenticate_password("wrong", attacker),
         Err(AuthenticationError::InvalidCredentials)
     ));
     assert!(matches!(
-        password_security.authenticate_password("still-wrong"),
+        password_security.authenticate_password("still-wrong", attacker),
         Err(AuthenticationError::InvalidCredentials)
     ));
     assert!(matches!(
-        password_security.authenticate_password("correct horse battery staple"),
+        password_security.authenticate_password("correct horse battery staple", attacker),
         Err(AuthenticationError::RateLimited)
     ));
+    // The lockout is per client: another client still logs in.
+    assert!(password_security
+        .authenticate_password("correct horse battery staple", user)
+        .is_ok());
 
     let password_security = LocalSessionSecurity::new_remote(
         config.clone(),
@@ -123,7 +129,7 @@ fn enforces_remote_credentials_origins_rate_limits_and_capability_policy() {
     )
     .unwrap();
     let issued = password_security
-        .authenticate_password("correct horse battery staple")
+        .authenticate_password("correct horse battery staple", user)
         .unwrap();
     let session = password_security
         .authenticate(&issued.cookie_value)
@@ -3069,4 +3075,24 @@ async fn serves_plugin_assets_from_the_local_plugin_directory_with_custom_data_s
     server.await.unwrap().unwrap();
     assert_eq!(status, reqwest::StatusCode::OK);
     assert_eq!(body, "window.pluginLoaded = true;");
+}
+
+#[test]
+fn login_attempts_are_counted_per_client_behind_a_proxy() {
+    use super::auth::login_client;
+    let public: std::net::IpAddr = "203.0.113.7".parse().unwrap();
+    let proxy: std::net::IpAddr = "172.18.0.3".parse().unwrap();
+    // A direct client cannot pick its bucket with a forged header.
+    assert_eq!(login_client(Some(public), Some("198.51.100.1")), public);
+    // Behind a private proxy, the address the proxy appended counts.
+    assert_eq!(
+        login_client(Some(proxy), Some("198.51.100.1, 198.51.100.2")),
+        "198.51.100.2".parse::<std::net::IpAddr>().unwrap()
+    );
+    assert_eq!(login_client(Some(proxy), None), proxy);
+    assert_eq!(login_client(Some(proxy), Some("garbage")), proxy);
+    assert_eq!(
+        login_client(Some("::1".parse().unwrap()), Some("2001:db8::7")),
+        "2001:db8::7".parse::<std::net::IpAddr>().unwrap()
+    );
 }

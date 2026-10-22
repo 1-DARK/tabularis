@@ -24,7 +24,7 @@ tabularis web \
   --allowed-origin https://tabularis.example.com
 ```
 
-Passwords must contain at least 12 characters. The server provides a minimal, same-origin `/login` form, stores only a SHA-256 verifier in runtime memory, and exchanges valid credentials for an `HttpOnly`, `SameSite=Strict`, `Secure` session cookie. Five failed attempts within one minute trigger a five-minute process-wide login lockout.
+Passwords must contain at least 12 characters. The server provides a minimal, same-origin `/login` form, stores only a SHA-256 verifier in runtime memory, and exchanges valid credentials for an `HttpOnly`, `SameSite=Strict`, `Secure` session cookie. Five failed attempts from one client within one minute lock that client out for five minutes; other clients can still log in. Behind a reverse proxy on a loopback or private address, the client is the last `X-Forwarded-For` entry, so the proxy must append the client address to that header (Nginx `$proxy_add_x_forwarded_for` and Caddy do).
 
 ## Authenticated reverse-proxy mode
 
@@ -47,7 +47,7 @@ After authenticating the user, the proxy must replace—not append—the followi
 - `X-Tabularis-User`: the authenticated, non-empty user identifier;
 - `X-Tabularis-Proxy-Secret`: the shared deployment secret.
 
-Tabularis removes both headers before dispatching application requests. Missing or invalid proxy credentials are rejected and failed secret checks use the same rate limiter as password logins.
+Tabularis removes both headers before dispatching application requests. Missing or invalid proxy credentials are rejected. Secret checks are not rate-limited: a secret of 32 or more random characters cannot be guessed online, and a lockout would let anyone who reaches the port deny every proxied user.
 
 Example Nginx location after the deployment's own `auth_request`, OIDC, or basic-auth configuration:
 
@@ -127,7 +127,7 @@ Protect and retain logs according to the deployment's incident-response policy. 
 |---|---|---|---|
 | Accidental LAN or internet exposure | Remote binding is intentional | Non-loopback binds fail without configured remote authentication | Firewall the upstream listener |
 | Credential theft in transit | Credentials and cookies remain confidential | HTTPS public origins and `Secure` cookies | Configure valid TLS and secure proxy-to-client ciphers |
-| Password guessing | Bound online attempts | Five-failure window and timed lockout | Use a unique password and monitor audit events |
+| Password guessing | Bound online attempts | Five-failure window and timed lockout per client | Use a unique password and monitor audit events |
 | Proxy-header spoofing | Only the trusted proxy can assert identity | Shared proxy secret and stripped headers | Prevent direct access and protect the proxy secret |
 | Cross-site request forgery | State changes originate from an allowed UI | Strict SameSite cookie, explicit origins, CSRF token | Keep the allowlist minimal |
 | DNS rebinding or Host confusion | Requests reach only configured virtual hosts | Explicit host allowlist | Preserve the original public Host header |

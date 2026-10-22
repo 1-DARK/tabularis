@@ -4,6 +4,7 @@ use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use url::{Host, Url};
@@ -122,9 +123,20 @@ struct SessionSecurityConfig {
 struct SecurityState {
     bootstrap: Option<ExpiringToken>,
     sessions: HashMap<TokenHash, SessionRecord>,
-    failed_logins: VecDeque<Instant>,
+    login_attempts: HashMap<IpAddr, LoginAttempts>,
+}
+
+/// Failed password logins of one client. Counting per client keeps one
+/// attacker from locking every user out.
+#[derive(Default)]
+struct LoginAttempts {
+    failures: VecDeque<Instant>,
     blocked_until: Option<Instant>,
 }
+
+/// Clients whose failures are remembered at once; the least recently failing
+/// one is forgotten first.
+const MAX_TRACKED_LOGIN_CLIENTS: usize = 4096;
 
 struct ExpiringToken {
     hash: TokenHash,
@@ -187,8 +199,7 @@ impl LocalSessionSecurity {
                 state: Mutex::new(SecurityState {
                     bootstrap: Some(bootstrap),
                     sessions: HashMap::new(),
-                    failed_logins: VecDeque::new(),
-                    blocked_until: None,
+                    login_attempts: HashMap::new(),
                 }),
             }),
         };
@@ -254,8 +265,7 @@ impl LocalSessionSecurity {
                 state: Mutex::new(SecurityState {
                     bootstrap: None,
                     sessions: HashMap::new(),
-                    failed_logins: VecDeque::new(),
-                    blocked_until: None,
+                    login_attempts: HashMap::new(),
                 }),
             }),
         })
@@ -322,11 +332,12 @@ impl LocalSessionSecurity {
     pub fn authenticate_password(
         &self,
         candidate: &str,
+        client: IpAddr,
     ) -> Result<IssuedSession, AuthenticationError> {
         let Authentication::Password(expected) = self.inner.authentication else {
             return Err(AuthenticationError::UnsupportedMode);
         };
-        self.authenticate_remote(expected, candidate)
+        self.authenticate_remote(expected, candidate, client)
     }
 
     pub fn authenticate_proxy(
@@ -387,32 +398,51 @@ impl LocalSessionSecurity {
         &self,
         expected: TokenHash,
         candidate: &str,
+        client: IpAddr,
     ) -> Result<IssuedSession, AuthenticationError> {
         let now = Instant::now();
+        let limit = &self.inner.config.rate_limit;
         let mut state = self.lock_state();
-        if state
-            .blocked_until
-            .is_some_and(|blocked_until| blocked_until > now)
-        {
+        state.login_attempts.retain(|_, attempts| {
+            attempts.blocked_until.is_some_and(|until| until > now)
+                || attempts
+                    .failures
+                    .back()
+                    .is_some_and(|last| now.duration_since(*last) < limit.window)
+        });
+        let attempts = state.login_attempts.entry(client).or_default();
+        if attempts.blocked_until.is_some_and(|until| until > now) {
             return Err(AuthenticationError::RateLimited);
         }
-        state.blocked_until = None;
-        while state.failed_logins.front().is_some_and(|attempt| {
-            now.duration_since(*attempt) >= self.inner.config.rate_limit.window
-        }) {
-            state.failed_logins.pop_front();
+        attempts.blocked_until = None;
+        while attempts
+            .failures
+            .front()
+            .is_some_and(|attempt| now.duration_since(*attempt) >= limit.window)
+        {
+            attempts.failures.pop_front();
         }
 
         if hash_token(candidate) != expected {
-            state.failed_logins.push_back(now);
-            if state.failed_logins.len() >= self.inner.config.rate_limit.max_failures {
-                state.blocked_until = Some(now + self.inner.config.rate_limit.lockout);
+            attempts.failures.push_back(now);
+            if attempts.failures.len() >= limit.max_failures {
+                attempts.blocked_until = Some(now + limit.lockout);
+            }
+            if state.login_attempts.len() > MAX_TRACKED_LOGIN_CLIENTS {
+                let oldest = state
+                    .login_attempts
+                    .iter()
+                    .filter(|(address, _)| **address != client)
+                    .min_by_key(|(_, attempts)| attempts.failures.back().copied())
+                    .map(|(address, _)| *address);
+                if let Some(oldest) = oldest {
+                    state.login_attempts.remove(&oldest);
+                }
             }
             return Err(AuthenticationError::InvalidCredentials);
         }
 
-        state.failed_logins.clear();
-        state.blocked_until = None;
+        state.login_attempts.remove(&client);
         Ok(self.issue_session(&mut state, now))
     }
 
@@ -455,6 +485,33 @@ impl LocalSessionSecurity {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
     }
+}
+
+/// The address login attempts are counted against. Behind a reverse proxy on
+/// a loopback or private address every request comes from the proxy, so the
+/// last `X-Forwarded-For` entry, which that proxy appended, names the client.
+pub(crate) fn login_client(peer: Option<IpAddr>, forwarded_for: Option<&str>) -> IpAddr {
+    let peer = peer.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+    let behind_proxy = match peer {
+        IpAddr::V4(address) => {
+            address.is_loopback() || address.is_private() || address.is_link_local()
+        }
+        IpAddr::V6(address) => {
+            address.is_loopback()
+                || (address.segments()[0] & 0xfe00) == 0xfc00
+                || (address.segments()[0] & 0xffc0) == 0xfe80
+                || address
+                    .to_ipv4_mapped()
+                    .is_some_and(|mapped| mapped.is_loopback() || mapped.is_private())
+        }
+    };
+    if !behind_proxy {
+        return peer;
+    }
+    forwarded_for
+        .and_then(|header| header.rsplit(',').next())
+        .and_then(|last| last.trim().parse().ok())
+        .unwrap_or(peer)
 }
 
 impl AuthenticatedSession {
