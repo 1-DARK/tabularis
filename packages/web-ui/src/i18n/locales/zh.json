@@ -1129,6 +1129,7 @@
     "dbNameRequired": "数据库名称是必需的",
     "connectionUriRequiresKeychain": "连接 URI 必须保存在操作系统密钥链中。请启用“在密钥链中保存密码”后继续。",
     "connectionUriRequired": "连接 URI 是必需的",
+    "connectionUriStored": "已保存在系统钥匙串中。粘贴新的连接字符串即可替换。",
     "connectionString": "?????",
     "connectionStringPlaceholder": "?? mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "???????",

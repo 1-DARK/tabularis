@@ -189,25 +189,3 @@ pub async fn save_connection_icon(
         .map_err(|e| e.to_string())
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn delete_connection_icon(
-    _app: AppHandle,
-    relative_path: String,
-) -> Result<(), String> {
-    let data_dir = crate::paths::get_app_data_dir();
-    let icons_dir = data_dir.join("connection-icons");
-    let full = data_dir.join(&relative_path);
-    // If the file doesn't exist, treat as a no-op (don't canonicalize a non-existent path).
-    if !full.exists() {
-        return Ok(());
-    }
-    let canon_icons = icons_dir.canonicalize().map_err(|e| e.to_string())?;
-    let canon_full = full.canonicalize().map_err(|e| e.to_string())?;
-    if !canon_full.starts_with(&canon_icons) {
-        return Err("path outside connection-icons".into());
-    }
-    fs::remove_file(&canon_full).map_err(|e| e.to_string())?;
-    Ok(())
-}
-

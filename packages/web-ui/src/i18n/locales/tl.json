@@ -1183,6 +1183,7 @@
     "dbNameRequired": "Kailangan ang pangalan ng database",
     "connectionUriRequiresKeychain": "Dapat i-save ang mga connection URI sa OS keychain. I-enable ang “I-save ang mga password sa Keychain” para magpatuloy.",
     "connectionUriRequired": "Kailangan ang connection URI",
+    "connectionUriStored": "Naka-save sa keychain ng OS. Mag-paste ng bagong connection string para palitan ito.",
     "connectionString": "Connection string",
     "connectionStringPlaceholder": "hal. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Halimbawa ng connection string",

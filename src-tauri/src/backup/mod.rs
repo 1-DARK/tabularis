@@ -609,12 +609,16 @@ pub async fn set_connections_backup_target_password<R: Runtime>(
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn run_connections_backup<R: Runtime>(app: AppHandle<R>) -> Result<String, String> {
-    Ok(
-        run_backup_for_runtime(app.state::<RuntimeContext>().inner(), "manual")
-            .await?
-            .location,
+pub async fn run_connections_backup<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<serde_json::Value, String> {
+    crate::application::connection_files::execute(
+        &app.state::<RuntimeContext>(),
+        &app.state::<std::sync::Arc<crate::runtime::state::ApplicationState>>(),
+        None,
+        crate::application::connection_files::ConnectionFilesCommand::RunBackup,
     )
+    .await
 }
 
 fn load_runtime_config(runtime: &RuntimeContext) -> crate::config::AppConfig {

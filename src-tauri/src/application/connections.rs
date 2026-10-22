@@ -131,6 +131,12 @@ pub enum ConnectionCommand {
     TestConnection {
         request: TestConnectionRequest,
     },
+    ListDatabases {
+        request: TestConnectionRequest,
+    },
+    CreateSqliteDatabase {
+        path: String,
+    },
 }
 
 pub async fn execute(
@@ -342,6 +348,12 @@ pub async fn execute_for_session(
         ConnectionCommand::TestConnection { request } => {
             json(test_connection(runtime, session_id, request).await?)
         }
+        ConnectionCommand::ListDatabases { request } => {
+            json(list_databases(runtime, session_id, request).await?)
+        }
+        ConnectionCommand::CreateSqliteDatabase { path } => {
+            json(create_sqlite_database(runtime, state, path).await?)
+        }
     }
 }
 
@@ -372,7 +384,7 @@ pub(crate) fn resolve_saved_connection_params(
     let driver_id = saved.params.driver.clone();
     let plugin_secrets = load_plugin_secrets(runtime, &saved);
     let mut params = saved.params;
-    restore_secrets(runtime, connection_id, &mut params)?;
+    restore_secrets_for_connect(runtime, connection_id, &mut params)?;
     params.extra.extend(plugin_secrets);
     params.connection_id = Some(connection_id.to_string());
     let params =
@@ -483,6 +495,19 @@ fn validate_environment(environment: Option<String>) -> Result<Option<String>, S
     }
 }
 
+/// AWS IAM auth needs a fresh RDS token in the password field.
+pub(crate) fn require_iam_token(iam_auth: bool, password: Option<&str>) -> Result<(), String> {
+    if iam_auth && password.unwrap_or("").is_empty() {
+        return Err(
+            "AWS IAM authentication is enabled but the password field is empty. \
+             Paste the output of `aws rds generate-db-auth-token` into the \
+             password field and try again. Tokens expire every 15 minutes."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn secret_account(connection_id: &str, suffix: &str) -> String {
     format!("{connection_id}:{suffix}")
 }
@@ -491,12 +516,24 @@ fn non_empty(value: Option<&String>) -> Option<&str> {
     value.map(String::as_str).filter(|value| !value.is_empty())
 }
 
+fn non_empty_trimmed(value: Option<&String>) -> Option<&str> {
+    value
+        .map(String::as_str)
+        .filter(|value| !value.trim().is_empty())
+}
+
 fn persist_secrets_for_create(
     runtime: &RuntimeContext,
     id: &str,
     params: &mut ConnectionParams,
     writes: &mut SecretWrites,
 ) -> Result<(), String> {
+    if !params.ssh_enabled.unwrap_or(false) {
+        params.ssh_password = None;
+        params.ssh_key_passphrase = None;
+    } else if non_empty_trimmed(params.ssh_key_passphrase.as_ref()).is_none() {
+        params.ssh_key_passphrase = None;
+    }
     if let Some(uri) = non_empty(params.connection_uri.as_ref()) {
         if !params.save_in_keychain.unwrap_or(false) {
             return Err("Connection URIs must be stored in the OS keychain".to_string());
@@ -573,6 +610,10 @@ fn merge_and_persist_update_secrets(
     }
     params.connection_uri = None;
 
+    // An empty passphrase field means "unchanged", like an omitted one.
+    if non_empty_trimmed(params.ssh_key_passphrase.as_ref()).is_none() {
+        params.ssh_key_passphrase = None;
+    }
     // Browser responses redact secrets; an omitted field must keep its saved value.
     for (field, previous, suffix) in [
         (&mut params.password, &existing.password, DB_SECRET_SUFFIX),
@@ -594,6 +635,11 @@ fn merge_and_persist_update_secrets(
                 previous.clone()
             };
         }
+    }
+    if !params.ssh_enabled.unwrap_or(false) && keychain {
+        // Empty values delete the stored SSH secrets of a disabled tunnel.
+        params.ssh_password = Some(String::new());
+        params.ssh_key_passphrase = Some(String::new());
     }
     persist_passwords(runtime, id, params, writes)?;
     Ok(())
@@ -715,7 +761,10 @@ fn restore_secrets(
     params: &mut ConnectionParams,
 ) -> Result<(), String> {
     if params.save_in_keychain.unwrap_or(false) {
-        if params.password.as_deref().is_none_or(str::is_empty) {
+        // IAM tokens expire after 15 minutes, so a stored one is always stale.
+        if params.password.as_deref().is_none_or(str::is_empty)
+            && !params.use_iam_auth.unwrap_or(false)
+        {
             params.password = runtime.secrets.get(&secret_account(id, DB_SECRET_SUFFIX))?;
         }
         if params.ssh_password.as_deref().is_none_or(str::is_empty) {
@@ -739,6 +788,22 @@ fn restore_secrets(
         params.connection_uri = runtime
             .secrets
             .get(&secret_account(id, CONNECTION_URI_SUFFIX))?;
+    }
+    Ok(())
+}
+
+/// Like `restore_secrets`, for opening a connection: a URI the file says is in
+/// the keychain must be there, or the driver fails with a confusing error.
+fn restore_secrets_for_connect(
+    runtime: &RuntimeContext,
+    id: &str,
+    params: &mut ConnectionParams,
+) -> Result<(), String> {
+    restore_secrets(runtime, id, params)?;
+    if params.connection_uri_in_keychain.unwrap_or(false)
+        && params.connection_uri.as_deref().is_none_or(str::is_empty)
+    {
+        return Err("Stored connection URI is unavailable in the OS keychain".to_string());
     }
     Ok(())
 }
@@ -797,6 +862,38 @@ fn save_connection(
         writes.rollback(runtime);
     }
     result
+}
+
+/// Creates an empty SQLite file and saves a connection to it. The file is
+/// removed again when the connection cannot be saved.
+async fn create_sqlite_database(
+    runtime: &RuntimeContext,
+    state: &Arc<ApplicationState>,
+    path: String,
+) -> Result<SavedConnection, String> {
+    let database_path = crate::sqlite_database::create_sqlite_file(path).await?;
+    let path = PathBuf::from(&database_path);
+    let name = crate::sqlite_database::connection_name(&path)?;
+    let params = ConnectionParams {
+        driver: "sqlite".to_string(),
+        database: crate::models::DatabaseSelection::Single(database_path),
+        ..ConnectionParams::default()
+    };
+    save_connection(
+        runtime,
+        state,
+        name,
+        params,
+        PluginSecretChanges::default(),
+        None,
+        None,
+    )
+    .map_err(|error| match fs::remove_file(&path) {
+        Ok(()) => format!("Failed to save the SQLite connection: {error}"),
+        Err(cleanup_error) => format!(
+            "Failed to save the SQLite connection: {error}. The new database could not be removed: {cleanup_error}"
+        ),
+    })
 }
 
 /// Drops cached plugin connection metadata for both the old and the new driver
@@ -921,22 +1018,38 @@ fn delete_connection(
         .iter()
         .find(|connection| connection.id == id)
         .cloned();
-    let appearance = removed
-        .as_ref()
-        .and_then(|connection| connection.appearance.clone());
     file.connections.retain(|connection| connection.id != id);
     save_file(runtime, state, &file)?;
-    delete_connection_secrets(runtime, id)?;
-    if let Some(removed) = &removed {
+    clean_up_deleted_connection(runtime, state, id, removed.as_ref());
+    Ok(())
+}
+
+/// Removes what a deleted connection leaves outside the connections file. The
+/// connection is already gone at this point, so failures are only logged.
+fn clean_up_deleted_connection(
+    runtime: &RuntimeContext,
+    state: &ApplicationState,
+    id: &str,
+    removed: Option<&SavedConnection>,
+) {
+    if let Err(error) = delete_connection_secrets(runtime, id) {
+        log::warn!("Failed to remove credentials of deleted connection {id}: {error}");
+    }
+    if let Some(removed) = removed {
         delete_plugin_secrets(runtime, removed);
     }
     crate::credential_cache::invalidate_all_for_connection(&state.credential_cache, id);
-    crate::connection_appearance::cascade_delete_if_image(
+    if let Err(error) = crate::connection_appearance::cascade_delete_if_image(
         runtime.paths.data_dir(),
-        appearance.as_ref(),
-    )
-    .map_err(|error| error.to_string())?;
-    Ok(())
+        removed.and_then(|connection| connection.appearance.as_ref()),
+    ) {
+        log::warn!("Failed to remove icon of deleted connection {id}: {error}");
+    }
+    if let Err(error) =
+        super::productivity::remove_query_history_for_connection(runtime.paths.config_dir(), id)
+    {
+        log::warn!("Failed to remove query history of deleted connection {id}: {error}");
+    }
 }
 
 fn duplicate_connection(
@@ -958,6 +1071,10 @@ fn duplicate_connection(
             ] {
                 let should_copy = if suffix == CONNECTION_URI_SUFFIX {
                     original.params.connection_uri_in_keychain.unwrap_or(false)
+                } else if suffix == DB_SECRET_SUFFIX
+                    && original.params.use_iam_auth.unwrap_or(false)
+                {
+                    false
                 } else {
                     original.params.save_in_keychain.unwrap_or(false)
                 };
@@ -1157,13 +1274,20 @@ fn delete_group(
     }
     let deleted = crate::models::collect_group_subtree(&file.groups, id);
     file.groups.retain(|group| !deleted.contains(&group.id));
-    file.connections.retain(|connection| {
-        !connection
-            .group_id
-            .as_ref()
-            .is_some_and(|group_id| deleted.contains(group_id))
-    });
-    save_file(runtime, state, &file)
+    let (removed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut file.connections)
+        .into_iter()
+        .partition(|connection| {
+            connection
+                .group_id
+                .as_ref()
+                .is_some_and(|group_id| deleted.contains(group_id))
+        });
+    file.connections = kept;
+    save_file(runtime, state, &file)?;
+    for connection in &removed {
+        clean_up_deleted_connection(runtime, state, &connection.id, Some(connection));
+    }
+    Ok(())
 }
 
 fn move_connection(
@@ -1315,31 +1439,80 @@ pub async fn disconnect_connection(
     Ok(())
 }
 
-async fn test_connection(
+/// Completes the connection form of the modal with what it omits: the saved
+/// connection's secrets and the plugin secret changes. An id without a saved
+/// connection is used as an ad-hoc connection.
+fn prepare_connection_request(
     runtime: &RuntimeContext,
-    session_id: Option<Uuid>,
-    mut request: TestConnectionRequest,
-) -> Result<String, String> {
-    let progress_id = request.progress_id.clone();
+    request: &mut TestConnectionRequest,
+) -> Result<(), String> {
+    let iam_auth = request.params.use_iam_auth.unwrap_or(false);
     let mut stored_plugin_secrets = std::collections::HashMap::new();
-    if let Some(connection_id) = request.connection_id.as_deref() {
-        let saved = find_connection(&load_file(runtime)?, connection_id)?;
+    let saved = match request.connection_id.as_deref() {
+        Some(connection_id) => find_connection(&load_file(runtime)?, connection_id).ok(),
+        None => None,
+    };
+    if let Some(saved) = saved {
         // Stored plugin secrets apply only while the driver is unchanged, and
         // only for keys the pending modal changes do not set or clear.
         if saved.params.driver == request.params.driver {
             stored_plugin_secrets = load_plugin_secrets(runtime, &saved);
             stored_plugin_secrets.retain(|key, _| !request.plugin_secret_changes.contains_key(key));
         }
-        if request.params.password.as_deref().is_none_or(str::is_empty) {
+        if request.params.password.as_deref().is_none_or(str::is_empty) && !iam_auth {
             request.params.password = saved.params.password;
         }
-        restore_secrets(runtime, connection_id, &mut request.params)?;
+        restore_secrets_for_connect(runtime, &saved.id, &mut request.params)?;
     }
     crate::plugin_secrets::apply_runtime_changes(
         &mut request.params,
         stored_plugin_secrets,
         &request.plugin_secret_changes,
     )?;
+    // Without a token the server only answers an opaque "Access denied".
+    require_iam_token(iam_auth, request.params.password.as_deref())
+}
+
+async fn list_databases(
+    runtime: &RuntimeContext,
+    session_id: Option<Uuid>,
+    mut request: TestConnectionRequest,
+) -> Result<Vec<String>, String> {
+    prepare_connection_request(runtime, &mut request)?;
+    let mut expanded =
+        crate::application::tunnels::expand_connection_params(runtime, &request.params)?;
+    expanded.connection_id = request.connection_id;
+    let runtime_for_tunnel = runtime.clone();
+    let resolved = tokio::task::spawn_blocking(move || {
+        crate::application::tunnels::resolve_connection_params(
+            &runtime_for_tunnel,
+            &expanded,
+            session_id,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let driver = crate::drivers::registry::get_driver(&resolved.driver)
+        .await
+        .ok_or_else(|| format!("Driver not found: {}", resolved.driver))?;
+    driver.get_databases(&resolved).await
+}
+
+async fn test_connection(
+    runtime: &RuntimeContext,
+    session_id: Option<Uuid>,
+    mut request: TestConnectionRequest,
+) -> Result<String, String> {
+    let progress_id = request.progress_id.clone();
+    prepare_connection_request(runtime, &mut request).map_err(|error| {
+        emit_test_failure(
+            runtime,
+            session_id,
+            progress_id.as_deref(),
+            "resolve",
+            error,
+        )
+    })?;
 
     let expanded = crate::application::tunnels::expand_connection_params(runtime, &request.params)
         .map_err(|error| {
@@ -1419,14 +1592,27 @@ async fn test_connection(
 
     let driver = crate::drivers::registry::get_driver(&resolved.driver)
         .await
-        .ok_or_else(|| format!("Driver not found: {}", resolved.driver))?;
+        .ok_or_else(|| {
+            emit_test_failure(
+                runtime,
+                session_id,
+                progress_id.as_deref(),
+                "resolve",
+                format!("Driver not found: {}", resolved.driver),
+            )
+        })?;
+    let db_target = match (expanded.host.as_deref(), expanded.port) {
+        (Some(host), Some(port)) => format!("{host}:{port}"),
+        (Some(host), None) => host.to_string(),
+        _ => expanded.database.to_string(),
+    };
     emit_test_progress(
         runtime,
         session_id,
         progress_id.as_deref(),
         "dbConnect",
         "start",
-        request.params.host.clone(),
+        Some(db_target),
     );
     let capabilities = &driver.manifest().capabilities;
     if capabilities.file_based

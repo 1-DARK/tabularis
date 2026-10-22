@@ -41,7 +41,7 @@ pub struct JsonViewerStore {
 #[tauri::command]
 pub async fn open_json_viewer_window(
     app: AppHandle,
-    store: State<'_, JsonViewerStore>,
+    store: State<'_, std::sync::Arc<JsonViewerStore>>,
     value: serde_json::Value,
     original_value: Option<serde_json::Value>,
     col_name: String,
@@ -162,7 +162,7 @@ pub async fn open_json_viewer_window(
                 if let WindowEvent::CloseRequested { .. } = event {
                     if let Some(win) = app_handle.get_webview_window(&captured_label) {
                         if let (Ok(pos), Ok(size)) = (win.outer_position(), win.outer_size()) {
-                            let store = app_handle.state::<JsonViewerStore>();
+                            let store = app_handle.state::<std::sync::Arc<JsonViewerStore>>();
                             let mut bounds = match store.last_bounds.lock() {
                                 Ok(g) => g,
                                 Err(_) => return,
@@ -185,7 +185,7 @@ pub async fn open_json_viewer_window(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_json_viewer_session(
-    store: State<'_, JsonViewerStore>,
+    store: State<'_, std::sync::Arc<JsonViewerStore>>,
     session_id: String,
 ) -> Result<JsonViewerSession, String> {
     let guard = store
@@ -202,7 +202,7 @@ pub async fn get_json_viewer_session(
 #[tauri::command]
 pub async fn complete_json_viewer_session(
     app: AppHandle,
-    store: State<'_, JsonViewerStore>,
+    store: State<'_, std::sync::Arc<JsonViewerStore>>,
     session_id: String,
     value: serde_json::Value,
 ) -> Result<(), String> {

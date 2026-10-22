@@ -119,16 +119,12 @@ export function BackupTab() {
     try {
       const result = await client.call("run_connections_backup", undefined);
       await refreshStatus();
-      if (typeof result === "string") {
-        showAlert(t("settings.backup.backupDone", { path: result }));
-      } else {
-        if (result.download) {
-          await saveGeneratedFile(client, platform, result.download);
-        }
-        showAlert(
-          t("settings.backup.backupDone", { path: result.serverLocation }),
-        );
+      if (result.download) {
+        await saveGeneratedFile(client, platform, result.download);
       }
+      showAlert(
+        t("settings.backup.backupDone", { path: result.serverLocation }),
+      );
     } catch (e) {
       showAlert(toErrorMessage(e));
     } finally {

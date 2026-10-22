@@ -17,7 +17,8 @@ pub(super) fn authorize(
     let params = match command {
         ConnectionCommand::SaveConnection { params, .. }
         | ConnectionCommand::UpdateConnection { params, .. } => params,
-        ConnectionCommand::TestConnection { request } => &request.params,
+        ConnectionCommand::TestConnection { request }
+        | ConnectionCommand::ListDatabases { request } => &request.params,
         _ => return Ok(()),
     };
 
@@ -91,9 +92,9 @@ pub(super) async fn authorize_saved_access(
             | ConnectionRpcCommand::DuplicateConnection
             | ConnectionRpcCommand::SetConnectionAppearance,
         ) => &payload["id"],
-        RpcCommand::Connection(ConnectionRpcCommand::TestConnection) => {
-            &payload["request"]["connection_id"]
-        }
+        RpcCommand::Connection(
+            ConnectionRpcCommand::TestConnection | ConnectionRpcCommand::ListDatabases,
+        ) => &payload["request"]["connection_id"],
         RpcCommand::DatabaseObject(DatabaseObjectRpcCommand::ExecuteClipboardImport) => {
             &payload["req"]["connection_id"]
         }
@@ -121,7 +122,8 @@ pub(super) async fn authorize_saved_credentials(
         return Ok(());
     }
     let (id, params) = match command {
-        ConnectionCommand::TestConnection { request } => {
+        ConnectionCommand::TestConnection { request }
+        | ConnectionCommand::ListDatabases { request } => {
             let Some(id) = request.connection_id.as_deref() else {
                 return Ok(());
             };

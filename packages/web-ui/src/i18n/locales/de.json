@@ -1153,6 +1153,7 @@
     "dbNameRequired": "Datenbankname ist erforderlich",
     "connectionUriRequiresKeychain": "Verbindungs-URIs müssen im Keychain des Betriebssystems gespeichert werden. Aktiviere „Passwörter im Keychain speichern“, um fortzufahren.",
     "connectionUriRequired": "Verbindungs-URI ist erforderlich",
+    "connectionUriStored": "Im Schlüsselbund des Systems gespeichert. Füge einen neuen Verbindungs-String ein, um ihn zu ersetzen.",
     "connectionString": "Verbindungszeichenfolge",
     "connectionStringPlaceholder": "z. B. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Beispiel f?r eine Verbindungszeichenfolge",

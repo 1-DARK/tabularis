@@ -673,7 +673,13 @@ export const NewConnectionModal = ({
     activeDriver?.capabilities?.no_connection_required === true;
   // A raw URI is self-contained: it carries the database (or deliberately omits
   // it, as Atlas URIs do) and the credentials, so it replaces those form fields.
-  const hasConnectionUri = !!formData.connection_uri?.trim();
+  // The browser never receives a stored URI. The backend keeps it on save as
+  // long as the driver is unchanged, so it still counts as present.
+  const hasStoredConnectionUri =
+    formData.connection_uri_in_keychain === true &&
+    initialConnection?.params.driver === driver;
+  const hasConnectionUri =
+    !!formData.connection_uri?.trim() || hasStoredConnectionUri;
   // Drivers with the `connection_uri` capability consume the raw URI verbatim:
   // host/port/username/database all derive from it, so the form only asks for
   // the connection string and an optional token (password) field.
@@ -2902,7 +2908,11 @@ export const NewConnectionModal = ({
                     "flex-1 px-3 py-2 bg-base border rounded-md text-sm text-primary placeholder:text-muted placeholder:italic focus:border-focus focus:outline-none transition-colors",
                     connectionStringError ? "border-accent-error" : "border-strong",
                   )}
-                  placeholder={connectionStringPlaceholder}
+                  placeholder={
+                    hasStoredConnectionUri && !formData.connection_uri
+                      ? t("newConnection.connectionUriStored")
+                      : connectionStringPlaceholder
+                  }
                 />
                 {connectionString && !connectionStringError && (
                   <div className="px-3 py-2 bg-accent-success/10 border border-accent-success/30 rounded-md text-accent-success flex items-center">

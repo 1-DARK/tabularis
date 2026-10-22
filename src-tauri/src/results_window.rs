@@ -36,7 +36,7 @@ fn window_label(tab_id: &str) -> String {
 #[tauri::command]
 pub async fn open_results_window(
     app: AppHandle,
-    store: tauri::State<'_, ResultsWindowStore>,
+    store: tauri::State<'_, std::sync::Arc<ResultsWindowStore>>,
     tab_id: String,
     title: Option<String>,
 ) -> Result<(), String> {
@@ -85,7 +85,7 @@ pub async fn open_results_window(
                         // below, so saving `outer_size()` would grow the window by
                         // the decoration height on each detach→close→reopen cycle.
                         if let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) {
-                            let store = app_handle.state::<ResultsWindowStore>();
+                            let store = app_handle.state::<std::sync::Arc<ResultsWindowStore>>();
                             if let Ok(mut bounds) = store.bounds.lock() {
                                 bounds.insert(
                                     captured_tab_id.clone(),

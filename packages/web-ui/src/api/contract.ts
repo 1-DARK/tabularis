@@ -806,7 +806,7 @@ export interface CommandMap {
   >;
   run_connections_backup: CommandDefinition<
     undefined,
-    string | BackupRunResult,
+    BackupRunResult,
     "sensitive"
   >;
 

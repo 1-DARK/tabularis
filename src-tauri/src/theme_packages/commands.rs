@@ -2,31 +2,9 @@ use super::{catalog::PACKAGES_DIR, lifecycle, *};
 use crate::plugins::{install_cancellation, registry, tabularium};
 use sha2::{Digest, Sha256};
 use std::path::Path;
-#[cfg(feature = "desktop")]
-use tauri::{AppHandle, Emitter};
-
-#[cfg(feature = "desktop")]
-fn registry_base(app: &AppHandle) -> Result<String, String> {
-    let config = crate::config::load_config_internal(app);
-    let base = config
-        .tabularium_registry_url
-        .unwrap_or_else(|| registry::DEFAULT_TABULARIUM_URL.into());
-    registry_key(&base)?;
-    Ok(base)
-}
 
 fn operation_id(registry: &str, package: &str) -> String {
     format!("theme:{registry}:{package}")
-}
-
-#[cfg(feature = "desktop")]
-fn refresh(app: &AppHandle) {
-    if let Err(error) = app.emit("theme-catalog-changed", ()) {
-        log::warn!(
-            "Theme operation committed but refresh delivery failed: {}",
-            error
-        );
-    }
 }
 
 /// Standalone import preview validates without creating a personal file.
@@ -126,40 +104,12 @@ pub async fn preview_local_theme_package(
     preview_local_package_bytes(bytes).await
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn install_local_theme_package(
-    app: AppHandle,
-    path: String,
-    package_name: String,
-    expected_digest: String,
-) -> Result<ThemeCommit, String> {
-    let result = install_local_package(
-        move || lifecycle::read_local_archive(Path::new(&path)),
-        package_name,
-        expected_digest,
-    )
-    .await?;
-    refresh(&app);
-    Ok(result)
-}
-
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThemeRegistrySnapshot {
     pub registry_key: String,
     pub registry_url: String,
     pub plugins: Vec<registry::RegistryPlugin>,
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn fetch_theme_registry(
-    app: AppHandle,
-    package_name: Option<String>,
-    expected_registry_key: Option<String>,
-) -> Result<ThemeRegistrySnapshot, String> {
-    fetch_registry(registry_base(&app)?, package_name, expected_registry_key).await
 }
 
 /// Lists theme packages from the configured registry `base`.
@@ -195,24 +145,6 @@ pub async fn fetch_registry(
     })
 }
 
-/// Read-only details: never resolve a tracked download during discovery.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn fetch_theme_package_detail(
-    app: AppHandle,
-    package_name: String,
-    expected_registry_key: String,
-    requested_registry_url: Option<String>,
-) -> Result<tabularium::ThemeRegistryDetail, String> {
-    fetch_package_detail(
-        registry_base(&app)?,
-        package_name,
-        expected_registry_key,
-        requested_registry_url,
-    )
-    .await
-}
-
 /// Read-only package details from the configured registry `base`.
 pub async fn fetch_package_detail(
     base: String,
@@ -235,25 +167,6 @@ pub async fn fetch_package_detail(
     }
     detail.plugin.registry_base_url = Some(base);
     Ok(detail)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn install_registry_theme(
-    app: AppHandle,
-    package_name: String,
-    expected_registry_key: String,
-    version: Option<String>,
-) -> Result<ThemeCommit, String> {
-    let result = install_registry(
-        registry_base(&app)?,
-        expected_registry_key,
-        package_name,
-        version,
-    )
-    .await?;
-    refresh(&app);
-    Ok(result)
 }
 
 /// Downloads and installs one registry package from `base`.
@@ -279,19 +192,6 @@ pub fn cancel_theme_install(registry_key: String, package_name: String) -> bool 
     install_cancellation::cancel(&operation_id(&registry_key, &package_name))
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub fn set_theme_package_enabled(
-    app: AppHandle,
-    registry_key: String,
-    package_name: String,
-    enabled: bool,
-) -> Result<(), String> {
-    set_package_enabled(&registry_key, &package_name, enabled)?;
-    refresh(&app);
-    Ok(())
-}
-
 pub fn set_package_enabled(
     registry_key: &str,
     package_name: &str,
@@ -305,17 +205,6 @@ pub fn set_package_enabled(
     )
 }
 
-/// Recovery is an explicit action, never a catalog-read or hydration side effect.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub fn recover_theme_packages(app: AppHandle) -> Result<Vec<String>, String> {
-    let failures = recover_packages();
-    if failures.is_empty() {
-        refresh(&app);
-    }
-    Ok(failures)
-}
-
 /// Returns the recovery failures; an empty list means the catalog changed.
 pub fn recover_packages() -> Vec<String> {
     let root = crate::paths::get_default_app_data_dir().join(PACKAGES_DIR);
@@ -323,18 +212,6 @@ pub fn recover_packages() -> Vec<String> {
         Ok(()) => Vec::new(),
         Err(error) => vec![error],
     }
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub fn uninstall_theme_package(
-    app: AppHandle,
-    registry_key: String,
-    package_name: String,
-) -> Result<ThemeCommit, String> {
-    let result = uninstall_package(&registry_key, &package_name)?;
-    refresh(&app);
-    Ok(result)
 }
 
 pub fn uninstall_package(registry_key: &str, package_name: &str) -> Result<ThemeCommit, String> {

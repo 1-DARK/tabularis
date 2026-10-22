@@ -187,10 +187,26 @@ pub async fn execute(runtime: &RuntimeContext, command: ThemeCommand) -> Result<
             package_name,
             expected_digest,
         } => {
-            let bytes = read_archive_now(runtime, archive).await?;
-            let result =
-                packages::install_local_package(move || Ok(bytes), package_name, expected_digest)
-                    .await?;
+            let result = match archive {
+                // Read inside the install so a slow read stays cancellable.
+                LocalThemeArchive::Path(path) => {
+                    packages::install_local_package(
+                        move || packages::read_local_archive(&path),
+                        package_name,
+                        expected_digest,
+                    )
+                    .await?
+                }
+                upload => {
+                    let bytes = read_archive_now(runtime, upload).await?;
+                    packages::install_local_package(
+                        move || Ok(bytes),
+                        package_name,
+                        expected_digest,
+                    )
+                    .await?
+                }
+            };
             notify_catalog_changed(runtime);
             json(result)
         }

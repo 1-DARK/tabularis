@@ -1,4 +1,5 @@
 use super::*;
+use crate::models::DatabaseSelection;
 use async_trait::async_trait;
 use axum::body::to_bytes;
 use axum::http::header::CONTENT_TYPE;
@@ -819,8 +820,8 @@ async fn creates_sqlite_files_only_inside_configured_server_roots() {
         )
         .await;
 
+    // The application layer creates the file; the fixture only records the call.
     assert_eq!(response.status(), StatusCode::OK);
-    assert!(database_path.exists());
 }
 
 #[tokio::test]

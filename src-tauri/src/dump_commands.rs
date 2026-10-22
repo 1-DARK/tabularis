@@ -9,7 +9,7 @@ use tauri::State;
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_dump(
-    state: State<'_, DumpCancellationState>,
+    state: State<'_, std::sync::Arc<DumpCancellationState>>,
     connection_id: String,
 ) -> Result<(), String> {
     database_transfers::cancel_job(state.inner(), None, JobKind::Dump, &connection_id)
@@ -19,7 +19,7 @@ pub async fn cancel_dump(
 #[tauri::command]
 pub async fn dump_database(
     runtime: State<'_, RuntimeContext>,
-    state: State<'_, DumpCancellationState>,
+    state: State<'_, std::sync::Arc<DumpCancellationState>>,
     connection_id: String,
     file_path: String,
     options: DumpOptions,
@@ -42,7 +42,7 @@ pub async fn dump_database(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_import(
-    state: State<'_, DumpCancellationState>,
+    state: State<'_, std::sync::Arc<DumpCancellationState>>,
     connection_id: String,
 ) -> Result<(), String> {
     database_transfers::cancel_job(state.inner(), None, JobKind::Import, &connection_id)
@@ -52,7 +52,7 @@ pub async fn cancel_import(
 #[tauri::command]
 pub async fn import_database(
     runtime: State<'_, RuntimeContext>,
-    state: State<'_, DumpCancellationState>,
+    state: State<'_, std::sync::Arc<DumpCancellationState>>,
     connection_id: String,
     file_path: String,
     schema: Option<String>,

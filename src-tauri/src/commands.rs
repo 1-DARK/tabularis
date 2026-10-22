@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "desktop")]
-use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tokio::task::AbortHandle;
 use urlencoding::encode;
 use uuid::Uuid;
@@ -11,10 +11,10 @@ use uuid::Uuid;
 use crate::credential_cache;
 use crate::keychain_utils;
 use crate::models::{
-    BatchStatementResult, ColumnDefinition, ConnectionGroup, ConnectionParams, ConnectionsFile,
-    ExplainQueryOutput, ExportPayload, ForeignKey, Index, K8sConnection, K8sConnectionInput,
-    QueryResult, RoutineInfo, RoutineParameter, SavedConnection, SshConnection, SshConnectionInput,
-    SshTestParams, TableColumn, TableInfo, TestConnectionRequest, TriggerInfo,
+    BatchStatementResult, ColumnDefinition, ConnectionGroup, ConnectionParams, ExplainQueryOutput,
+    ExportPayload, ForeignKey, Index, K8sConnection, K8sConnectionInput, QueryResult, RoutineInfo,
+    RoutineParameter, SavedConnection, SshConnection, SshConnectionInput, SshTestParams,
+    TableColumn, TableInfo, TestConnectionRequest, TriggerInfo,
 };
 use crate::persistence;
 
@@ -123,73 +123,395 @@ fn is_empty_or_whitespace(s: &Option<String>) -> bool {
     s.as_ref().map(|p| p.trim().is_empty()).unwrap_or(true)
 }
 
-/// Reject a connection attempt under AWS IAM auth when neither the raw form
-/// payload nor the expanded params (after SSH/K8s expansion) carry an RDS
-/// auth token. Both `test_connection` and `list_databases` run this guard
-/// before any pool / driver work so the user gets an actionable message
-/// instead of the opaque "Access denied" the server returns on an empty
-/// password.
-fn require_iam_token(
-    iam_auth: bool,
-    request_password: Option<&str>,
-    expanded_password: Option<&str>,
-) -> Result<(), String> {
-    if iam_auth
-        && request_password.unwrap_or("").is_empty()
-        && expanded_password.unwrap_or("").is_empty()
-    {
-        return Err(
-            "AWS IAM authentication is enabled but the password field is empty. \
-             Paste the output of `aws rds generate-db-auth-token` into the \
-             password field and try again. Tokens expire every 15 minutes."
-                .to_string(),
-        );
-    }
-    Ok(())
+#[cfg(feature = "desktop")]
+async fn execute_connection_command<R: Runtime>(
+    app: &AppHandle<R>,
+    command: crate::application::connections::ConnectionCommand,
+) -> Result<serde_json::Value, String> {
+    crate::application::connections::execute(
+        &app.state::<crate::runtime::RuntimeContext>(),
+        &app.state::<std::sync::Arc<crate::runtime::state::ApplicationState>>(),
+        command,
+    )
+    .await
 }
 
-#[cfg(test)]
-mod require_iam_token_tests {
-    use super::require_iam_token;
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_connections<R: Runtime>(app: AppHandle<R>) -> Result<serde_json::Value, String> {
+    migrate_ssh_connections(&app).await.ok();
+    migrate_postgres_ssl_mode_spelling(&app).await.ok();
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::GetConnections,
+    )
+    .await
+}
 
-    #[test]
-    fn rejects_iam_with_both_passwords_empty() {
-        // The primary case: ad-hoc connection, IAM enabled, nothing in the
-        // form and nothing from the keychain.
-        let err = require_iam_token(true, None, None).unwrap_err();
-        assert!(err.contains("AWS IAM authentication is enabled"));
-        assert!(err.contains("15 minutes"));
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_connections_with_groups<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<serde_json::Value, String> {
+    migrate_ssh_connections(&app).await.ok();
+    migrate_postgres_ssl_mode_spelling(&app).await.ok();
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::GetConnectionsWithGroups,
+    )
+    .await
+}
 
-    #[test]
-    fn rejects_iam_with_empty_string_passwords() {
-        // Empty strings (rather than None) must also fail — sqlx stamps
-        // "" as a deliberate "user pressed Enter" password.
-        let err = require_iam_token(true, Some(""), Some("")).unwrap_err();
-        assert!(err.contains("AWS IAM authentication is enabled"));
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn save_connection<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+    params: ConnectionParams,
+    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
+    detect_json_in_text_columns: Option<bool>,
+    environment: Option<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::SaveConnection {
+            name,
+            params,
+            plugin_secret_changes,
+            detect_json_in_text_columns,
+            environment,
+        },
+    )
+    .await
+}
 
-    #[test]
-    fn allows_iam_when_request_password_present() {
-        // A freshly pasted RDS auth token in the form is enough; the
-        // expanded (post-SSH/K8s) value is irrelevant.
-        require_iam_token(true, Some("fake-token"), None).unwrap();
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn update_connection<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    name: String,
+    params: ConnectionParams,
+    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
+    detect_json_in_text_columns: Option<bool>,
+    environment: Option<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::UpdateConnection {
+            id,
+            name,
+            params,
+            plugin_secret_changes,
+            detect_json_in_text_columns,
+            environment,
+        },
+    )
+    .await
+}
 
-    #[test]
-    fn allows_iam_when_expanded_password_present() {
-        // The expanded value can also satisfy the guard (e.g. an SSH tunnel
-        // wrapper injected it).
-        require_iam_token(true, None, Some("fake-token")).unwrap();
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn duplicate_connection<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::DuplicateConnection { id },
+    )
+    .await
+}
 
-    #[test]
-    fn non_iam_always_passes() {
-        // Without IAM, an empty password is the caller's problem; the
-        // helper must never reject on its own.
-        require_iam_token(false, None, None).unwrap();
-        require_iam_token(false, Some(""), Some("")).unwrap();
-    }
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_connection<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::DeleteConnection { id },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn test_connection<R: Runtime>(
+    app: AppHandle<R>,
+    request: TestConnectionRequest,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::TestConnection { request },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_databases<R: Runtime>(
+    app: AppHandle<R>,
+    request: TestConnectionRequest,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::ListDatabases { request },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn get_connection_groups<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::GetConnectionGroups,
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn create_connection_group<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+    parent_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::CreateConnectionGroup {
+            name,
+            parent_id,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn create_group_path<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+    parent_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::CreateGroupPath { path, parent_id },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn update_connection_group<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    name: Option<String>,
+    collapsed: Option<bool>,
+    sort_order: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::UpdateConnectionGroup {
+            id,
+            name,
+            collapsed,
+            sort_order,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn move_group_to_parent<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    parent_id: Option<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::MoveGroupToParent { id, parent_id },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_connection_group<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::DeleteConnectionGroup { id },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn move_connection_to_group<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+    group_id: Option<String>,
+    sort_order: Option<i32>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::MoveConnectionToGroup {
+            connection_id,
+            group_id,
+            sort_order,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn reorder_groups<R: Runtime>(
+    app: AppHandle<R>,
+    group_orders: Vec<(String, i32)>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::ReorderGroups { group_orders },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn reorder_connections_in_group<R: Runtime>(
+    app: AppHandle<R>,
+    connection_orders: Vec<(String, i32)>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::ReorderConnectionsInGroup {
+            connection_orders,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn set_connection_appearance<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    appearance: Option<crate::models::ConnectionAppearance>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::SetConnectionAppearance {
+            id,
+            appearance,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn list_connection_tags<R: Runtime>(
+    app: AppHandle<R>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::ListConnectionTags,
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn create_connection_tag<R: Runtime>(
+    app: AppHandle<R>,
+    name: String,
+    color: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::CreateConnectionTag { name, color },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn update_connection_tag<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+    name: String,
+    color: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::UpdateConnectionTag { id, name, color },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_connection_tag<R: Runtime>(
+    app: AppHandle<R>,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::DeleteConnectionTag { id },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn set_connection_tags<R: Runtime>(
+    app: AppHandle<R>,
+    connection_id: String,
+    tag_ids: Vec<String>,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::SetConnectionTags {
+            connection_id,
+            tag_ids,
+        },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn delete_connection_icon<R: Runtime>(
+    app: AppHandle<R>,
+    relative_path: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::DeleteConnectionIcon { relative_path },
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+pub async fn create_sqlite_database<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<serde_json::Value, String> {
+    execute_connection_command(
+        &app,
+        crate::application::connections::ConnectionCommand::CreateSqliteDatabase { path },
+    )
+    .await
 }
 
 pub fn resolve_connection_params(params: &ConnectionParams) -> Result<ConnectionParams, String> {
@@ -256,191 +578,6 @@ fn runtime_connection_uri(params: &ConnectionParams) -> Option<&str> {
         .connection_uri
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-}
-
-/// A connection URI embeds credentials, so it may only be persisted behind the
-/// OS keychain. Refuse the save rather than silently downgrading to plaintext.
-fn validate_connection_uri_persistence(params: &ConnectionParams) -> Result<(), String> {
-    if runtime_connection_uri(params).is_some() && !params.save_in_keychain.unwrap_or(false) {
-        return Err("Connection URIs must be stored in the OS keychain".to_string());
-    }
-    Ok(())
-}
-
-/// Write the secret first, then persist `connections.json`. If persistence
-/// fails the secret is restored to its previous value so the keychain never
-/// drifts from the file.
-fn persist_secret_change(
-    apply: impl FnOnce() -> Result<(), String>,
-    persist: impl FnOnce() -> Result<(), String>,
-    rollback: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    apply()?;
-    match persist() {
-        Ok(()) => Ok(()),
-        Err(error) => match rollback() {
-            Ok(()) => Err(error),
-            // Report both: the rollback error alone would hide why the save
-            // failed in the first place.
-            Err(rollback_error) => Err(format!("{error} ({rollback_error})")),
-        },
-    }
-}
-
-/// The keychain URI to put back if persisting a change fails. A connection can
-/// claim a keychain entry that was never written (duplicates used to copy the
-/// flag but not the URI), so a missing entry means there is nothing to
-/// restore. Only a genuine read failure aborts the change.
-fn previous_keychain_connection_uri(
-    stored_in_keychain: bool,
-    read: impl FnOnce() -> Result<Option<String>, String>,
-) -> Result<Option<String>, String> {
-    if !stored_in_keychain {
-        return Ok(None);
-    }
-    read().map_err(|_| "Failed to read the stored connection URI from the OS keychain".to_string())
-}
-
-/// `change` is `None` to leave the stored URI untouched, `Some(Some(uri))` to
-/// write it, and `Some(None)` to clear it.
-fn persist_connection_uri_change(
-    cache: &credential_cache::CredentialCache,
-    connection_id: &str,
-    stored_in_keychain: bool,
-    change: Option<Option<&str>>,
-    persist: impl FnOnce() -> Result<(), String>,
-) -> Result<(), String> {
-    let Some(value) = change else {
-        return persist();
-    };
-    let previous_keychain = previous_keychain_connection_uri(stored_in_keychain, || {
-        keychain_utils::find_connection_uri(connection_id)
-    })?;
-    let previous_cache = cache
-        .connection_uris
-        .lock()
-        .unwrap()
-        .get(connection_id)
-        .cloned();
-
-    persist_secret_change(
-        || {
-            if let Some(value) = value {
-                keychain_utils::set_connection_uri(connection_id, value)?;
-                credential_cache::set_connection_uri_cached(cache, connection_id, value);
-            } else {
-                keychain_utils::delete_connection_uri(connection_id)?;
-                credential_cache::invalidate_connection_uri(cache, connection_id);
-            }
-            Ok(())
-        },
-        persist,
-        || {
-            let keychain_result = match previous_keychain.as_deref() {
-                Some(value) => keychain_utils::set_connection_uri(connection_id, value),
-                None => keychain_utils::delete_connection_uri(connection_id),
-            };
-            let mut entries = cache.connection_uris.lock().unwrap();
-            match (&keychain_result, previous_cache) {
-                // Only re-pin the old value once the keychain actually holds it
-                // again. If the restore failed, drop the entry so the next read
-                // consults the keychain instead of trusting a stale copy.
-                (Ok(()), Some(entry)) => _ = entries.insert(connection_id.to_string(), entry),
-                (Ok(()), None) | (Err(_), _) => _ = entries.remove(connection_id),
-            }
-            keychain_result.map_err(|_| "Failed to roll back the stored connection URI".to_string())
-        },
-    )
-}
-
-/// Keychain secrets a connection save wrote, each with the value it held
-/// before. If the config file write fails afterwards they are put back, so a
-/// save that never landed doesn't leave secrets behind in the keychain.
-#[derive(Default)]
-struct KeychainSecretWrites {
-    db_password: Option<Option<String>>,
-    ssh_password: Option<Option<String>>,
-    ssh_key_passphrase: Option<Option<String>>,
-}
-
-impl KeychainSecretWrites {
-    /// Delete every secret this save wrote to the keychain. Used once the
-    /// config file landed with the secrets inline because a later keychain
-    /// write failed, so nothing the config doesn't point at is left behind.
-    fn discard(self, cache: &credential_cache::CredentialCache, connection_id: &str) {
-        Self {
-            db_password: self.db_password.map(|_| None),
-            ssh_password: self.ssh_password.map(|_| None),
-            ssh_key_passphrase: self.ssh_key_passphrase.map(|_| None),
-        }
-        .roll_back(cache, connection_id);
-    }
-
-    fn roll_back(self, cache: &credential_cache::CredentialCache, connection_id: &str) {
-        fn restore(
-            label: &str,
-            connection_id: &str,
-            previous: Option<String>,
-            set: impl FnOnce(&str) -> Result<(), String>,
-            delete: impl FnOnce() -> Result<(), String>,
-        ) {
-            let result = match previous.as_deref() {
-                Some(value) => set(value),
-                None => delete(),
-            };
-            if let Err(err) = result {
-                log::warn!(
-                    "Failed to roll back the {} for {} after a failed save: {}",
-                    label,
-                    connection_id,
-                    err
-                );
-            }
-        }
-
-        if let Some(previous) = self.db_password {
-            restore(
-                "DB password",
-                connection_id,
-                previous,
-                |value| keychain_utils::set_db_password(connection_id, value),
-                || keychain_utils::delete_db_password(connection_id),
-            );
-            credential_cache::invalidate_db_password(cache, connection_id);
-        }
-        if let Some(previous) = self.ssh_password {
-            restore(
-                "SSH password",
-                connection_id,
-                previous,
-                |value| keychain_utils::set_ssh_password(connection_id, value),
-                || keychain_utils::delete_ssh_password(connection_id),
-            );
-            credential_cache::invalidate_ssh_password(cache, connection_id);
-        }
-        if let Some(previous) = self.ssh_key_passphrase {
-            restore(
-                "SSH key passphrase",
-                connection_id,
-                previous,
-                |value| keychain_utils::set_ssh_key_passphrase(connection_id, value),
-                || keychain_utils::delete_ssh_key_passphrase(connection_id),
-            );
-            credential_cache::invalidate_ssh_key_passphrase(cache, connection_id);
-        }
-    }
-}
-
-/// Strip the URI out of the params that go to `connections.json`, leaving only
-/// the marker that says a keychain entry exists.
-fn params_for_persistence(
-    params: &ConnectionParams,
-    connection_uri_in_keychain: bool,
-) -> ConnectionParams {
-    let mut persisted = params.clone();
-    persisted.connection_uri = None;
-    persisted.connection_uri_in_keychain = connection_uri_in_keychain.then_some(true);
-    persisted
 }
 
 /// Re-attach the URI a saved connection needs at runtime, from the session
@@ -584,18 +721,6 @@ pub(crate) fn merge_groups(existing: &mut Vec<ConnectionGroup>, incoming: Vec<Co
                 g.parent_id = None;
             }
         }
-    }
-}
-
-/// Write the connections file and invalidate the in-memory connection cache so
-/// the next `find_connection_by_id` call re-reads fresh data from disk.
-/// Normalizes and validates a connection environment value. Empty selects
-/// "unclassified" (`None`); anything else must be one of the known tiers.
-fn validate_environment(env: Option<String>) -> Result<Option<String>, String> {
-    match env.as_deref() {
-        None | Some("") => Ok(None),
-        Some("development" | "staging" | "production") => Ok(env),
-        Some(other) => Err(format!("Invalid environment: {other}")),
     }
 }
 
@@ -882,717 +1007,6 @@ pub async fn get_schema_snapshot<R: Runtime>(
     .await
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn get_ai_schema_context<R: Runtime>(
-    app: AppHandle<R>,
-    connection_id: String,
-    schema: Option<String>,
-    database: Option<String>,
-) -> Result<String, String> {
-    let saved_conn = find_connection_by_id(&app, &connection_id)?;
-    let expanded_params = expand_ssh_connection_params(&app, &saved_conn.params).await?;
-    let expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
-    let mut params = resolve_connection_params_with_id(&expanded_params, &connection_id)?;
-    if let Some(db) = database.filter(|d| !d.is_empty()) {
-        params.database = crate::models::DatabaseSelection::Single(db);
-    }
-    let driver = driver_for_params(&params).await?;
-    let identifier_quote = driver.manifest().capabilities.identifier_quote.as_str();
-    let context = driver
-        .get_ai_schema_context(
-            &params,
-            schema.as_deref(),
-            crate::ai_schema_context::DEFAULT_MAX_TABLES,
-        )
-        .await?;
-
-    Ok(crate::ai_schema_context::format_for_prompt(
-        &context,
-        identifier_quote,
-    ))
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn save_connection<R: Runtime>(
-    app: AppHandle<R>,
-    name: String,
-    params: ConnectionParams,
-    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
-    detect_json_in_text_columns: Option<bool>,
-    environment: Option<String>,
-) -> Result<SavedConnection, String> {
-    log::info!("Saving new connection: {}", name);
-    validate_connection_uri_persistence(&params)?;
-
-    let path = get_config_path(&app)?;
-    let mut conn_file = persistence::load_connections_file(&path).unwrap_or_default();
-
-    let id = Uuid::new_v4().to_string();
-    let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
-    let plugin_secret_changes = plugin_secret_changes.unwrap_or_default();
-    let plugin_secret_keys =
-        crate::plugin_secrets::next_secret_keys(&[], true, &plugin_secret_changes)?;
-    let connection_uri = runtime_connection_uri(&params).map(str::to_owned);
-    let mut params_to_save = params_for_persistence(&params, connection_uri.is_some());
-    let mut keychain_writes = KeychainSecretWrites::default();
-    for key in plugin_secret_changes.keys() {
-        params_to_save.extra.remove(key);
-    }
-
-    if params.save_in_keychain.unwrap_or(false) {
-        log::debug!("Storing passwords in keychain for connection: {}", name);
-        let mut keychain_stored = true;
-        match keychain_utils::stored_password_change(params.password.as_deref()) {
-            keychain_utils::StoredPasswordChange::Store(pwd) => {
-                match keychain_utils::set_db_password(&id, pwd) {
-                    Ok(()) => {
-                        keychain_writes.db_password = Some(None);
-                        credential_cache::set_db_password_cached(&cache, &id, pwd);
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Keychain unavailable while saving connection {}; storing secrets in the config file: {}",
-                            name, err
-                        );
-                        keychain_stored = false;
-                    }
-                }
-            }
-            // A fresh id has nothing to delete; an empty password is simply
-            // not stored (keyutils would reject it anyway).
-            keychain_utils::StoredPasswordChange::Keep
-            | keychain_utils::StoredPasswordChange::Delete => {}
-        }
-        if keychain_stored && params.ssh_enabled.unwrap_or(false) {
-            if let Some(ssh_pwd) = &params.ssh_password {
-                match keychain_utils::set_ssh_password(&id, ssh_pwd) {
-                    Ok(()) => {
-                        keychain_writes.ssh_password = Some(None);
-                        credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Keychain unavailable while saving the SSH password for {}; storing secrets in the config file: {}",
-                            name, err
-                        );
-                        keychain_stored = false;
-                    }
-                }
-            }
-            if keychain_stored {
-                if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
-                    if !ssh_passphrase.trim().is_empty() {
-                        match keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase) {
-                            Ok(()) => {
-                                keychain_writes.ssh_key_passphrase = Some(None);
-                                credential_cache::set_ssh_key_passphrase_cached(
-                                    &cache,
-                                    &id,
-                                    ssh_passphrase,
-                                );
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Keychain unavailable while saving the SSH key passphrase for {}; storing secrets in the config file: {}",
-                                    name, err
-                                );
-                                keychain_stored = false;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        persistence::apply_secret_persistence(&mut params_to_save, keychain_stored);
-    }
-
-    let persisted_in_keychain = params_to_save.save_in_keychain.unwrap_or(false);
-    let new_conn = SavedConnection {
-        id: id.clone(),
-        name: name.clone(),
-        params: params_to_save,
-        plugin_secret_keys,
-        group_id: None,
-        sort_order: None,
-        detect_json_in_text_columns,
-        appearance: None,
-        tag_ids: None,
-        environment: validate_environment(environment)?,
-    };
-    conn_file.connections.push(new_conn.clone());
-    if let Err(err) = crate::plugin_secrets::persist_secret_changes(
-        &cache,
-        &id,
-        None,
-        &[],
-        &params.driver,
-        &plugin_secret_changes,
-        || {
-            persist_connection_uri_change(
-                &cache,
-                &id,
-                false,
-                connection_uri.as_deref().map(Some),
-                || save_connections_and_invalidate(&app, &path, &conn_file),
-            )
-        },
-    ) {
-        keychain_writes.roll_back(&cache, &id);
-        return Err(err);
-    }
-    if !persisted_in_keychain {
-        // A later keychain write failed and the secrets went to the config
-        // file instead; drop the ones that did reach the keychain.
-        keychain_writes.discard(&cache, &id);
-    }
-
-    log::info!("Connection saved successfully: {} (ID: {})", name, id);
-
-    let requested_keychain = params.save_in_keychain.unwrap_or(false);
-    let mut returned_conn = new_conn;
-    returned_conn.params = params; // Return with password for frontend state
-    if requested_keychain && !persisted_in_keychain {
-        returned_conn.params.save_in_keychain = Some(false);
-    }
-    Ok(returned_conn)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn delete_connection<R: Runtime>(app: AppHandle<R>, id: String) -> Result<(), String> {
-    log::info!("Deleting connection: {}", id);
-
-    let path = get_config_path(&app)?;
-    if !path.exists() {
-        return Ok(());
-    }
-
-    let mut conn_file = persistence::load_connections_file(&path)?;
-
-    let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
-    let uri_stored_in_keychain = conn_file
-        .connections
-        .iter()
-        .find(|c| c.id == id)
-        .and_then(|c| c.params.connection_uri_in_keychain)
-        .unwrap_or(false);
-    let plugin_secret_metadata = conn_file
-        .connections
-        .iter()
-        .find(|c| c.id == id)
-        .map(|c| (c.params.driver.clone(), c.plugin_secret_keys.clone()));
-
-    // Capture the appearance before retain so we can cascade-delete the icon file.
-    let appearance_to_delete = conn_file
-        .connections
-        .iter()
-        .find(|c| c.id == id)
-        .and_then(|c| c.appearance.clone());
-
-    let initial_count = conn_file.connections.len();
-    conn_file.connections.retain(|c| c.id != id);
-    let deleted = conn_file.connections.len() < initial_count;
-
-    // Attempt to remove passwords from keychain (ignore if not found)
-    keychain_utils::delete_db_password(&id).ok();
-    keychain_utils::delete_ssh_password(&id).ok();
-    keychain_utils::delete_ssh_key_passphrase(&id).ok();
-    persist_connection_uri_change(&cache, &id, uri_stored_in_keychain, Some(None), || {
-        save_connections_and_invalidate(&app, &path, &conn_file)
-    })?;
-    if let Some((driver, keys)) = plugin_secret_metadata {
-        crate::plugin_secrets::delete_connection_secrets(&cache, &id, &driver, &keys);
-    }
-    // Invalidate the in-memory cache for this connection
-    credential_cache::invalidate_all_for_connection(&cache, &id);
-
-    // Cascade-delete the custom icon file if the connection used one.
-    {
-        let app_data = crate::paths::get_app_data_dir();
-        let _ = crate::connection_appearance::cascade_delete_if_image(
-            &app_data,
-            appearance_to_delete.as_ref(),
-        );
-    }
-
-    // Clean up query history for this connection
-    if let Err(e) = crate::query_history::remove_history_for_connection(&app, &id).await {
-        log::warn!(
-            "Failed to remove query history for connection {}: {}",
-            id,
-            e
-        );
-    }
-
-    if deleted {
-        log::info!("Connection deleted successfully: {}", id);
-    } else {
-        log::warn!("Connection not found for deletion: {}", id);
-    }
-
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn update_connection<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-    name: String,
-    params: ConnectionParams,
-    plugin_secret_changes: Option<crate::plugin_secrets::PluginSecretChanges>,
-    detect_json_in_text_columns: Option<bool>,
-    environment: Option<String>,
-) -> Result<SavedConnection, String> {
-    validate_connection_uri_persistence(&params)?;
-    let path = get_config_path(&app)?;
-    let mut conn_file = persistence::load_connections_file(&path)?;
-
-    let conn_idx = conn_file
-        .connections
-        .iter()
-        .position(|c| c.id == id)
-        .ok_or("Connection not found")?;
-
-    let existing_uri_in_keychain = conn_file.connections[conn_idx]
-        .params
-        .connection_uri_in_keychain
-        .unwrap_or(false);
-    // A stored URI belongs to the driver that produced it. Switching drivers
-    // must drop it rather than hand one driver's credentials to another.
-    let previous_driver_id = conn_file.connections[conn_idx].params.driver.clone();
-    let same_driver = previous_driver_id == params.driver;
-    let original_plugin_secret_keys = conn_file.connections[conn_idx].plugin_secret_keys.clone();
-    let plugin_secret_changes = plugin_secret_changes.unwrap_or_default();
-    let plugin_secret_keys = crate::plugin_secrets::next_secret_keys(
-        &original_plugin_secret_keys,
-        same_driver,
-        &plugin_secret_changes,
-    )?;
-    let connection_uri = runtime_connection_uri(&params).map(str::to_owned);
-    // The frontend sends the URI back only when the user retyped it. An edit
-    // that leaves the field untouched must keep the stored secret; an edit that
-    // explicitly clears the marker must delete it.
-    let preserve_stored_uri = connection_uri.is_none()
-        && same_driver
-        && params.save_in_keychain.unwrap_or(false)
-        && existing_uri_in_keychain
-        && params.connection_uri_in_keychain != Some(false);
-    let uri_change = match connection_uri.as_deref() {
-        Some(value) => Some(Some(value)),
-        None if preserve_stored_uri => None,
-        None => Some(None),
-    };
-    let mut params_to_save =
-        params_for_persistence(&params, connection_uri.is_some() || preserve_stored_uri);
-    for key in plugin_secret_changes.keys() {
-        params_to_save.extra.remove(key);
-    }
-
-    let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
-    let mut keychain_writes = KeychainSecretWrites::default();
-    if params.save_in_keychain.unwrap_or(false) {
-        let mut keychain_stored = true;
-        match keychain_utils::stored_password_change(params.password.as_deref()) {
-            keychain_utils::StoredPasswordChange::Store(pwd) => {
-                let previous = keychain_utils::get_db_password(&id, "").ok();
-                match keychain_utils::set_db_password(&id, pwd) {
-                    Ok(()) => {
-                        keychain_writes.db_password = Some(previous);
-                        credential_cache::set_db_password_cached(&cache, &id, pwd);
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Keychain unavailable while updating connection {}; storing secrets in the config file: {}",
-                            id, err
-                        );
-                        keychain_stored = false;
-                    }
-                }
-            }
-            // The frontend sends an explicit empty password when a plugin hid
-            // the login inputs. The previous secret must not survive, or the
-            // next connect would hand a stale login to the driver.
-            keychain_utils::StoredPasswordChange::Delete => {
-                let previous = keychain_utils::get_db_password(&id, "").ok();
-                keychain_utils::delete_db_password(&id)?;
-                keychain_writes.db_password = Some(previous);
-                credential_cache::invalidate_db_password(&cache, &id);
-            }
-            keychain_utils::StoredPasswordChange::Keep => {}
-        }
-        if keychain_stored && params.ssh_enabled.unwrap_or(false) {
-            if let Some(ssh_pwd) = &params.ssh_password {
-                let previous = keychain_utils::get_ssh_password(&id, "").ok();
-                match keychain_utils::set_ssh_password(&id, ssh_pwd) {
-                    Ok(()) => {
-                        keychain_writes.ssh_password = Some(previous);
-                        credential_cache::set_ssh_password_cached(&cache, &id, ssh_pwd);
-                    }
-                    Err(err) => {
-                        log::warn!(
-                            "Keychain unavailable while updating the SSH password for {}; storing secrets in the config file: {}",
-                            id, err
-                        );
-                        keychain_stored = false;
-                    }
-                }
-            }
-            if keychain_stored {
-                if let Some(ssh_passphrase) = &params.ssh_key_passphrase {
-                    if !ssh_passphrase.trim().is_empty() {
-                        let previous = keychain_utils::get_ssh_key_passphrase(&id, "").ok();
-                        match keychain_utils::set_ssh_key_passphrase(&id, ssh_passphrase) {
-                            Ok(()) => {
-                                keychain_writes.ssh_key_passphrase = Some(previous);
-                                credential_cache::set_ssh_key_passphrase_cached(
-                                    &cache,
-                                    &id,
-                                    ssh_passphrase,
-                                );
-                            }
-                            Err(err) => {
-                                log::warn!(
-                                    "Keychain unavailable while updating the SSH key passphrase for {}; storing secrets in the config file: {}",
-                                    id, err
-                                );
-                                keychain_stored = false;
-                            }
-                        }
-                    }
-                }
-            }
-        } else if keychain_stored {
-            keychain_utils::delete_ssh_password(&id).ok();
-            keychain_utils::delete_ssh_key_passphrase(&id).ok();
-            credential_cache::invalidate_ssh_password(&cache, &id);
-            credential_cache::invalidate_ssh_key_passphrase(&cache, &id);
-        }
-        persistence::apply_secret_persistence(&mut params_to_save, keychain_stored);
-    } else {
-        keychain_utils::delete_db_password(&id).ok();
-        keychain_utils::delete_ssh_password(&id).ok();
-        keychain_utils::delete_ssh_key_passphrase(&id).ok();
-        // The connection URI is cleared by its own transaction below, which
-        // needs the previous cache entry intact to roll back.
-        credential_cache::invalidate_db_password(&cache, &id);
-        credential_cache::invalidate_ssh_password(&cache, &id);
-        credential_cache::invalidate_ssh_key_passphrase(&cache, &id);
-    }
-
-    // Preserve existing group_id and sort_order from the original connection
-    let original_group_id = conn_file.connections[conn_idx].group_id.clone();
-    let original_sort_order = conn_file.connections[conn_idx].sort_order;
-    let original_db_selection = conn_file.connections[conn_idx].params.database.clone();
-    // Preserve user's appearance customization across edits
-    let original_appearance = conn_file.connections[conn_idx].appearance.clone();
-    // Tags are managed by set_connection_tags; preserve them across edits.
-    let original_tag_ids = conn_file.connections[conn_idx].tag_ids.clone();
-    let persisted_in_keychain = params_to_save.save_in_keychain.unwrap_or(false);
-
-    let updated = SavedConnection {
-        id: id.clone(),
-        name,
-        params: params_to_save,
-        plugin_secret_keys,
-        group_id: original_group_id,
-        sort_order: original_sort_order,
-        detect_json_in_text_columns,
-        appearance: original_appearance,
-        tag_ids: original_tag_ids,
-        environment: validate_environment(environment)?,
-    };
-
-    conn_file.connections[conn_idx] = updated.clone();
-
-    if let Err(err) = crate::plugin_secrets::persist_secret_changes(
-        &cache,
-        &id,
-        Some(&previous_driver_id),
-        &original_plugin_secret_keys,
-        &params.driver,
-        &plugin_secret_changes,
-        || {
-            persist_connection_uri_change(&cache, &id, existing_uri_in_keychain, uri_change, || {
-                save_connections_and_invalidate(&app, &path, &conn_file)
-            })
-        },
-    ) {
-        keychain_writes.roll_back(&cache, &id);
-        return Err(err);
-    }
-    if !persisted_in_keychain {
-        // Same as save: the fallback put the secrets in the config file, so
-        // the keychain copies from this update are orphans.
-        keychain_writes.discard(&cache, &id);
-    }
-
-    let mut metadata_changed = false;
-    for driver_id in [&previous_driver_id, &updated.params.driver] {
-        if let Some(driver) = crate::drivers::registry::get_driver(driver_id).await {
-            if driver.has_connection_metadata() {
-                driver.invalidate_connection_metadata(Some(&id)).await;
-                metadata_changed = true;
-            }
-        }
-    }
-    if metadata_changed {
-        let _ = app.emit(
-            "connection-metadata-invalidated",
-            serde_json::json!({"connectionId": id}),
-        );
-    }
-
-    // On single→multi transition, associate existing favorites/history (with no
-    // database set) to the original single database name.
-    if let Some(previous_db) =
-        crate::models::single_db_before_multi_transition(&original_db_selection, &params.database)
-    {
-        if let Err(e) =
-            crate::saved_queries::backfill_missing_database_for_connection(&app, &id, &previous_db)
-        {
-            log::warn!("Failed to backfill saved query database for {}: {}", id, e);
-        }
-        if let Err(e) =
-            crate::query_history::backfill_missing_database_for_connection(&app, &id, &previous_db)
-                .await
-        {
-            log::warn!(
-                "Failed to backfill query history database for {}: {}",
-                id,
-                e
-            );
-        }
-    }
-
-    let requested_keychain = params.save_in_keychain.unwrap_or(false);
-    let mut returned_conn = updated;
-    returned_conn.params = params;
-    if requested_keychain && !persisted_in_keychain {
-        returned_conn.params.save_in_keychain = Some(false);
-    }
-    Ok(returned_conn)
-}
-
-/// Pure, testable core of `set_connection_appearance`.
-/// Mutates `file` in place; does not touch disk or Tauri state.
-fn set_appearance_impl(
-    file: &mut ConnectionsFile,
-    id: &str,
-    appearance: Option<crate::models::ConnectionAppearance>,
-) -> Result<(), String> {
-    let conn = file
-        .connections
-        .iter_mut()
-        .find(|c| c.id == id)
-        .ok_or("Connection not found")?;
-    conn.appearance = appearance;
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn set_connection_appearance<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-    appearance: Option<crate::models::ConnectionAppearance>,
-) -> Result<(), String> {
-    let path = get_config_path(&app)?;
-    let mut conn_file = persistence::load_connections_file(&path)?;
-    set_appearance_impl(&mut conn_file, &id, appearance)?;
-    save_connections_and_invalidate(&app, &path, &conn_file)?;
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn duplicate_connection<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-) -> Result<SavedConnection, String> {
-    let path = get_config_path(&app)?;
-    let mut conn_file = persistence::load_connections_file(&path)?;
-
-    let original_idx = conn_file
-        .connections
-        .iter()
-        .position(|c| c.id == id)
-        .ok_or("Connection not found")?;
-    let mut original = conn_file.connections[original_idx].clone();
-
-    let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
-    // Same tolerant read as a driver call: a secret missing from the keychain
-    // is not copied, and the duplicate does not list it.
-    let plugin_secret_changes = crate::plugin_secrets::duplicate_secret_changes(
-        &original.id,
-        &original.plugin_secret_keys,
-        |key| {
-            credential_cache::get_plugin_secret_cached(
-                &cache,
-                &original.id,
-                &original.params.driver,
-                key,
-            )
-        },
-    );
-    let duplicate_plugin_secret_keys =
-        crate::plugin_secrets::next_secret_keys(&[], true, &plugin_secret_changes)?;
-
-    // Same IAM-auth guard as `find_connection_by_id`: never copy a stale RDS
-    // auth token into a duplicated connection.
-    if original.params.save_in_keychain.unwrap_or(false)
-        && !original.params.use_iam_auth.unwrap_or(false)
-    {
-        if let Ok(pwd) = credential_cache::get_db_password_cached(&cache, &original.id) {
-            original.params.password = Some(pwd);
-        }
-        if original.params.ssh_enabled.unwrap_or(false) {
-            if let Ok(ssh_pwd) = credential_cache::get_ssh_password_cached(&cache, &original.id) {
-                if !ssh_pwd.trim().is_empty() {
-                    original.params.ssh_password = Some(ssh_pwd);
-                }
-            }
-            if let Ok(ssh_passphrase) =
-                credential_cache::get_ssh_key_passphrase_cached(&cache, &original.id)
-            {
-                if !ssh_passphrase.trim().is_empty() {
-                    original.params.ssh_key_passphrase = Some(ssh_passphrase);
-                }
-            }
-        }
-    }
-
-    let new_id = Uuid::new_v4().to_string();
-    let mut new_params = original.params.clone();
-
-    // Save passwords to new keychain entries if enabled
-    if new_params.save_in_keychain.unwrap_or(false) {
-        if let Some(pwd) = &new_params.password {
-            keychain_utils::set_db_password(&new_id, pwd)?;
-            credential_cache::set_db_password_cached(&cache, &new_id, pwd);
-        }
-        if new_params.ssh_enabled.unwrap_or(false) {
-            if let Some(ssh_pwd) = &new_params.ssh_password {
-                keychain_utils::set_ssh_password(&new_id, ssh_pwd)?;
-                credential_cache::set_ssh_password_cached(&cache, &new_id, ssh_pwd);
-            }
-            if let Some(ssh_passphrase) = &new_params.ssh_key_passphrase {
-                if !ssh_passphrase.trim().is_empty() {
-                    keychain_utils::set_ssh_key_passphrase(&new_id, ssh_passphrase)?;
-                    credential_cache::set_ssh_key_passphrase_cached(
-                        &cache,
-                        &new_id,
-                        ssh_passphrase,
-                    );
-                }
-            }
-        }
-        new_params.password = None;
-        new_params.ssh_password = None;
-        new_params.ssh_key_passphrase = None;
-    }
-
-    // A connection URI only lives in the keychain, under the original's id.
-    // Give the duplicate its own entry, or drop the marker if there is nothing
-    // to copy: a marker without an entry leaves a copy that can neither
-    // connect nor be deleted.
-    let original_uri = if original.params.connection_uri_in_keychain.unwrap_or(false) {
-        credential_cache::get_connection_uri_cached(&cache, &original.id, true)
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
-    if let Some(uri) = &original_uri {
-        keychain_utils::set_connection_uri(&new_id, uri)?;
-        credential_cache::set_connection_uri_cached(&cache, &new_id, uri);
-    }
-    new_params = params_for_persistence(&new_params, original_uri.is_some());
-
-    // Copy the icon file so the duplicate owns its own copy.
-    // If the original has an Image icon, the duplicate must not share the same file path —
-    // deleting either connection would otherwise cascade-delete the shared file and break
-    // the other connection's icon. We copy the file; on failure we drop the icon rather
-    // than sharing the path.
-    let new_appearance = {
-        let mut app_earance = original.appearance.clone();
-        if let Some(ref mut a) = app_earance {
-            if let Some(crate::models::IconOverride::Image { ref path }) = a.icon.clone() {
-                let app_data = crate::paths::get_app_data_dir();
-                match crate::connection_appearance::copy_icon_for_duplicate(
-                    &app_data, path, &new_id,
-                ) {
-                    Ok(new_path) => {
-                        a.icon = Some(crate::models::IconOverride::Image { path: new_path });
-                    }
-                    Err(_) => {
-                        // Couldn't copy — drop the icon to avoid sharing
-                        a.icon = None;
-                        if a.accent_color.is_none() {
-                            app_earance = None;
-                        }
-                    }
-                }
-            }
-        }
-        app_earance
-    };
-
-    let new_conn = SavedConnection {
-        id: new_id.clone(),
-        name: format!("{} (Copy)", original.name),
-        params: new_params,
-        plugin_secret_keys: duplicate_plugin_secret_keys,
-        group_id: original.group_id.clone(), // Copy to same group as original
-        sort_order: None,                    // Will be placed at end of group
-        detect_json_in_text_columns: original.detect_json_in_text_columns,
-        appearance: new_appearance,
-        tag_ids: original.tag_ids.clone(),
-        // Normalize rather than fail: an invalid on-disk value must not
-        // block duplication, the copy just becomes "unclassified".
-        environment: validate_environment(original.environment.clone()).unwrap_or(None),
-    };
-
-    conn_file.connections.push(new_conn.clone());
-
-    crate::plugin_secrets::persist_secret_changes(
-        &cache,
-        &new_id,
-        None,
-        &[],
-        &original.params.driver,
-        &plugin_secret_changes,
-        || save_connections_and_invalidate(&app, &path, &conn_file),
-    )?;
-
-    let mut returned_conn = new_conn;
-    // Return with passwords for frontend consistency
-    if returned_conn.params.save_in_keychain.unwrap_or(false) {
-        // We can just use the values from `original.params` as they are identical (unless we cleared them in new_params)
-        // Actually original.params holds the clear text now.
-        returned_conn.params.password = original.params.password;
-        returned_conn.params.ssh_password = original.params.ssh_password;
-        returned_conn.params.ssh_key_passphrase = original.params.ssh_key_passphrase;
-    }
-
-    Ok(returned_conn)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn get_connections<R: Runtime>(
-    app: AppHandle<R>,
-) -> Result<Vec<SavedConnection>, String> {
-    // Run migrations if needed
-    migrate_ssh_connections(&app).await.ok();
-    migrate_postgres_ssl_mode_spelling(&app).await.ok();
-
-    let path = get_config_path(&app)?;
-    crate::application::connections::load_connections(&path)
-}
-
 // ==================== SSH Connection Management ====================
 
 #[cfg(feature = "desktop")]
@@ -1870,84 +1284,130 @@ pub async fn delete_k8s_connection<R: Runtime>(
 }
 
 #[cfg(feature = "desktop")]
+async fn execute_tunnel_command<R: Runtime>(
+    app: &AppHandle<R>,
+    command: crate::application::tunnels::TunnelCommand,
+) -> Result<serde_json::Value, String> {
+    crate::application::tunnels::execute(
+        &app.state::<crate::runtime::RuntimeContext>(),
+        None,
+        command,
+    )
+    .await
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn test_k8s_connection_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     context: String,
     namespace: String,
     kubectl_path: Option<String>,
     kubeconfig_path: Option<String>,
-) -> Result<String, String> {
+) -> Result<serde_json::Value, String> {
     let options = crate::k8s_tunnel::K8sCommandOptions::new(kubectl_path, kubeconfig_path);
-    crate::k8s_tunnel::test_k8s_connection(&context, &namespace, &options)
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::TestK8sConnection {
+            context,
+            namespace,
+            options,
+        },
+    )
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_contexts_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     kubectl_path: Option<String>,
     kubeconfig_path: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<serde_json::Value, String> {
     let options = crate::k8s_tunnel::K8sCommandOptions::new(kubectl_path, kubeconfig_path);
-    crate::k8s_tunnel::get_k8s_contexts(&options)
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::GetK8sContexts { options },
+    )
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_namespaces_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     context: String,
     kubectl_path: Option<String>,
     kubeconfig_path: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<serde_json::Value, String> {
     let options = crate::k8s_tunnel::K8sCommandOptions::new(kubectl_path, kubeconfig_path);
-    crate::k8s_tunnel::get_k8s_namespaces(&context, &options)
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::GetK8sNamespaces { context, options },
+    )
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_resources_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     context: String,
     namespace: String,
     resource_type: String,
     kubectl_path: Option<String>,
     kubeconfig_path: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> Result<serde_json::Value, String> {
     let options = crate::k8s_tunnel::K8sCommandOptions::new(kubectl_path, kubeconfig_path);
-    crate::k8s_tunnel::get_k8s_resources(&context, &namespace, &resource_type, &options)
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::GetK8sResources {
+            context,
+            namespace,
+            resource_type,
+            options,
+        },
+    )
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_k8s_resource_ports_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     context: String,
     namespace: String,
     resource_type: String,
     resource_name: String,
     kubectl_path: Option<String>,
     kubeconfig_path: Option<String>,
-) -> Result<Vec<u16>, String> {
+) -> Result<serde_json::Value, String> {
     let options = crate::k8s_tunnel::K8sCommandOptions::new(kubectl_path, kubeconfig_path);
-    crate::k8s_tunnel::get_k8s_resource_ports(
-        &context,
-        &namespace,
-        &resource_type,
-        &resource_name,
-        &options,
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::GetK8sResourcePorts {
+            context,
+            namespace,
+            resource_type,
+            resource_name,
+            options,
+        },
     )
+    .await
 }
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn validate_k8s_path_cmd<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     path: String,
     kind: String,
-) -> Result<(), String> {
-    crate::k8s_tunnel::validate_k8s_path(&path, &kind)
+) -> Result<serde_json::Value, String> {
+    execute_tunnel_command(
+        &app,
+        crate::application::tunnels::TunnelCommand::ValidateK8sPath { path, kind },
+    )
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -1963,10 +1423,9 @@ pub async fn test_ssm_connection_cmd<R: Runtime>(
     region: Option<String>,
     host: String,
     port: u16,
-) -> Result<String, String> {
-    let result = crate::application::tunnels::execute(
-        &app.state::<crate::runtime::RuntimeContext>(),
-        None,
+) -> Result<serde_json::Value, String> {
+    execute_tunnel_command(
+        &app,
         crate::application::tunnels::TunnelCommand::TestSsmConnection {
             target,
             profile,
@@ -1975,8 +1434,7 @@ pub async fn test_ssm_connection_cmd<R: Runtime>(
             port,
         },
     )
-    .await?;
-    serde_json::from_value(result).map_err(|e| e.to_string())
+    .await
 }
 
 #[cfg(feature = "desktop")]
@@ -1991,228 +1449,6 @@ pub async fn expand_k8s_connection_params<R: Runtime>(
         return Ok(expanded);
     }
     crate::application::tunnels::resolve_expanded_connection_params(&expanded, None)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn test_connection<R: Runtime>(
-    app: AppHandle<R>,
-    request: TestConnectionRequest,
-) -> Result<String, String> {
-    log::info!(
-        "Testing connection to database: {}",
-        request.params.database
-    );
-    let progress_id = request.progress_id.as_deref();
-    // The saved connection, without plugin secrets: they are resolved below,
-    // after the pending changes from the modal are known.
-    let saved_conn = match &request.connection_id {
-        Some(id) => find_connection_metadata_by_id(&app, id).ok(),
-        None => None,
-    };
-
-    let mut expanded_params = expand_ssh_connection_params(&app, &request.params)
-        .await
-        .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-    expanded_params = expand_k8s_connection_params(&app, &expanded_params)
-        .await
-        .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-
-    // AWS RDS IAM auth tokens are short-lived (15 min) and must come from the
-    // password field on every test/connect, never from the keychain. Skip the
-    // keychain fallback so a stale token can't be reused.
-    let iam_auth = expanded_params.use_iam_auth.unwrap_or(false);
-
-    // IAM auth needs an RDS auth token right now. Without this guard the
-    // builder accepts an empty password, the server replies with the opaque
-    // "Access denied (using password: YES)", and the user can't tell whether
-    // the token is missing, wrong, or expired.
-    require_iam_token(
-        iam_auth,
-        request.params.password.as_deref(),
-        expanded_params.password.as_deref(),
-    )
-    .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-
-    if !iam_auth && request.params.password.is_none() && expanded_params.password.is_none() {
-        expanded_params.password =
-            resolve_test_connection_password(&request.params, saved_conn.as_ref(), |conn_id| {
-                keychain_utils::get_db_password(conn_id, "")
-            });
-    }
-
-    // Plugin-owned secrets: stored values of the saved connection, overridden
-    // by whatever the modal is about to set or clear.
-    {
-        let cache = app.state::<std::sync::Arc<credential_cache::CredentialCache>>();
-        crate::plugin_secrets::apply_request_secrets(
-            &cache,
-            saved_conn.as_ref(),
-            &mut expanded_params,
-            &request.plugin_secret_changes,
-        )
-        .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-    }
-
-    // Reconnecting to a saved connection sends the on-disk params, which never
-    // carry the URI — restore it the same way the password is restored above.
-    // An inline URI (the ephemeral Test Connection flow) always wins.
-    if runtime_connection_uri(&expanded_params).is_none() {
-        if let Some(conn_id) = &request.connection_id {
-            let cache = app.state::<std::sync::Arc<credential_cache::CredentialCache>>();
-            restore_runtime_connection_uri(&cache, conn_id, &mut expanded_params)
-                .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-        }
-    }
-
-    let ssh_enabled = expanded_params.ssh_enabled.unwrap_or(false);
-    let k8s_enabled = expanded_params.k8s_enabled.unwrap_or(false);
-    let ssm_enabled = expanded_params.ssm_enabled.unwrap_or(false);
-    let tunnel_step = if ssh_enabled {
-        Some("sshTunnel")
-    } else if k8s_enabled {
-        Some("k8sForward")
-    } else if ssm_enabled {
-        Some("ssmForward")
-    } else {
-        None
-    };
-
-    if ssh_enabled {
-        emit_test_progress(
-            &app,
-            progress_id,
-            "sshTunnel",
-            "start",
-            Some(format!(
-                "{}@{}:{}",
-                expanded_params.ssh_user.as_deref().unwrap_or("?"),
-                expanded_params.ssh_host.as_deref().unwrap_or("?"),
-                expanded_params.ssh_port.unwrap_or(22)
-            )),
-        );
-    } else if k8s_enabled {
-        emit_test_progress(
-            &app,
-            progress_id,
-            "k8sForward",
-            "start",
-            expanded_params.k8s_resource_name.clone(),
-        );
-    } else if ssm_enabled {
-        emit_test_progress(
-            &app,
-            progress_id,
-            "ssmForward",
-            "start",
-            expanded_params.ssm_target.clone(),
-        );
-    }
-
-    let resolved_params = if let Some(conn_id) = &request.connection_id {
-        resolve_connection_params_with_id(&expanded_params, conn_id)
-    } else {
-        resolve_connection_params(&expanded_params)
-    }
-    .map_err(|e| emit_test_failure(&app, progress_id, tunnel_step.unwrap_or("resolve"), e))?;
-    log::debug!(
-        "Test connection params: Host={:?}, Port={:?}",
-        resolved_params.host,
-        resolved_params.port
-    );
-
-    if let Some(step) = tunnel_step {
-        emit_test_progress(
-            &app,
-            progress_id,
-            step,
-            "ok",
-            resolved_params.port.map(|port| format!("127.0.0.1:{port}")),
-        );
-    }
-
-    let drv = driver_for(&resolved_params.driver)
-        .await
-        .map_err(|e| emit_test_failure(&app, progress_id, "resolve", e))?;
-
-    let db_target = match (expanded_params.host.as_deref(), expanded_params.port) {
-        (Some(host), Some(port)) => format!("{host}:{port}"),
-        (Some(host), None) => host.to_string(),
-        _ => expanded_params.database.to_string(),
-    };
-    emit_test_progress(&app, progress_id, "dbConnect", "start", Some(db_target));
-
-    // For file-based drivers, verify the database file exists before attempting
-    // connection, unless the driver opens `:memory:` as a temporary database.
-    let capabilities = &drv.manifest().capabilities;
-    if capabilities.file_based
-        && crate::fs_path::requires_existing_database_file(
-            capabilities.in_memory,
-            resolved_params.database.primary(),
-        )
-    {
-        let db_path = if resolved_params.driver == "sqlite" {
-            crate::sqlite_database::expand_sqlite_filename(resolved_params.database.primary())
-        } else {
-            PathBuf::from(resolved_params.database.primary())
-        };
-        if !db_path.exists() {
-            let err = format!("Database file not found: {}", resolved_params.database);
-            return Err(emit_test_failure(&app, progress_id, "dbConnect", err));
-        }
-    }
-
-    drv.test_connection(&resolved_params).await.map_err(|e| {
-        log::warn!(
-            "Connection test failed for database {}: {e}",
-            request.params.database
-        );
-        emit_test_failure(&app, progress_id, "dbConnect", e)
-    })?;
-
-    drv.invalidate_connection_metadata(resolved_params.connection_id.as_deref())
-        .await;
-
-    emit_test_progress(&app, progress_id, "dbConnect", "ok", None);
-    log::info!(
-        "Connection test successful for database: {}",
-        request.params.database
-    );
-    Ok("Connection successful!".to_string())
-}
-
-#[cfg(feature = "desktop")]
-/// Emits one step of a connection test's live progress log. A no-op when the
-/// caller did not request progress (no id).
-fn emit_test_progress<R: Runtime>(
-    app: &AppHandle<R>,
-    progress_id: Option<&str>,
-    step: &str,
-    status: &str,
-    detail: Option<String>,
-) {
-    let Some(id) = progress_id else { return };
-    let _ = app.emit(
-        "connection-test-progress",
-        serde_json::json!({
-            "id": id,
-            "step": step,
-            "status": status,
-            "detail": detail,
-        }),
-    );
-}
-
-#[cfg(feature = "desktop")]
-/// Emits a failed step and passes the error through, for use in `map_err`.
-fn emit_test_failure<R: Runtime>(
-    app: &AppHandle<R>,
-    progress_id: Option<&str>,
-    step: &str,
-    error: String,
-) -> String {
-    emit_test_progress(app, progress_id, step, "error", Some(error.clone()));
-    error
 }
 
 #[cfg(test)]
@@ -2286,85 +1522,6 @@ mod tests {
     }
 
     #[test]
-    fn persisted_params_never_contain_the_connection_uri() {
-        let sentinel = "mongodb+srv://fixture-user:fixture-password@cluster.example.invalid/app";
-        let params = ConnectionParams {
-            connection_uri: Some(sentinel.to_string()),
-            save_in_keychain: Some(true),
-            ..base_params()
-        };
-
-        let persisted = params_for_persistence(&params, true);
-        let json = serde_json::to_string(&persisted).expect("serialize persisted params");
-
-        assert_eq!(persisted.connection_uri, None);
-        assert_eq!(persisted.connection_uri_in_keychain, Some(true));
-        assert!(!json.contains(sentinel));
-        assert!(!json.contains("fixture-password"));
-    }
-
-    #[test]
-    fn a_connection_uri_cannot_be_saved_outside_the_keychain() {
-        let params = ConnectionParams {
-            connection_uri: Some("mongodb+srv://cluster.example.invalid/app".to_string()),
-            save_in_keychain: Some(false),
-            ..base_params()
-        };
-
-        assert!(validate_connection_uri_persistence(&params).is_err());
-        assert!(validate_connection_uri_persistence(&base_params()).is_ok());
-    }
-
-    #[test]
-    fn a_blank_connection_uri_is_treated_as_absent() {
-        let params = ConnectionParams {
-            connection_uri: Some("   ".to_string()),
-            save_in_keychain: Some(false),
-            ..base_params()
-        };
-
-        assert_eq!(runtime_connection_uri(&params), None);
-        assert!(validate_connection_uri_persistence(&params).is_ok());
-    }
-
-    #[test]
-    fn previous_uri_skips_the_keychain_when_none_is_stored() {
-        let previous = previous_keychain_connection_uri(false, || {
-            panic!("the keychain must not be read without a stored marker")
-        });
-
-        assert_eq!(previous, Ok(None));
-    }
-
-    #[test]
-    fn previous_uri_returns_the_stored_value() {
-        let uri = "mongodb+srv://cluster.example.invalid/app";
-        let previous = previous_keychain_connection_uri(true, || Ok(Some(uri.to_string())));
-
-        assert_eq!(previous, Ok(Some(uri.to_string())));
-    }
-
-    #[test]
-    fn previous_uri_treats_a_missing_entry_as_nothing_to_restore() {
-        // A duplicate used to carry the marker without its own entry. Deleting
-        // it must not fail just because there is nothing to restore.
-        let previous = previous_keychain_connection_uri(true, || Ok(None));
-
-        assert_eq!(previous, Ok(None));
-    }
-
-    #[test]
-    fn previous_uri_fails_on_a_genuine_keychain_error() {
-        let previous =
-            previous_keychain_connection_uri(true, || Err("securityd is not running".to_string()));
-
-        assert_eq!(
-            previous,
-            Err("Failed to read the stored connection URI from the OS keychain".to_string())
-        );
-    }
-
-    #[test]
     fn restores_the_exact_connection_uri_from_the_session_cache() {
         let cache = credential_cache::CredentialCache::default();
         let sentinel =
@@ -2405,24 +1562,6 @@ mod tests {
             credential_cache::get_connection_uri_cached(&cache, "conn-1", false).unwrap(),
             None
         );
-    }
-
-    #[test]
-    fn a_failed_persist_rolls_the_stored_uri_back() {
-        let rolled_back = std::cell::Cell::new(false);
-
-        let error = persist_secret_change(
-            || Ok(()),
-            || Err("fictional connections.json failure".to_string()),
-            || {
-                rolled_back.set(true);
-                Ok(())
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(error, "fictional connections.json failure");
-        assert!(rolled_back.get());
     }
 
     fn saved_conn(id: &str, password: Option<&str>, save_in_keychain: bool) -> SavedConnection {
@@ -2499,114 +1638,6 @@ mod tests {
             .expect("appearance must be preserved");
         assert_eq!(app.accent_color.as_deref(), Some("#ff0000"));
         assert!(matches!(&app.icon, Some(IconOverride::Emoji { value }) if value == "🐘"));
-    }
-
-    /// Helper: build a minimal ConnectionsFile with one connection.
-    fn one_conn_file(
-        id: &str,
-        appearance: Option<crate::models::ConnectionAppearance>,
-    ) -> ConnectionsFile {
-        let conn = SavedConnection {
-            id: id.to_string(),
-            name: "Test".to_string(),
-            params: base_params(),
-            plugin_secret_keys: Vec::new(),
-            group_id: None,
-            sort_order: None,
-            detect_json_in_text_columns: None,
-            appearance,
-            tag_ids: None,
-            environment: None,
-        };
-        ConnectionsFile {
-            groups: vec![],
-            connections: vec![conn],
-            tags: vec![],
-        }
-    }
-
-    #[test]
-    fn set_connection_appearance_updates_existing() {
-        use crate::models::{ConnectionAppearance, IconOverride};
-
-        let mut file = one_conn_file("conn-1", None);
-        let new_appearance = ConnectionAppearance {
-            accent_color: Some("#00ff00".to_string()),
-            icon: Some(IconOverride::Emoji {
-                value: "🦀".to_string(),
-            }),
-        };
-
-        set_appearance_impl(&mut file, "conn-1", Some(new_appearance)).unwrap();
-
-        let app = file.connections[0]
-            .appearance
-            .as_ref()
-            .expect("appearance must be set");
-        assert_eq!(app.accent_color.as_deref(), Some("#00ff00"));
-        assert!(matches!(&app.icon, Some(IconOverride::Emoji { value }) if value == "🦀"));
-    }
-
-    #[test]
-    fn set_connection_appearance_clears_with_none() {
-        use crate::models::{ConnectionAppearance, IconOverride};
-
-        let existing_appearance = ConnectionAppearance {
-            accent_color: Some("#ff0000".to_string()),
-            icon: Some(IconOverride::Pack {
-                id: "server".to_string(),
-            }),
-        };
-        let mut file = one_conn_file("conn-2", Some(existing_appearance));
-
-        set_appearance_impl(&mut file, "conn-2", None).unwrap();
-
-        assert!(file.connections[0].appearance.is_none());
-    }
-
-    #[test]
-    fn set_connection_appearance_errors_on_missing_id() {
-        let mut file = one_conn_file("conn-real", None);
-
-        let result = set_appearance_impl(&mut file, "conn-does-not-exist", None);
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Connection not found");
-    }
-
-    #[test]
-    fn test_resolve_password_prefers_request() {
-        let mut params = base_params();
-        params.password = Some("from_request".to_string());
-        let result = resolve_test_connection_password(&params, None, |_| Ok("kc".to_string()));
-        assert_eq!(result, Some("from_request".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_password_from_keychain() {
-        let params = base_params();
-        let saved = saved_conn("id1", None, true);
-        let result =
-            resolve_test_connection_password(&params, Some(&saved), |_| Ok("kc".to_string()));
-        assert_eq!(result, Some("kc".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_password_from_saved_when_not_keychain() {
-        let params = base_params();
-        let saved = saved_conn("id1", Some("stored"), false);
-        let result =
-            resolve_test_connection_password(&params, Some(&saved), |_| Ok("kc".to_string()));
-        assert_eq!(result, Some("stored".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_password_fallback_to_saved_when_keychain_empty() {
-        let params = base_params();
-        let saved = saved_conn("id1", Some("stored"), true);
-        let result =
-            resolve_test_connection_password(&params, Some(&saved), |_| Ok("  ".to_string()));
-        assert_eq!(result, Some("stored".to_string()));
     }
 
     mod build_connection_url_tests {
@@ -3679,76 +2710,6 @@ mod tests {
 
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub async fn list_databases<R: Runtime>(
-    app: AppHandle<R>,
-    request: TestConnectionRequest,
-) -> Result<Vec<String>, String> {
-    let mut expanded_params = expand_ssh_connection_params(&app, &request.params).await?;
-    expanded_params = expand_k8s_connection_params(&app, &expanded_params).await?;
-
-    let iam_auth = expanded_params.use_iam_auth.unwrap_or(false);
-
-    // IAM auth needs an RDS auth token right now; skip the keychain fallback
-    // so a stale token can't be reused, and fail fast with an actionable
-    // message if none was supplied.
-    require_iam_token(
-        iam_auth,
-        request.params.password.as_deref(),
-        expanded_params.password.as_deref(),
-    )?;
-
-    let saved_conn = match &request.connection_id {
-        Some(id) => find_connection_metadata_by_id(&app, id).ok(),
-        None => None,
-    };
-    if !iam_auth && request.params.password.is_none() && expanded_params.password.is_none() {
-        expanded_params.password =
-            resolve_test_connection_password(&request.params, saved_conn.as_ref(), |conn_id| {
-                keychain_utils::get_db_password(conn_id, "")
-            });
-    }
-
-    // Reconnecting to a saved connection sends the on-disk params, which never
-    // carry the URI — restore it the same way the password is restored above.
-    // An inline URI (the ephemeral Test Connection flow) always wins.
-    if runtime_connection_uri(&expanded_params).is_none() {
-        if let Some(conn_id) = &request.connection_id {
-            let cache = app.state::<std::sync::Arc<credential_cache::CredentialCache>>();
-            restore_runtime_connection_uri(&cache, conn_id, &mut expanded_params)?;
-        }
-    }
-
-    // Plugin-owned secrets, resolved the same way as in `test_connection`.
-    {
-        let cache = app.state::<std::sync::Arc<credential_cache::CredentialCache>>();
-        crate::plugin_secrets::apply_request_secrets(
-            &cache,
-            saved_conn.as_ref(),
-            &mut expanded_params,
-            &request.plugin_secret_changes,
-        )?;
-    }
-
-    let resolved_params = if let Some(conn_id) = &request.connection_id {
-        resolve_connection_params_with_id(&expanded_params, conn_id)?
-    } else {
-        resolve_connection_params(&expanded_params)?
-    };
-
-    #[cfg(debug_assertions)]
-    log::debug!(
-        "[List Databases] Resolved Params: Host={:?}, Port={:?}, Username={:?}",
-        resolved_params.host,
-        resolved_params.port,
-        resolved_params.username,
-    );
-
-    let drv = driver_for(&resolved_params.driver).await?;
-    drv.get_databases(&resolved_params).await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
 pub async fn get_tables<R: Runtime>(
     app: AppHandle<R>,
     connection_id: String,
@@ -4126,7 +3087,7 @@ pub(crate) fn cancel_query_impl(
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_query(
-    state: State<'_, QueryCancellationState>,
+    state: State<'_, std::sync::Arc<QueryCancellationState>>,
     connection_id: String,
 ) -> Result<(), String> {
     crate::application::queries::cancel_query(&state, None, &connection_id, None)
@@ -4136,7 +3097,7 @@ pub async fn cancel_query(
 #[tauri::command]
 pub async fn execute_query<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, QueryCancellationState>,
+    state: State<'_, std::sync::Arc<QueryCancellationState>>,
     connection_id: String,
     query: String,
     limit: Option<u32>,
@@ -4207,7 +3168,7 @@ pub async fn release_query_session<R: Runtime>(
 #[tauri::command]
 pub async fn execute_query_batch<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, QueryCancellationState>,
+    state: State<'_, std::sync::Arc<QueryCancellationState>>,
     connection_id: String,
     queries: Vec<String>,
     limit: Option<u32>,
@@ -4240,7 +3201,7 @@ pub async fn execute_query_batch<R: Runtime>(
 #[tauri::command]
 pub async fn explain_query_plan<R: Runtime>(
     app: AppHandle<R>,
-    state: State<'_, QueryCancellationState>,
+    state: State<'_, std::sync::Arc<QueryCancellationState>>,
     connection_id: String,
     query: String,
     analyze: bool,
@@ -4487,31 +3448,6 @@ pub async fn build_connection_url(params: &ConnectionParams) -> Result<String, S
             params.database
         )),
         _ => Err("Unsupported driver".into()),
-    }
-}
-
-fn resolve_test_connection_password(
-    params: &ConnectionParams,
-    saved_conn: Option<&SavedConnection>,
-    get_keychain_password: impl Fn(&str) -> Result<String, String>,
-) -> Option<String> {
-    if let Some(pwd) = &params.password {
-        return Some(pwd.clone());
-    }
-
-    let saved = saved_conn?;
-
-    if saved.params.save_in_keychain.unwrap_or(false) {
-        if let Ok(pwd) = get_keychain_password(&saved.id) {
-            if !pwd.trim().is_empty() {
-                return Some(pwd);
-            }
-        }
-    }
-
-    match &saved.params.password {
-        Some(pwd) if !pwd.trim().is_empty() => Some(pwd.clone()),
-        _ => None,
     }
 }
 
@@ -5382,66 +4318,6 @@ pub async fn get_driver_manifest(
 
 // ==================== Connection Groups Management ====================
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn get_connection_groups<R: Runtime>(
-    app: AppHandle<R>,
-) -> Result<Vec<ConnectionGroup>, String> {
-    let path = get_config_path(&app)?;
-    persistence::load_groups(&path)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn get_connections_with_groups<R: Runtime>(
-    app: AppHandle<R>,
-) -> Result<ConnectionsFile, String> {
-    // Run migrations if needed
-    migrate_ssh_connections(&app).await.ok();
-    migrate_postgres_ssl_mode_spelling(&app).await.ok();
-
-    let path = get_config_path(&app)?;
-    persistence::load_connections_file(&path)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn create_connection_group<R: Runtime>(
-    app: AppHandle<R>,
-    name: String,
-    parent_id: Option<String>,
-) -> Result<ConnectionGroup, String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path).unwrap_or_default();
-
-    if let Some(pid) = &parent_id {
-        if !file.groups.iter().any(|g| &g.id == pid) {
-            return Err(format!("Parent group with ID {} not found", pid));
-        }
-    }
-
-    let max_order = file
-        .groups
-        .iter()
-        .filter(|g| g.parent_id == parent_id)
-        .map(|g| g.sort_order)
-        .max()
-        .unwrap_or(-1);
-
-    let group = ConnectionGroup {
-        id: Uuid::new_v4().to_string(),
-        name,
-        collapsed: false,
-        sort_order: max_order + 1,
-        parent_id,
-    };
-
-    file.groups.push(group.clone());
-    save_connections_and_invalidate(&app, &path, &file)?;
-
-    Ok(group)
-}
-
 /// Splits a `/`-separated group path into trimmed, non-empty segments.
 /// Returns an error if the result is empty.
 pub(crate) fn parse_group_path(path: &str) -> Result<Vec<String>, String> {
@@ -5467,135 +4343,6 @@ pub(crate) fn find_child_group<'a>(
     groups
         .iter()
         .find(|g| g.name.to_lowercase() == name_lower && g.parent_id == *parent_id)
-}
-
-/// Creates a nested group hierarchy from a `/`-separated path.
-///
-/// Each segment of `path` becomes one group. Existing segments are reused
-/// (looked up case-insensitively among the children of the current parent);
-/// missing segments are created in order. The final segment is returned.
-/// The hierarchy is created atomically: either every missing segment is
-/// persisted or none are.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn create_group_path<R: Runtime>(
-    app: AppHandle<R>,
-    path: String,
-    parent_id: Option<String>,
-) -> Result<ConnectionGroup, String> {
-    let path_cfg = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path_cfg).unwrap_or_default();
-
-    if let Some(pid) = &parent_id {
-        if !file.groups.iter().any(|g| &g.id == pid) {
-            return Err(format!("Parent group with ID {} not found", pid));
-        }
-    }
-
-    let segments = parse_group_path(&path)?;
-    let mut current_parent = parent_id;
-    let mut last_created: Option<ConnectionGroup> = None;
-
-    for seg in segments {
-        if let Some(g) = find_child_group(&file.groups, &seg, &current_parent).cloned() {
-            current_parent = Some(g.id.clone());
-            last_created = Some(g);
-            continue;
-        }
-        let max_order = file
-            .groups
-            .iter()
-            .filter(|g| g.parent_id == current_parent)
-            .map(|g| g.sort_order)
-            .max()
-            .unwrap_or(-1);
-        let new_group = ConnectionGroup {
-            id: Uuid::new_v4().to_string(),
-            name: seg,
-            collapsed: false,
-            sort_order: max_order + 1,
-            parent_id: current_parent.clone(),
-        };
-        current_parent = Some(new_group.id.clone());
-        last_created = Some(new_group.clone());
-        file.groups.push(new_group);
-    }
-
-    save_connections_and_invalidate(&app, &path_cfg, &file)?;
-
-    last_created.ok_or_else(|| "Group path resolved to an empty hierarchy".to_string())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn update_connection_group<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-    name: Option<String>,
-    collapsed: Option<bool>,
-    sort_order: Option<i32>,
-) -> Result<ConnectionGroup, String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    let group = file
-        .groups
-        .iter_mut()
-        .find(|g| g.id == id)
-        .ok_or_else(|| format!("Group with ID {} not found", id))?;
-
-    if let Some(n) = name {
-        group.name = n;
-    }
-    if let Some(c) = collapsed {
-        group.collapsed = c;
-    }
-    if let Some(o) = sort_order {
-        group.sort_order = o;
-    }
-
-    let updated = group.clone();
-    save_connections_and_invalidate(&app, &path, &file)?;
-
-    Ok(updated)
-}
-/// Re-parent a group. Pass `Some(id)` to make it a child of that group,
-/// or `None` to make it a top-level root. Cycles are rejected.
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn move_group_to_parent<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-    parent_id: Option<String>,
-) -> Result<ConnectionGroup, String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    if !file.groups.iter().any(|g| g.id == id) {
-        return Err(format!("Group with ID {} not found", id));
-    }
-
-    if let Some(pid) = &parent_id {
-        if pid == &id {
-            return Err("A group cannot be its own parent".to_string());
-        }
-        if !file.groups.iter().any(|g| &g.id == pid) {
-            return Err(format!("Parent group with ID {} not found", pid));
-        }
-    }
-
-    reject_if_would_create_cycle(&file.groups, &id, parent_id.as_deref())?;
-
-    let group = file
-        .groups
-        .iter_mut()
-        .find(|g| g.id == id)
-        .expect("group existence checked above");
-    group.parent_id = parent_id;
-    let updated = group.clone();
-
-    save_connections_and_invalidate(&app, &path, &file)?;
-    Ok(updated)
 }
 
 /// Reject re-parenting that would create a cycle: `target` must not be a
@@ -5639,126 +4386,6 @@ pub(crate) fn reject_if_would_create_cycle(
         "Connection-group tree is deeper than the number of groups; refusing to modify it"
             .to_string(),
     )
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn delete_connection_group<R: Runtime>(
-    app: AppHandle<R>,
-    id: String,
-) -> Result<(), String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    // Ensure the group exists before we walk the tree.
-    if !file.groups.iter().any(|g| g.id == id) {
-        return Err(format!("Group with ID {} not found", id));
-    }
-
-    // Cascade delete: collect the target group and all of its descendants
-    // (transitively) so the entire subtree is removed. The caller only
-    // needs to specify the top-level group — every nested child group is
-    // deleted along with it. Connections belonging to any group in the
-    // subtree are removed as well.
-    let to_delete = crate::models::collect_group_subtree(&file.groups, &id);
-    let deleted_plugin_secrets: Vec<(String, String, Vec<String>)> = file
-        .connections
-        .iter()
-        .filter(|connection| {
-            connection
-                .group_id
-                .as_ref()
-                .is_some_and(|group_id| to_delete.contains(group_id))
-        })
-        .map(|connection| {
-            (
-                connection.id.clone(),
-                connection.params.driver.clone(),
-                connection.plugin_secret_keys.clone(),
-            )
-        })
-        .collect();
-
-    file.groups.retain(|g| !to_delete.contains(&g.id));
-    file.connections.retain(|c| {
-        !c.group_id
-            .as_ref()
-            .is_some_and(|gid| to_delete.contains(gid))
-    });
-
-    save_connections_and_invalidate(&app, &path, &file)?;
-    let cache = app.state::<std::sync::Arc<crate::credential_cache::CredentialCache>>();
-    for (connection_id, driver, keys) in deleted_plugin_secrets {
-        crate::plugin_secrets::delete_connection_secrets(&cache, &connection_id, &driver, &keys);
-    }
-
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn move_connection_to_group<R: Runtime>(
-    app: AppHandle<R>,
-    connection_id: String,
-    group_id: Option<String>,
-    sort_order: Option<i32>,
-) -> Result<SavedConnection, String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    let conn = file
-        .connections
-        .iter_mut()
-        .find(|c| c.id == connection_id)
-        .ok_or_else(|| format!("Connection with ID {} not found", connection_id))?;
-
-    conn.group_id = group_id;
-    if let Some(order) = sort_order {
-        conn.sort_order = Some(order);
-    }
-
-    let updated = conn.clone();
-    save_connections_and_invalidate(&app, &path, &file)?;
-
-    Ok(updated)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn reorder_groups<R: Runtime>(
-    app: AppHandle<R>,
-    group_orders: Vec<(String, i32)>,
-) -> Result<(), String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    for (group_id, order) in group_orders {
-        if let Some(group) = file.groups.iter_mut().find(|g| g.id == group_id) {
-            group.sort_order = order;
-        }
-    }
-
-    save_connections_and_invalidate(&app, &path, &file)?;
-    Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn reorder_connections_in_group<R: Runtime>(
-    app: AppHandle<R>,
-    connection_orders: Vec<(String, i32)>,
-) -> Result<(), String> {
-    let path = get_config_path(&app)?;
-    let mut file = persistence::load_connections_file(&path)?;
-
-    for (conn_id, order) in connection_orders {
-        if let Some(conn) = file.connections.iter_mut().find(|c| c.id == conn_id) {
-            conn.sort_order = Some(order);
-        }
-    }
-
-    save_connections_and_invalidate(&app, &path, &file)?;
-    Ok(())
 }
 
 #[cfg(feature = "desktop")]

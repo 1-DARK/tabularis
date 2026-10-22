@@ -1216,6 +1216,7 @@
     "dbNameRequired": "Il nome del database è richiesto",
     "connectionUriRequiresKeychain": "Gli URI di connessione devono essere salvati nel Portachiavi di sistema. Attiva “Salva password nel Portachiavi” per continuare.",
     "connectionUriRequired": "L'URI di connessione è richiesto",
+    "connectionUriStored": "Salvata nel portachiavi di sistema. Incolla una nuova stringa di connessione per sostituirla.",
     "connectionString": "Stringa di connessione",
     "connectionStringPlaceholder": "es. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Esempio di stringa di connessione",

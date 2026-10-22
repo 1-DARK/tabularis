@@ -34,6 +34,7 @@ interface MockSelectProps {
 const driverState = vi.hoisted(() => ({
   defaultPort: 15432 as number | null,
   multiDatabase: false,
+  uriPassthrough: false,
   catalogueDriver: "mysql" as "mysql" | "sqlite",
   connectionFields: undefined as
     | Record<string, { hidden?: boolean; label?: string; placeholder?: string }>
@@ -136,6 +137,7 @@ vi.mock("../../../src/hooks/useDrivers", () => ({
           file_based: false,
           folder_based: false,
           connection_string: true,
+          connection_uri: driverState.uriPassthrough,
           connection_string_examples: [
             {
               label: "Local MySQL",
@@ -194,6 +196,7 @@ vi.mock("../../../src/hooks/usePluginSlotRegistry", () => ({
 
 afterEach(() => {
   driverState.connectionFields = undefined;
+  driverState.uriPassthrough = false;
 });
 
 vi.mock("../../../src/hooks/useSettings", () => ({
@@ -523,6 +526,30 @@ describe("NewConnectionModal layout", () => {
         "update_connection", expect.objectContaining({ params: expect.objectContaining({ database: "" }) }),
       ));
     });
+  });
+
+  it("saves a passthrough connection whose URI only lives in the keychain", async () => {
+    // The browser receives a redacted connection: the URI stays on the server.
+    driverState.uriPassthrough = true;
+    const stored = createInitialConnection({
+      database: "",
+      save_in_keychain: true,
+      connection_uri_in_keychain: true,
+    });
+    vi.mocked(invoke).mockImplementation(async (command) =>
+      command === "get_connection_by_id" ? stored : "ok",
+    );
+    renderModal(stored);
+    expect(
+      await screen.findByPlaceholderText("newConnection.connectionUriStored"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("newConnection.save"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith(
+      "update_connection", expect.objectContaining({
+        params: expect.objectContaining({ connection_uri_in_keychain: true }),
+      }),
+    ));
+    expect(screen.queryByText("newConnection.connectionUriRequired")).toBeNull();
   });
 
   it("fills and parses a selected connection string example", async () => {

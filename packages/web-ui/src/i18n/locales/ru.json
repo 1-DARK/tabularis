@@ -1152,6 +1152,7 @@
     "dbNameRequired": "Название базы данных обязательно",
     "connectionUriRequiresKeychain": "URI подключения должны храниться в системном хранилище ключей. Включите «Сохранять пароли в Keychain», чтобы продолжить.",
     "connectionUriRequired": "Требуется URI подключения",
+    "connectionUriStored": "Сохранено в системной связке ключей. Вставьте новую строку подключения, чтобы заменить её.",
     "connectionString": "?????? ???????????",
     "connectionStringPlaceholder": "????????, mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "?????? ?????? ???????????",

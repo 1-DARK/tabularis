@@ -1128,6 +1128,7 @@
     "dbNameRequired": "데이터베이스 이름은 필수입니다",
     "connectionUriRequiresKeychain": "연결 URI는 OS 키체인에 저장해야 합니다. “키체인에 비밀번호 저장”을 활성화하세요.",
     "connectionUriRequired": "연결 URI는 필수입니다",
+    "connectionUriStored": "OS 키체인에 저장되어 있습니다. 바꾸려면 새 연결 문자열을 붙여 넣으세요.",
     "connectionString": "?? ???",
     "connectionStringPlaceholder": "?: mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "?? ??? ??",

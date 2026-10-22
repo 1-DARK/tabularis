@@ -18,8 +18,8 @@ use crate::application::{
     ApplicationApi, ApplicationError, ApplicationRequestContext, AuthorizationLevel,
 };
 use crate::models::{
-    ColumnDefinition, ConnectionAppearance, ConnectionParams, DatabaseSelection,
-    K8sConnectionInput, RoutineCallArg, SshConnectionInput, SshTestParams, TestConnectionRequest,
+    ColumnDefinition, ConnectionAppearance, ConnectionParams, K8sConnectionInput, RoutineCallArg,
+    SshConnectionInput, SshTestParams, TestConnectionRequest,
 };
 use axum::body::Bytes;
 use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
@@ -471,6 +471,7 @@ enum ConnectionRpcCommand {
     RegisterActiveConnection,
     DisconnectConnection,
     TestConnection,
+    ListDatabases,
 }
 
 #[derive(Clone, Copy)]
@@ -1735,38 +1736,21 @@ impl RpcDispatcher {
                     &request.path,
                 )
                 .map_err(|error| InvocationError::Application(ApplicationError::new(error)))?;
-                let database_path = crate::sqlite_database::create_sqlite_file(path)
-                    .await
-                    .map_err(|error| InvocationError::Application(ApplicationError::new(error)))?;
                 if command == RpcCommand::CreateSqliteFile {
+                    let database_path = crate::sqlite_database::create_sqlite_file(path)
+                        .await
+                        .map_err(|error| {
+                            InvocationError::Application(ApplicationError::new(error))
+                        })?;
                     return Ok(Value::String(database_path));
                 }
-
-                let path = PathBuf::from(&database_path);
-                let name = crate::sqlite_database::connection_name(&path)
-                    .map_err(|error| InvocationError::Application(ApplicationError::new(error)))?;
-                let params = ConnectionParams {
-                    driver: "sqlite".to_string(),
-                    database: DatabaseSelection::Single(database_path),
-                    ..ConnectionParams::default()
-                };
-                let result = self
-                    .application
+                self.application
                     .execute_connection_command(
                         context,
-                        ConnectionCommand::SaveConnection {
-                            name,
-                            params,
-                            plugin_secret_changes: None,
-                            detect_json_in_text_columns: None,
-                            environment: None,
-                        },
+                        ConnectionCommand::CreateSqliteDatabase { path },
                     )
-                    .await;
-                if result.is_err() {
-                    let _ = std::fs::remove_file(&path);
-                }
-                result.map_err(InvocationError::Application)
+                    .await
+                    .map_err(InvocationError::Application)
             }
             RpcCommand::Query(command) => {
                 let command =
@@ -2603,6 +2587,7 @@ impl ConnectionRpcCommand {
             "register_active_connection" => Self::RegisterActiveConnection,
             "disconnect_connection" => Self::DisconnectConnection,
             "test_connection" => Self::TestConnection,
+            "list_databases" => Self::ListDatabases,
             _ => return None,
         })
     }
@@ -4205,6 +4190,12 @@ fn decode_connection_command(
         ConnectionRpcCommand::TestConnection => {
             let request: TestRequest = decode_payload(body)?;
             ConnectionCommand::TestConnection {
+                request: request.request,
+            }
+        }
+        ConnectionRpcCommand::ListDatabases => {
+            let request: TestRequest = decode_payload(body)?;
+            ConnectionCommand::ListDatabases {
                 request: request.request,
             }
         }

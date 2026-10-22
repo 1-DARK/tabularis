@@ -1220,6 +1220,7 @@
     "dbNameRequired": "Database name is required",
     "connectionUriRequiresKeychain": "Connection URIs must be saved in the OS keychain. Enable “Save passwords in Keychain” to continue.",
     "connectionUriRequired": "Connection URI is required",
+    "connectionUriStored": "Stored in the OS keychain. Paste a new connection string to replace it.",
     "connectionString": "Connection String",
     "connectionStringPlaceholder": "e.g. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Connection string example",

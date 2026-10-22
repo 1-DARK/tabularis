@@ -38,7 +38,7 @@ impl Default for ExportCancellationState {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn cancel_export(
-    state: State<'_, ExportCancellationState>,
+    state: State<'_, std::sync::Arc<ExportCancellationState>>,
     connection_id: String,
 ) -> Result<(), String> {
     crate::application::generic_exports::cancel_export(state.inner(), None, &connection_id)
@@ -49,7 +49,7 @@ pub async fn cancel_export(
 #[allow(clippy::too_many_arguments)]
 pub async fn export_query_to_file(
     runtime: State<'_, RuntimeContext>,
-    state: State<'_, ExportCancellationState>,
+    state: State<'_, std::sync::Arc<ExportCancellationState>>,
     connection_id: String,
     query: String,
     file_path: String,

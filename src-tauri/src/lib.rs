@@ -310,7 +310,7 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
         log::info!("Debug mode disabled - standard logging active");
     }
 
-    let application_state = runtime::state::ApplicationState::default();
+    let application_state = std::sync::Arc::new(runtime::state::ApplicationState::default());
     let shutdown_hooks = runtime::lifecycle::ShutdownHooks::default();
     shutdown_hooks.register(|| {
         log::info!("Application exiting, stopping all active tunnels...");
@@ -368,18 +368,18 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
     }
 
     builder
-        .manage(application_state.pending_install)
-        .manage(application_state.query_cancellation)
-        .manage(application_state.export_cancellation)
-        .manage(application_state.dump_cancellation)
+        .manage(application_state.pending_install.clone())
+        .manage(application_state.query_cancellation.clone())
+        .manage(application_state.export_cancellation.clone())
+        .manage(application_state.dump_cancellation.clone())
         .manage(log_buffer)
-        .manage(application_state.credential_cache)
-        .manage(application_state.connection_cache)
-        .manage(application_state.import_envelope_cache)
-        .manage(application_state.pending_explain_file)
-        .manage(application_state.json_viewer_store)
-        .manage(application_state.results_window_store)
-        .manage(application_state.query_history_state)
+        .manage(application_state.credential_cache.clone())
+        .manage(application_state.connection_cache.clone())
+        .manage(application_state.import_envelope_cache.clone())
+        .manage(application_state.pending_explain_file.clone())
+        .manage(application_state.json_viewer_store.clone())
+        .manage(application_state.results_window_store.clone())
+        .manage(application_state.clone())
         .manage(window_placement::WindowPlacementCache::default())
         .setup(move |app| {
             #[cfg(target_os = "linux")]
@@ -587,7 +587,7 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
             commands::list_databases,
             commands::save_connection,
             sqlite_database::create_sqlite_file,
-            sqlite_database::create_sqlite_database,
+            commands::create_sqlite_database,
             commands::delete_connection,
             commands::update_connection,
             commands::duplicate_connection,
@@ -629,11 +629,11 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
             commands::move_connection_to_group,
             commands::reorder_groups,
             commands::reorder_connections_in_group,
-            connection_tags::list_connection_tags,
-            connection_tags::create_connection_tag,
-            connection_tags::update_connection_tag,
-            connection_tags::delete_connection_tag,
-            connection_tags::set_connection_tags,
+            commands::list_connection_tags,
+            commands::create_connection_tag,
+            commands::update_connection_tag,
+            commands::delete_connection_tag,
+            commands::set_connection_tags,
             commands::export_connections_payload,
             commands::encrypt_export_payload,
             connection_import_commands::export_connections_file,
@@ -769,7 +769,7 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
             chatgpt::open_chatgpt_usage,
             // Clipboard Import
             clipboard_import::execute_clipboard_import,
-            commands::get_ai_schema_context,
+            ai_commands::get_ai_schema_context,
             commands::get_schema_snapshot,
             // DDL generation
             commands::get_table_query_template,
@@ -820,14 +820,14 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
             // Themes
             theme_packages::commands::preview_theme_document,
             theme_packages::commands::preview_local_theme_package,
-            theme_packages::commands::install_local_theme_package,
-            theme_packages::commands::fetch_theme_registry,
-            theme_packages::commands::fetch_theme_package_detail,
-            theme_packages::commands::install_registry_theme,
+            theme_commands::install_local_theme_package,
+            theme_commands::fetch_theme_registry,
+            theme_commands::fetch_theme_package_detail,
+            theme_commands::install_registry_theme,
             theme_packages::commands::cancel_theme_install,
-            theme_packages::commands::set_theme_package_enabled,
-            theme_packages::commands::uninstall_theme_package,
-            theme_packages::commands::recover_theme_packages,
+            theme_commands::set_theme_package_enabled,
+            theme_commands::uninstall_theme_package,
+            theme_commands::recover_theme_packages,
             theme_commands::get_theme_catalog,
             theme_commands::create_personal_theme,
             theme_commands::create_personal_snapshot,
@@ -904,7 +904,7 @@ fn run_desktop(args: cli::Args, log_buffer: logger::SharedLogBuffer) {
             task_manager::open_task_manager_window,
             // Connection Appearance
             connection_appearance::save_connection_icon,
-            connection_appearance::delete_connection_icon,
+            commands::delete_connection_icon,
             commands::set_connection_appearance,
         ])
         .build(tauri::generate_context!())

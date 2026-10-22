@@ -1181,6 +1181,7 @@
     "dbNameRequired": "El nombre de la base de datos es requerido",
     "connectionUriRequiresKeychain": "Las URI de conexión deben guardarse en el Llavero del sistema. Activa “Guardar contraseñas en el Llavero” para continuar.",
     "connectionUriRequired": "El URI de conexión es requerido",
+    "connectionUriStored": "Guardada en el llavero del sistema. Pega una nueva cadena de conexión para reemplazarla.",
     "connectionString": "Cadena de conexi?n",
     "connectionStringPlaceholder": "p. ej. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Ejemplo de cadena de conexi?n",

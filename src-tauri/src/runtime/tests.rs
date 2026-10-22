@@ -157,8 +157,6 @@ fn shutdown_hooks_run_without_a_tauri_runtime() {
 #[tokio::test]
 async fn desktop_productivity_commands_use_the_managed_custom_config_directory() {
     use crate::{query_history, saved_queries};
-    #[cfg(feature = "desktop")]
-    use tauri::Manager;
     let root = tempfile::tempdir().unwrap();
     let config = root.path().join("custom-config");
     let runtime = RuntimeContext::new(
@@ -171,7 +169,6 @@ async fn desktop_productivity_commands_use_the_managed_custom_config_directory()
     );
     let app = tauri::test::mock_builder()
         .manage(runtime)
-        .manage(query_history::QueryHistoryState)
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .unwrap();
     let handle = app.handle().clone();
@@ -248,7 +245,6 @@ async fn desktop_productivity_commands_use_the_managed_custom_config_directory()
     );
     let entry = query_history::add_query_history_entry(
         handle.clone(),
-        handle.state(),
         connection.clone(),
         "SELECT 1".into(),
         "2026-10-15T00:00:00Z".into(),
@@ -265,7 +261,7 @@ async fn desktop_productivity_commands_use_the_managed_custom_config_directory()
         "history must use the runtime config directory"
     );
     assert_eq!(
-        query_history::get_query_history(handle.clone(), handle.state(), connection.clone())
+        query_history::get_query_history(handle.clone(), connection.clone())
             .await
             .unwrap()
             .entries
@@ -278,15 +274,10 @@ async fn desktop_productivity_commands_use_the_managed_custom_config_directory()
             .unwrap(),
         1
     );
-    query_history::delete_query_history_entry(
-        handle.clone(),
-        handle.state(),
-        connection.clone(),
-        entry.id,
-    )
-    .await
-    .unwrap();
-    query_history::clear_query_history(handle.clone(), handle.state(), connection.clone())
+    query_history::delete_query_history_entry(handle.clone(), connection.clone(), entry.id)
+        .await
+        .unwrap();
+    query_history::clear_query_history(handle.clone(), connection.clone())
         .await
         .unwrap();
     query_history::remove_history_for_connection(&handle, &connection)

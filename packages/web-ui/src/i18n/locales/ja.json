@@ -1167,6 +1167,7 @@
     "dbNameRequired": "データベース名は必須です",
     "connectionUriRequiresKeychain": "接続 URI は OS のキーチェーンに保存する必要があります。「パスワードをキーチェーンに保存」を有効にしてください。",
     "connectionUriRequired": "接続 URI は必須です",
+    "connectionUriStored": "OS のキーチェーンに保存されています。置き換えるには新しい接続文字列を貼り付けてください。",
     "connectionString": "?????",
     "connectionStringPlaceholder": "?: mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "???????",

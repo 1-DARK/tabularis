@@ -1,16 +1,18 @@
 use crate::application::notebooks::{execute, NotebookCommand};
-use crate::paths::get_app_config_dir;
+use crate::runtime::RuntimeContext;
+use tauri::{AppHandle, Manager};
 
 pub use crate::application::notebooks::NotebookMetadata;
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[tauri::command]
 pub async fn create_notebook(
+    app: AppHandle,
     connection_id: String,
     notebook_id: String,
     content: String,
 ) -> Result<(), String> {
     execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::Create {
             connection_id,
             notebook_id,
@@ -20,14 +22,15 @@ pub async fn create_notebook(
     Ok(())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[tauri::command]
 pub async fn save_notebook(
+    app: AppHandle,
     connection_id: String,
     notebook_id: String,
     content: String,
 ) -> Result<(), String> {
     execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::Save {
             connection_id,
             notebook_id,
@@ -37,13 +40,14 @@ pub async fn save_notebook(
     Ok(())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[tauri::command]
 pub async fn load_notebook(
+    app: AppHandle,
     connection_id: String,
     notebook_id: String,
 ) -> Result<Option<String>, String> {
     let value = execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::Load {
             connection_id,
             notebook_id,
@@ -52,10 +56,14 @@ pub async fn load_notebook(
     serde_json::from_value(value).map_err(|error| error.to_string())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn delete_notebook(connection_id: String, notebook_id: String) -> Result<(), String> {
+#[tauri::command]
+pub async fn delete_notebook(
+    app: AppHandle,
+    connection_id: String,
+    notebook_id: String,
+) -> Result<(), String> {
     execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::Delete {
             connection_id,
             notebook_id,
@@ -64,14 +72,15 @@ pub async fn delete_notebook(connection_id: String, notebook_id: String) -> Resu
     Ok(())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[tauri::command]
 pub async fn rename_notebook(
+    app: AppHandle,
     connection_id: String,
     notebook_id: String,
     title: String,
 ) -> Result<(), String> {
     execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::Rename {
             connection_id,
             notebook_id,
@@ -81,10 +90,13 @@ pub async fn rename_notebook(
     Ok(())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn list_notebooks(connection_id: String) -> Result<Vec<NotebookMetadata>, String> {
+#[tauri::command]
+pub async fn list_notebooks(
+    app: AppHandle,
+    connection_id: String,
+) -> Result<Vec<NotebookMetadata>, String> {
     let value = execute(
-        &get_app_config_dir(),
+        app.state::<RuntimeContext>().paths.config_dir(),
         NotebookCommand::List { connection_id },
     )?;
     serde_json::from_value(value).map_err(|error| error.to_string())

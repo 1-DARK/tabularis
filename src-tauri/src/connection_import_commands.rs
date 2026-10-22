@@ -39,7 +39,7 @@ pub async fn list_connection_import_sources() -> Result<Vec<ImportSourceInfo>, S
 #[tauri::command]
 pub async fn preview_connection_import<R: Runtime>(
     app: AppHandle<R>,
-    cache: tauri::State<'_, ImportEnvelopeCache>,
+    cache: tauri::State<'_, std::sync::Arc<ImportEnvelopeCache>>,
     source_id: String,
     include_passwords: bool,
     file: Option<ConnectionImportFile>,
@@ -59,7 +59,7 @@ pub async fn preview_connection_import<R: Runtime>(
 #[tauri::command]
 pub async fn apply_connection_import<R: Runtime>(
     app: AppHandle<R>,
-    cache: tauri::State<'_, ImportEnvelopeCache>,
+    cache: tauri::State<'_, std::sync::Arc<ImportEnvelopeCache>>,
     connection_cache: tauri::State<'_, std::sync::Arc<crate::connection_cache::ConnectionCache>>,
     credential_cache: tauri::State<'_, std::sync::Arc<crate::credential_cache::CredentialCache>>,
     source_id: String,
@@ -117,7 +117,7 @@ pub async fn apply_tabularis_import<R: Runtime>(
 #[tauri::command]
 pub async fn preview_tabularis_import_file<R: Runtime>(
     app: AppHandle<R>,
-    cache: tauri::State<'_, ImportEnvelopeCache>,
+    cache: tauri::State<'_, std::sync::Arc<ImportEnvelopeCache>>,
     file: ConnectionImportFile,
     password: Option<String>,
 ) -> Result<TabularisImportPreviewResult, String> {
@@ -135,7 +135,7 @@ pub async fn preview_tabularis_import_file<R: Runtime>(
 #[tauri::command]
 pub async fn apply_prepared_tabularis_import<R: Runtime>(
     app: AppHandle<R>,
-    cache: tauri::State<'_, ImportEnvelopeCache>,
+    cache: tauri::State<'_, std::sync::Arc<ImportEnvelopeCache>>,
     connection_cache: tauri::State<'_, std::sync::Arc<crate::connection_cache::ConnectionCache>>,
     credential_cache: tauri::State<'_, std::sync::Arc<crate::credential_cache::CredentialCache>>,
     resolutions: Vec<convert::ImportResolution>,

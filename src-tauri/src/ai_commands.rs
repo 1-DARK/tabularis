@@ -2,82 +2,93 @@
 //! and notebook export. The MCP subprocess writes the underlying files; the
 //! main app only reads and decides on them through these endpoints.
 
-use crate::ai_activity::{self, AiActivityEvent, EventFilter, SessionSummary};
-use crate::ai_approval::{self, ApprovalDecision, PendingApproval};
+use crate::ai_activity::EventFilter;
 use crate::ai_notebook_export::NotebookExport;
+use crate::application::ai::{self, AiCommand};
+use crate::runtime::{state::ApplicationState, RuntimeContext};
+use serde_json::Value;
+use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn get_ai_activity(filter: Option<EventFilter>) -> Result<Vec<AiActivityEvent>, String> {
-    let f = filter.unwrap_or_default();
-    tokio::task::spawn_blocking(move || ai_activity::read_events(&f))
-        .await
-        .map_err(|e| e.to_string())?
+async fn execute(app: &AppHandle, command: AiCommand) -> Result<Value, String> {
+    let state = app.state::<Arc<ApplicationState>>();
+    ai::execute(&app.state::<RuntimeContext>(), &state, None, command).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn get_ai_sessions() -> Result<Vec<SessionSummary>, String> {
-    tokio::task::spawn_blocking(ai_activity::read_sessions)
-        .await
-        .map_err(|e| e.to_string())?
+#[tauri::command]
+pub async fn get_ai_activity(app: AppHandle, filter: Option<EventFilter>) -> Result<Value, String> {
+    execute(&app, AiCommand::GetActivity { filter }).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn get_ai_session_events(session_id: String) -> Result<Vec<AiActivityEvent>, String> {
-    tokio::task::spawn_blocking(move || ai_activity::read_session_events(&session_id))
-        .await
-        .map_err(|e| e.to_string())?
+#[tauri::command]
+pub async fn get_ai_sessions(app: AppHandle) -> Result<Value, String> {
+    execute(&app, AiCommand::GetSessions).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn clear_ai_activity() -> Result<(), String> {
-    tokio::task::spawn_blocking(ai_activity::clear)
-        .await
-        .map_err(|e| e.to_string())?
+#[tauri::command]
+pub async fn get_ai_session_events(app: AppHandle, session_id: String) -> Result<Value, String> {
+    execute(&app, AiCommand::GetSessionEvents { session_id }).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn export_ai_activity_json() -> Result<String, String> {
-    crate::application::generic_exports::generate_ai_activity_json().await
+#[tauri::command]
+pub async fn clear_ai_activity(app: AppHandle) -> Result<Value, String> {
+    execute(&app, AiCommand::ClearActivity).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn export_ai_activity_csv() -> Result<String, String> {
-    crate::application::generic_exports::generate_ai_activity_csv().await
+#[tauri::command]
+pub async fn list_pending_approvals(app: AppHandle) -> Result<Value, String> {
+    execute(&app, AiCommand::ListPendingApprovals).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn export_ai_session_as_notebook(session_id: String) -> Result<NotebookExport, String> {
-    crate::application::generic_exports::generate_ai_session_notebook(session_id).await
-}
-
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub async fn list_pending_approvals() -> Result<Vec<PendingApproval>, String> {
-    tokio::task::spawn_blocking(ai_approval::list_pending)
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-#[cfg_attr(feature = "desktop", tauri::command)]
+#[tauri::command]
 pub async fn decide_pending_approval(
+    app: AppHandle,
     approval_id: String,
     decision: String,
     reason: Option<String>,
     edited_query: Option<String>,
-) -> Result<(), String> {
-    if decision != "approve" && decision != "deny" {
-        return Err(format!(
-            "Invalid decision '{}': expected 'approve' or 'deny'",
-            decision
-        ));
-    }
-    let payload = ApprovalDecision {
-        approval_id,
-        decided_at: ai_activity::now_iso8601(),
-        decision,
-        reason,
-        edited_query,
-    };
-    tokio::task::spawn_blocking(move || ai_approval::write_decision(&payload))
-        .await
-        .map_err(|e| e.to_string())?
+) -> Result<Value, String> {
+    execute(
+        &app,
+        AiCommand::DecidePendingApproval {
+            approval_id,
+            decision,
+            reason,
+            edited_query,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn get_ai_schema_context(
+    app: AppHandle,
+    connection_id: String,
+    schema: Option<String>,
+    database: Option<String>,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        AiCommand::GetSchemaContext {
+            connection_id,
+            schema,
+            database,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn export_ai_activity_json() -> Result<String, String> {
+    crate::application::generic_exports::generate_ai_activity_json().await
+}
+
+#[tauri::command]
+pub async fn export_ai_activity_csv() -> Result<String, String> {
+    crate::application::generic_exports::generate_ai_activity_csv().await
+}
+
+#[tauri::command]
+pub async fn export_ai_session_as_notebook(session_id: String) -> Result<NotebookExport, String> {
+    crate::application::generic_exports::generate_ai_session_notebook(session_id).await
 }

@@ -1190,6 +1190,7 @@
     "dbNameRequired": "Le nom de la base de données est requis",
     "connectionUriRequiresKeychain": "Les URI de connexion doivent être enregistrées dans le trousseau du système. Activez « Enregistrer les mots de passe dans le trousseau » pour continuer.",
     "connectionUriRequired": "L'URI de connexion est requise",
+    "connectionUriStored": "Enregistrée dans le trousseau du système. Collez une nouvelle chaîne de connexion pour la remplacer.",
     "connectionString": "Cha?ne de connexion",
     "connectionStringPlaceholder": "p. ex. mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Exemple de cha?ne de connexion",

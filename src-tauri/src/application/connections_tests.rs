@@ -414,6 +414,7 @@ fn keychain_failure_persists_passwords_and_reports_fallback_without_exposing_the
         secrets.clone(),
     );
     let mut params = connection_params("db-secret");
+    params.ssh_enabled = Some(true);
     params.ssh_password = Some("ssh-secret".into());
     let saved = save_connection(&runtime, &state, "Fallback".into(), params, Default::default(), None, None).unwrap();
     assert_eq!(saved.params.save_in_keychain, Some(false));
@@ -737,4 +738,332 @@ fn sql_builder_secrets_bind_stored_plugin_secrets_and_tolerate_missing_ones() {
         built.database,
         DatabaseSelection::Single("analytics".to_string())
     );
+}
+
+fn fixture_with_secrets() -> (
+    tempfile::TempDir,
+    RuntimeContext,
+    Arc<ApplicationState>,
+    Arc<MemorySecrets>,
+) {
+    let temp = tempfile::tempdir().unwrap();
+    let secrets = Arc::new(MemorySecrets::default());
+    let runtime = RuntimeContext::new(
+        Arc::new(FixedRuntimePaths::new(
+            temp.path().to_path_buf(),
+            temp.path().to_path_buf(),
+        )),
+        Arc::new(NoopRuntimeEvents),
+        secrets.clone(),
+    );
+    (
+        temp,
+        runtime,
+        Arc::new(ApplicationState::default()),
+        secrets,
+    )
+}
+
+fn stored_accounts(secrets: &MemorySecrets, connection_id: &str) -> Vec<String> {
+    let mut accounts: Vec<String> = secrets
+        .values
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|account| account.starts_with(connection_id))
+        .cloned()
+        .collect();
+    accounts.sort();
+    accounts
+}
+
+async fn add_history(runtime: &RuntimeContext, connection_id: &str) {
+    use super::super::productivity::{self, ProductivityCommand};
+    productivity::execute(
+        runtime.paths.config_dir(),
+        ProductivityCommand::AddQueryHistoryEntry {
+            connection_id: connection_id.into(),
+            sql: "SELECT 1".into(),
+            executed_at: "2026-10-22".into(),
+            execution_time_ms: None,
+            status: "success".into(),
+            rows_affected: None,
+            error: None,
+            database: None,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+async fn history_len(runtime: &RuntimeContext, connection_id: &str) -> usize {
+    use super::super::productivity::{self, ProductivityCommand};
+    productivity::execute(
+        runtime.paths.config_dir(),
+        ProductivityCommand::GetQueryHistory {
+            connection_id: connection_id.into(),
+        },
+    )
+    .await
+    .unwrap()["entries"]
+        .as_array()
+        .unwrap()
+        .len()
+}
+
+#[tokio::test]
+async fn deleting_a_connection_removes_its_secrets_and_history() {
+    let (_temp, runtime, state, secrets) = fixture_with_secrets();
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "Doomed".into(),
+        connection_params("secret"),
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    add_history(&runtime, &saved.id).await;
+    assert!(!stored_accounts(&secrets, &saved.id).is_empty());
+
+    delete_connection(&runtime, &state, &saved.id).unwrap();
+
+    assert!(stored_accounts(&secrets, &saved.id).is_empty());
+    assert_eq!(history_len(&runtime, &saved.id).await, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_group_cleans_up_every_connection_in_it() {
+    let (_temp, runtime, state, secrets) = fixture_with_secrets();
+    let group = execute(
+        &runtime,
+        &state,
+        ConnectionCommand::CreateConnectionGroup {
+            name: "Doomed".into(),
+            parent_id: None,
+        },
+    )
+    .await
+    .unwrap();
+    let group_id = group["id"].as_str().unwrap().to_string();
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "Grouped".into(),
+        connection_params("secret"),
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    execute(
+        &runtime,
+        &state,
+        ConnectionCommand::MoveConnectionToGroup {
+            connection_id: saved.id.clone(),
+            group_id: Some(group_id.clone()),
+            sort_order: None,
+        },
+    )
+    .await
+    .unwrap();
+    add_history(&runtime, &saved.id).await;
+
+    execute(
+        &runtime,
+        &state,
+        ConnectionCommand::DeleteConnectionGroup { id: group_id },
+    )
+    .await
+    .unwrap();
+
+    assert!(load_file(&runtime).unwrap().connections.is_empty());
+    assert!(stored_accounts(&secrets, &saved.id).is_empty());
+    assert_eq!(history_len(&runtime, &saved.id).await, 0);
+}
+
+#[test]
+fn iam_guard_requires_a_token() {
+    let error = require_iam_token(true, None).unwrap_err();
+    assert!(error.contains("AWS IAM authentication is enabled"));
+    assert!(error.contains("15 minutes"));
+    assert!(require_iam_token(true, Some("")).is_err());
+    require_iam_token(true, Some("token")).unwrap();
+    require_iam_token(false, None).unwrap();
+}
+
+#[tokio::test]
+async fn testing_an_iam_connection_never_uses_the_stored_password() {
+    let (_temp, runtime, state, _secrets) = fixture_with_secrets();
+    let mut params = connection_params("stale-token");
+    params.use_iam_auth = Some(true);
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "IAM".into(),
+        params,
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    let mut request_params = saved.params.clone();
+    request_params.password = None;
+    let error = execute(
+        &runtime,
+        &state,
+        ConnectionCommand::TestConnection {
+            request: TestConnectionRequest {
+                params: request_params,
+                connection_id: Some(saved.id.clone()),
+                progress_id: None,
+                plugin_secret_changes: Default::default(),
+            },
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.contains("AWS IAM authentication is enabled"),
+        "{error}"
+    );
+
+    let mut restored = saved.params.clone();
+    restore_secrets(&runtime, &saved.id, &mut restored).unwrap();
+    assert_eq!(restored.password, None);
+}
+
+#[test]
+fn duplicating_an_iam_connection_does_not_copy_the_token() {
+    let (_temp, runtime, state, secrets) = fixture_with_secrets();
+    let mut params = connection_params("stale-token");
+    params.use_iam_auth = Some(true);
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "IAM".into(),
+        params,
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    let copy = duplicate_connection(&runtime, &state, &saved.id).unwrap();
+    assert!(!stored_accounts(&secrets, &copy.id).contains(&format!("{}:db", copy.id)));
+}
+
+#[test]
+fn a_missing_keychain_uri_fails_the_connection_with_a_clear_message() {
+    let (_temp, runtime, state, secrets) = fixture_with_secrets();
+    let mut params = connection_params("secret");
+    params.connection_uri = Some("postgres://user:secret@localhost/db".into());
+    let saved = save_connection(
+        &runtime,
+        &state,
+        "URI".into(),
+        params,
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    secrets
+        .values
+        .lock()
+        .unwrap()
+        .remove(&format!("{}:connection_uri", saved.id));
+    let error = resolve_saved_connection_params(&runtime, None, &saved.id).unwrap_err();
+    assert_eq!(
+        error,
+        "Stored connection URI is unavailable in the OS keychain"
+    );
+}
+
+#[test]
+fn ssh_secrets_follow_the_tunnel_toggle() {
+    let (_temp, runtime, state, secrets) = fixture_with_secrets();
+    let mut params = connection_params("secret");
+    params.ssh_password = Some("ssh-secret".into());
+    let without_ssh = save_connection(
+        &runtime,
+        &state,
+        "No tunnel".into(),
+        params.clone(),
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        stored_accounts(&secrets, &without_ssh.id),
+        vec![format!("{}:db", without_ssh.id)]
+    );
+
+    params.ssh_enabled = Some(true);
+    params.ssh_key_passphrase = Some("passphrase".into());
+    let with_ssh = save_connection(
+        &runtime,
+        &state,
+        "Tunnel".into(),
+        params,
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    let ssh_password = format!("{}:ssh", with_ssh.id);
+    let passphrase = format!("{}:ssh_passphrase", with_ssh.id);
+
+    // An empty passphrase field keeps the stored one.
+    let mut edit = with_ssh.params.clone();
+    edit.ssh_key_passphrase = Some(" ".into());
+    update_connection(
+        &runtime,
+        &state,
+        with_ssh.id.clone(),
+        "Tunnel".into(),
+        edit.clone(),
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(stored_accounts(&secrets, &with_ssh.id).contains(&passphrase));
+
+    // Turning the tunnel off drops its secrets.
+    edit.ssh_enabled = Some(false);
+    update_connection(
+        &runtime,
+        &state,
+        with_ssh.id.clone(),
+        "Tunnel".into(),
+        edit,
+        Default::default(),
+        None,
+        None,
+    )
+    .unwrap();
+    let accounts = stored_accounts(&secrets, &with_ssh.id);
+    assert!(!accounts.contains(&ssh_password));
+    assert!(!accounts.contains(&passphrase));
+    assert!(accounts.contains(&format!("{}:db", with_ssh.id)));
+}
+
+#[tokio::test]
+async fn creating_a_sqlite_database_saves_a_connection_to_the_new_file() {
+    let (temp, runtime, state) = fixture();
+    let path = temp.path().join("inventory.sqlite");
+    let created = execute(
+        &runtime,
+        &state,
+        ConnectionCommand::CreateSqliteDatabase {
+            path: path.to_string_lossy().into_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    assert!(path.is_file());
+    assert_eq!(created["params"]["driver"], "sqlite");
+    assert_eq!(load_file(&runtime).unwrap().connections.len(), 1);
 }

@@ -56,7 +56,9 @@ pub async fn load_explain_from_file(path: String) -> Result<ExplainFileContent, 
 /// differentiate "cold start from CLI" from "opened manually".
 #[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn get_pending_explain_file(state: State<'_, PendingExplainFile>) -> Option<String> {
+pub fn get_pending_explain_file(
+    state: State<'_, std::sync::Arc<PendingExplainFile>>,
+) -> Option<String> {
     state.take()
 }
 
@@ -73,7 +75,7 @@ pub fn spawn_visual_explain_window<R: Runtime, M: Manager<R>>(
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     if let Some(path) = file.as_ref() {
-        if let Some(state) = app.try_state::<PendingExplainFile>() {
+        if let Some(state) = app.try_state::<std::sync::Arc<PendingExplainFile>>() {
             state.set(path.clone());
         }
     }

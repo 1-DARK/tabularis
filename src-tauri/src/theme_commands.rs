@@ -1,48 +1,28 @@
-use crate::paths::{get_app_config_dir, get_default_app_data_dir};
-use crate::theme_packages::{self, ThemeCatalog, ThemeContribution};
+use crate::application::themes::{self, LocalThemeArchive, ThemeCommand};
+use crate::runtime::RuntimeContext;
+use crate::theme_packages::ThemeCatalog;
 use serde_json::Value;
-#[cfg(feature = "desktop")]
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Manager};
 
-#[cfg(feature = "desktop")]
-fn committed<T>(app: &AppHandle, result: Result<T, String>) -> Result<T, String> {
-    let value = result?;
-    if let Err(error) = app.emit("theme-catalog-changed", ()) {
-        log::warn!("Personal theme change committed but refresh delivery failed: {error}");
-    }
-    Ok(value)
+async fn execute(app: &AppHandle, command: ThemeCommand) -> Result<Value, String> {
+    themes::execute(&app.state::<RuntimeContext>(), command).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_theme_catalog() -> ThemeCatalog {
-    theme_packages::read_theme_catalog(
-        &get_app_config_dir(),
-        &get_default_app_data_dir(),
-        env!("CARGO_PKG_VERSION"),
-    )
+#[tauri::command]
+pub fn get_theme_catalog(app: AppHandle) -> ThemeCatalog {
+    themes::catalog(&app.state::<RuntimeContext>())
 }
 
 /// Legacy command names and argument names remain available. Raw metadata is
 /// retained instead of round-tripping files through the historical Rust model.
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_all_themes() -> Result<Vec<Value>, String> {
-    get_theme_catalog()
-        .themes
-        .into_iter()
-        .filter(|entry| !entry.read_only && entry.format == "legacy" && entry.editor.is_none())
-        .map(|entry| {
-            let mut value: Value =
-                serde_json::from_str(&entry.source).map_err(|e| e.to_string())?;
-            value["isPreset"] = Value::Bool(false);
-            value["isReadOnly"] = Value::Bool(false);
-            Ok(value)
-        })
-        .collect()
+#[tauri::command]
+pub fn get_all_themes(app: AppHandle) -> Result<Vec<Value>, String> {
+    crate::application::persistence::get_all_themes(&app.state::<RuntimeContext>())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn get_theme(theme_id: String) -> Result<Value, String> {
-    let entry = get_theme_catalog()
+#[tauri::command]
+pub fn get_theme(app: AppHandle, theme_id: String) -> Result<Value, String> {
+    let entry = themes::catalog(&app.state::<RuntimeContext>())
         .themes
         .into_iter()
         .find(|entry| entry.id == theme_id)
@@ -56,131 +36,215 @@ pub fn get_theme(theme_id: String) -> Result<Value, String> {
     Ok(value)
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn save_custom_theme(app: AppHandle, theme: Value) -> Result<(), String> {
-    committed(
-        &app,
-        theme_packages::save_legacy_theme(&get_app_config_dir(), theme),
-    )
+    crate::application::persistence::save_custom_theme(&app.state::<RuntimeContext>(), theme)
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn delete_custom_theme(app: AppHandle, theme_id: String) -> Result<(), String> {
-    committed(
-        &app,
-        theme_packages::remove_personal_theme(&get_app_config_dir(), &theme_id),
-    )
+    crate::application::persistence::delete_custom_theme(&app.state::<RuntimeContext>(), &theme_id)
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn import_theme(
+pub async fn import_theme(
     app: AppHandle,
     theme_json: String,
     name: Option<String>,
 ) -> Result<Value, String> {
-    let result = if let Some(name) = name {
-        theme_packages::import_legacy_theme_named(&get_app_config_dir(), &theme_json, &name)
-    } else {
-        theme_packages::import_legacy_theme(&get_app_config_dir(), &theme_json)
-    };
-    committed(&app, result)
+    execute(&app, ThemeCommand::ImportTheme { theme_json, name }).await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
-pub fn export_theme(theme_id: String) -> Result<String, String> {
-    theme_packages::export_personal_theme(&get_app_config_dir(), &theme_id)
-}
-
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn create_personal_theme(
+pub async fn export_theme(app: AppHandle, theme_id: String) -> Result<Value, String> {
+    execute(&app, ThemeCommand::ExportTheme { theme_id }).await
+}
+
+#[tauri::command]
+pub async fn create_personal_theme(
     app: AppHandle,
     name: String,
     source: String,
-) -> Result<ThemeContribution, String> {
-    committed(
-        &app,
-        theme_packages::create_personal_definition(&get_app_config_dir(), &name, &source),
-    )
+) -> Result<Value, String> {
+    execute(&app, ThemeCommand::CreatePersonalTheme { name, source }).await
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn create_personal_snapshot(
+pub async fn create_personal_snapshot(
     app: AppHandle,
     name: String,
     source: String,
-) -> Result<ThemeContribution, String> {
-    committed(
-        &app,
-        theme_packages::create_personal_snapshot(&get_app_config_dir(), &name, &source),
-    )
+) -> Result<Value, String> {
+    execute(&app, ThemeCommand::CreatePersonalSnapshot { name, source }).await
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn update_personal_theme(
+pub async fn update_personal_theme(
     app: AppHandle,
     theme_id: String,
     name: String,
     source: String,
     expected_revision: String,
-) -> Result<ThemeContribution, String> {
-    committed(
+) -> Result<Value, String> {
+    execute(
         &app,
-        theme_packages::update_personal_definition(
-            &get_app_config_dir(),
-            &theme_id,
-            &name,
-            &source,
-            &expected_revision,
-        ),
+        ThemeCommand::UpdatePersonalTheme {
+            theme_id,
+            name,
+            source,
+            expected_revision,
+        },
     )
+    .await
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn update_personal_snapshot(
+pub async fn update_personal_snapshot(
     app: AppHandle,
     theme_id: String,
     name: String,
     source: String,
     editor: Value,
     expected_revision: String,
-) -> Result<ThemeContribution, String> {
-    committed(
+) -> Result<Value, String> {
+    execute(
         &app,
-        theme_packages::update_personal_snapshot(
-            &get_app_config_dir(),
-            &theme_id,
-            &name,
-            &source,
+        ThemeCommand::UpdatePersonalSnapshot {
+            theme_id,
+            name,
+            source,
             editor,
-            &expected_revision,
-        ),
+            expected_revision,
+        },
     )
+    .await
 }
 
-#[cfg(feature = "desktop")]
 #[tauri::command]
-pub fn duplicate_personal_theme(
+pub async fn duplicate_personal_theme(
     app: AppHandle,
     theme_id: String,
     name: String,
     editor: Option<Value>,
-) -> Result<ThemeContribution, String> {
-    committed(
+) -> Result<Value, String> {
+    execute(
         &app,
-        theme_packages::duplicate_personal_theme(
-            &get_app_config_dir(),
-            &get_default_app_data_dir(),
-            env!("CARGO_PKG_VERSION"),
-            &theme_id,
-            &name,
+        ThemeCommand::DuplicatePersonalTheme {
+            theme_id,
+            name,
             editor,
-        ),
+        },
     )
+    .await
+}
+
+#[tauri::command]
+pub async fn install_local_theme_package(
+    app: AppHandle,
+    path: String,
+    package_name: String,
+    expected_digest: String,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::InstallLocalPackage {
+            archive: LocalThemeArchive::Path(path.into()),
+            package_name,
+            expected_digest,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn fetch_theme_registry(
+    app: AppHandle,
+    package_name: Option<String>,
+    expected_registry_key: Option<String>,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::FetchRegistry {
+            package_name,
+            expected_registry_key,
+        },
+    )
+    .await
+}
+
+/// Read-only details: never resolve a tracked download during discovery.
+#[tauri::command]
+pub async fn fetch_theme_package_detail(
+    app: AppHandle,
+    package_name: String,
+    expected_registry_key: String,
+    requested_registry_url: Option<String>,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::FetchPackageDetail {
+            package_name,
+            expected_registry_key,
+            requested_registry_url,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn install_registry_theme(
+    app: AppHandle,
+    package_name: String,
+    expected_registry_key: String,
+    version: Option<String>,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::InstallRegistryTheme {
+            package_name,
+            expected_registry_key,
+            version,
+        },
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn set_theme_package_enabled(
+    app: AppHandle,
+    registry_key: String,
+    package_name: String,
+    enabled: bool,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::SetPackageEnabled {
+            registry_key,
+            package_name,
+            enabled,
+        },
+    )
+    .await
+}
+
+/// Recovery is an explicit action, never a catalog-read or hydration side effect.
+#[tauri::command]
+pub async fn recover_theme_packages(app: AppHandle) -> Result<Value, String> {
+    execute(&app, ThemeCommand::RecoverPackages).await
+}
+
+#[tauri::command]
+pub async fn uninstall_theme_package(
+    app: AppHandle,
+    registry_key: String,
+    package_name: String,
+) -> Result<Value, String> {
+    execute(
+        &app,
+        ThemeCommand::UninstallPackage {
+            registry_key,
+            package_name,
+        },
+    )
+    .await
 }

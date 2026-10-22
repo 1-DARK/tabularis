@@ -1,23 +1,17 @@
 use crate::application::productivity::{self, ProductivityCommand};
 use serde_json::from_value;
 #[cfg(feature = "desktop")]
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime};
 
 pub use crate::application::productivity::backfill_history_entries as backfill_missing_database;
 #[cfg(test)]
 pub(crate) use crate::application::productivity::{atomic_write, backup_corrupt_file};
 pub use crate::application::productivity::{QueryHistoryEntry, QueryHistoryResponse};
 
-/// Kept as managed Tauri state for command signature compatibility. Storage
-/// serialization is shared by desktop and web in the application service.
-#[derive(Default)]
-pub struct QueryHistoryState;
-
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub async fn get_query_history<R: Runtime>(
     app: AppHandle<R>,
-    _state: State<'_, QueryHistoryState>,
     connection_id: String,
 ) -> Result<QueryHistoryResponse, String> {
     let runtime = app.state::<crate::runtime::RuntimeContext>();
@@ -37,7 +31,6 @@ pub async fn get_query_history<R: Runtime>(
 #[allow(clippy::too_many_arguments)]
 pub async fn add_query_history_entry<R: Runtime>(
     app: AppHandle<R>,
-    _state: State<'_, QueryHistoryState>,
     connection_id: String,
     sql: String,
     executed_at: String,
@@ -72,7 +65,6 @@ pub async fn add_query_history_entry<R: Runtime>(
 #[tauri::command]
 pub async fn delete_query_history_entry<R: Runtime>(
     app: AppHandle<R>,
-    _state: State<'_, QueryHistoryState>,
     connection_id: String,
     id: String,
 ) -> Result<(), String> {
@@ -90,7 +82,6 @@ pub async fn delete_query_history_entry<R: Runtime>(
 #[tauri::command]
 pub async fn clear_query_history<R: Runtime>(
     app: AppHandle<R>,
-    _state: State<'_, QueryHistoryState>,
     connection_id: String,
 ) -> Result<(), String> {
     let runtime = app.state::<crate::runtime::RuntimeContext>();

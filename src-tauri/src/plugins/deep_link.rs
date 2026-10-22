@@ -156,7 +156,7 @@ pub fn handle_url(app: &AppHandle, raw: &str) {
 
     // Stash for cold-start replay; the frontend pulls this on mount via
     // `consume_pending_deep_link_install`.
-    if let Some(state) = app.try_state::<PendingInstall>() {
+    if let Some(state) = app.try_state::<std::sync::Arc<PendingInstall>>() {
         if let Ok(mut slot) = state.0.lock() {
             *slot = Some(req.clone());
         }
@@ -187,7 +187,7 @@ pub fn handle_url(app: &AppHandle, raw: &str) {
 #[cfg(feature = "desktop")]
 #[tauri::command]
 pub fn consume_pending_deep_link_install(
-    state: tauri::State<'_, PendingInstall>,
+    state: tauri::State<'_, std::sync::Arc<PendingInstall>>,
 ) -> Option<PluginInstallRequest> {
     state.0.lock().ok().and_then(|mut slot| slot.take())
 }

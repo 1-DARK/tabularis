@@ -1170,6 +1170,7 @@
     "nameRequired": "O nome da conexão é obrigatório",
     "dbNameRequired": "O nome do banco de dados é obrigatório",
     "connectionUriRequired": "O URI da conexão é obrigatório",
+    "connectionUriStored": "Armazenada no chaveiro do sistema. Cole uma nova string de conexão para substituí-la.",
     "connectionString": "String de conex?o",
     "connectionStringPlaceholder": "ex.: mysql://user:pass@localhost:3306/db",
     "connectionStringExample": "Exemplo de string de conex?o",
