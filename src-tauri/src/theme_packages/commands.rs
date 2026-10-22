@@ -8,7 +8,6 @@ fn operation_id(registry: &str, package: &str) -> String {
 }
 
 /// Standalone import preview validates without creating a personal file.
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn preview_theme_document(source: String, name: String) -> Result<ThemeContribution, String> {
     catalog::validate_name(&name)?;
     let value = parse_bounded_json(source.as_bytes(), legacy::LEGACY_BYTES * 2, 128, 262_144)?;
@@ -92,7 +91,6 @@ pub fn read_local_archive(path: &Path) -> Result<Vec<u8>, String> {
 /// Largest accepted local theme archive.
 pub const MAX_LOCAL_ARCHIVE_BYTES: usize = lifecycle::ARCHIVE_BYTES;
 
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn preview_local_theme_package(
     path: String,
 ) -> Result<lifecycle::LocalThemePreview, String> {
@@ -187,7 +185,6 @@ pub async fn install_registry(
     .await
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn cancel_theme_install(registry_key: String, package_name: String) -> bool {
     install_cancellation::cancel(&operation_id(&registry_key, &package_name))
 }

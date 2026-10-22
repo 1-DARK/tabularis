@@ -152,7 +152,7 @@ fn drivers_to_unregister(registered: &[(String, bool)], active_ids: &[String]) -
 /// stale driver keeps resolving successfully.
 ///
 /// `active_ids: None` means "no explicit preference saved" (see
-/// [`crate::plugins::manager::load_plugins`]'s doc comment) — every
+/// [`crate::transport::desktop::plugins::manager::load_plugins`]'s doc comment) — every
 /// installed plugin is implicitly active in that state, so nothing is
 /// unregistered. Builtins are never touched regardless of `active_ids`,
 /// since `active_external_drivers` only ever governs external plugins.

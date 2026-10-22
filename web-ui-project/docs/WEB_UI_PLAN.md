@@ -40,7 +40,7 @@ Current repository facts relevant to this plan:
 - 106 frontend files import at least one `@tauri-apps/*` API.
 - Native dependencies include IPC, events, windows, dialogs, filesystem access, clipboard access, notifications, updater, deep links, and URL opening.
 - The CLI already supports `--mcp`, `--debug`, and `--explain` in `src-tauri/src/cli.rs`.
-- Startup, driver registration, state registration, plugin loading, schedulers, and the full Tauri command registry are currently concentrated in `src-tauri/src/lib.rs::run`.
+- Startup, driver registration, state registration, plugin loading, schedulers, and the full Tauri command registry are currently concentrated in `src-tauri/src/transport/desktop/mod.rs::run`.
 - Existing frontend coverage is substantial, and Rust has dedicated test modules for major backend areas.
 
 This makes a visual rewrite unnecessary. The primary work is platform separation and backend transport extraction.

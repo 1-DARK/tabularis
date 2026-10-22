@@ -7,7 +7,7 @@ import ts from "typescript";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const FRONTEND_ROOT = "packages/web-ui/src";
-const TAURI_HANDLER_PATH = "src-tauri/src/lib.rs";
+const TAURI_HANDLER_PATH = "src-tauri/src/transport/desktop/mod.rs";
 const INVENTORY_PATH = "web-ui-project/docs/web-ui-parity.json";
 
 const CLASSIFICATION_VALUES = {

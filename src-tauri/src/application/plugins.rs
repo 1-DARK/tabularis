@@ -382,7 +382,7 @@ pub async fn restart_plugin_process(
 }
 
 /// Tells the frontend that connection metadata derived from this driver may
-/// have changed (see `crate::plugins::connection_metadata::notify_plugin_reload`).
+/// have changed (see `crate::transport::desktop::plugins::connection_metadata::notify_plugin_reload`).
 fn notify_plugin_reload(runtime: &RuntimeContext, plugin_id: &str) {
     let _ = runtime.events.emit(
         "connection-metadata-invalidated",

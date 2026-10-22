@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::connection_window::{connection_route, window_label};
+    use crate::transport::desktop::connection_window::{connection_route, window_label};
 
     #[test]
     fn uuid_like_id_is_preserved() {

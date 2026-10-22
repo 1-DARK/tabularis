@@ -8,8 +8,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-#[cfg(feature = "desktop")]
-use tauri::{AppHandle, Manager};
 
 // --- Data Structures ---
 
@@ -385,32 +383,12 @@ async fn fetch_custom_openai_models(base_url: &str, api_key: &str) -> Vec<String
 
 // --- Commands ---
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub fn clear_ai_models_cache(app: AppHandle) -> Result<(), String> {
-    clear_models_cache(&app.state::<RuntimeContext>())
-}
-
 pub fn clear_models_cache(runtime: &RuntimeContext) -> Result<(), String> {
     let path = get_cache_path(runtime);
     if path.exists() {
         fs::remove_file(path).map_err(|e| e.to_string())?;
     }
     Ok(())
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn get_ai_models(
-    app: AppHandle,
-    force_refresh: bool,
-) -> Result<HashMap<String, Vec<String>>, String> {
-    get_models(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        force_refresh,
-    )
-    .await
 }
 
 pub async fn get_models(
@@ -581,53 +559,6 @@ pub async fn get_models(
     save_cache(runtime, &models);
 
     Ok(models)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn generate_ai_query(app: AppHandle, req: AiGenerateRequest) -> Result<String, String> {
-    generate_query(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn explain_ai_query(app: AppHandle, req: AiExplainRequest) -> Result<String, String> {
-    explain_query(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn analyze_ai_explain_plan(
-    app: AppHandle,
-    req: AiExplainRequest,
-) -> Result<String, String> {
-    analyze_explain_plan(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn generate_cell_name(app: AppHandle, req: AiCellNameRequest) -> Result<String, String> {
-    generate_cellname(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
 }
 
 // --- Shared helpers ---
@@ -900,20 +831,6 @@ pub async fn generate_cellname(
     .await
 }
 
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn suggest_table_name(
-    app: AppHandle,
-    req: AiSuggestTableNameRequest,
-) -> Result<String, String> {
-    suggest_table_name_with_runtime(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
-}
-
 pub async fn suggest_table_name_with_runtime(
     runtime: &RuntimeContext,
     cache: &CredentialCache,
@@ -975,20 +892,6 @@ pub async fn suggest_table_name_with_runtime(
             Err(e.clone())
         }
     }
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn generate_tab_rename(
-    app: AppHandle,
-    req: AiTabRenameRequest,
-) -> Result<String, String> {
-    generate_tab_name(
-        &app.state::<RuntimeContext>(),
-        &app.state::<std::sync::Arc<CredentialCache>>(),
-        req,
-    )
-    .await
 }
 
 pub async fn generate_tab_name(

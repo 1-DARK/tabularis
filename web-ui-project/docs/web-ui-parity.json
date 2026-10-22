@@ -3,7 +3,7 @@
   "generatedBy": "pnpm web:inventory:write",
   "sources": {
     "frontend": "packages/web-ui/src",
-    "tauriHandler": "src-tauri/src/lib.rs"
+    "tauriHandler": "src-tauri/src/transport/desktop/mod.rs"
   },
   "classifications": {
     "featureGroup": [

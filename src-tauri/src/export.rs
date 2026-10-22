@@ -11,17 +11,13 @@ pub use sink::{CsvSink, JsonSink, MarkdownSink, RowSink};
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
-#[cfg(feature = "desktop")]
-use tauri::State;
 
 use crate::commands::AbortHandleMap;
 use crate::drivers::{mysql, postgres, sqlite};
 use crate::models::ConnectionParams;
-use crate::runtime::RuntimeContext;
 
 pub struct ExportCancellationState {
     pub handles: Arc<Mutex<AbortHandleMap>>,
@@ -33,46 +29,6 @@ impl Default for ExportCancellationState {
             handles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn cancel_export(
-    state: State<'_, std::sync::Arc<ExportCancellationState>>,
-    connection_id: String,
-) -> Result<(), String> {
-    crate::application::generic_exports::cancel_export(state.inner(), None, &connection_id)
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn export_query_to_file(
-    runtime: State<'_, RuntimeContext>,
-    state: State<'_, std::sync::Arc<ExportCancellationState>>,
-    connection_id: String,
-    query: String,
-    file_path: String,
-    format: String,
-    csv_delimiter: Option<String>,
-    database: Option<String>,
-    session_id: Option<String>,
-) -> Result<Option<crate::application::connection_files::GeneratedFile>, String> {
-    crate::application::generic_exports::export_query(
-        runtime.inner(),
-        state.inner(),
-        None,
-        connection_id,
-        query,
-        crate::application::generic_exports::ExportDestination::ServerPath(PathBuf::from(
-            file_path,
-        )),
-        format,
-        csv_delimiter,
-        database,
-        session_id,
-    )
-    .await
 }
 
 /// Wires the driver stream, the row sink, and the progress emitter together.

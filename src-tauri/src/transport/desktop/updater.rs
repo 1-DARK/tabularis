@@ -184,7 +184,7 @@ fn categorize_asset(name: &str) -> String {
 #[cfg(feature = "desktop")]
 /// Effective update channel from config. Anything other than "nightly" ⇒ stable.
 fn release_channel<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
-    crate::config::load_config_internal(app)
+    crate::transport::desktop::config::load_config_internal(app)
         .release_channel
         .unwrap_or_else(|| "stable".to_string())
 }
@@ -198,7 +198,7 @@ pub async fn check_for_updates(app: AppHandle, force: bool) -> Result<UpdateChec
         return Err("Updates are managed by the package manager".to_string());
     }
 
-    let config = crate::config::load_config_internal(&app);
+    let config = crate::transport::desktop::config::load_config_internal(&app);
 
     // Check if updates are disabled
     if !force && config.check_for_updates == Some(false) {
@@ -386,7 +386,7 @@ pub async fn download_and_install_update(app: AppHandle) -> Result<(), String> {
             .await
             .map_err(|e| e.to_string())?;
 
-        crate::window_placement::persist_cached(&app);
+        crate::transport::desktop::window_placement::persist_cached(&app);
         app.restart();
     } else {
         Err("No update available".to_string())

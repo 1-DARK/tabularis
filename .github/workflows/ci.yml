@@ -92,6 +92,14 @@ jobs:
         working-directory: src-tauri
         run: cargo check --locked --no-default-features --bin tabularis
 
+      - name: Keep Tauri inside the desktop transport
+        run: |
+          if grep -rnE '(^|[^_[:alnum:]])tauri(::|_plugin)' src-tauri/src --include='*.rs' \
+            --exclude-dir=desktop | grep -v 'tauri::mobile_entry_point\|async_runtime\|tauri::test::'; then
+            echo "::error::Tauri code belongs in src-tauri/src/transport/desktop/ (see .rules/rust.md)"
+            exit 1
+          fi
+
   web-e2e:
     runs-on: ubuntu-24.04
 

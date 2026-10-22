@@ -99,7 +99,6 @@ pub(crate) async fn initialize_sqlite_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub async fn create_sqlite_file(path: String) -> Result<String, String> {
     let path = normalize_sqlite_path(&path)?;
     initialize_sqlite_file(&path).await?;

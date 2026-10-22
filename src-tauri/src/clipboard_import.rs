@@ -3,8 +3,6 @@ use crate::models::TableColumn;
 use crate::{drivers::driver_trait::DatabaseDriver, models::ColumnDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-#[cfg(feature = "desktop")]
-use tauri::{AppHandle, Manager, Runtime};
 
 #[derive(Deserialize, Debug)]
 pub struct ClipboardImportRequest {
@@ -171,15 +169,6 @@ fn table_ref(table_name: &str, schema: Option<&str>, quote: &str) -> String {
         ),
         None => quote_identifier(table_name, quote),
     }
-}
-
-#[cfg(feature = "desktop")]
-#[tauri::command]
-pub async fn execute_clipboard_import<R: Runtime>(
-    app: AppHandle<R>,
-    req: ClipboardImportRequest,
-) -> Result<ClipboardImportResult, String> {
-    import_with_runtime(&app.state::<crate::runtime::RuntimeContext>(), None, req).await
 }
 
 pub async fn import_with_runtime(

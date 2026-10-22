@@ -4,8 +4,6 @@ use std::sync::Mutex;
 
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "desktop")]
-use tauri::AppHandle;
 
 use crate::config::PluginConfig;
 use crate::drivers::driver_trait::{
@@ -42,7 +40,6 @@ pub struct PluginLoadError {
     pub error: String,
 }
 
-#[cfg_attr(feature = "desktop", tauri::command)]
 pub fn get_plugin_startup_errors() -> Vec<PluginLoadError> {
     crate::application::plugins::get_plugin_startup_errors()
 }
@@ -110,19 +107,6 @@ pub struct ConfigManifest {
 /// so the collision is still surfaced as a logged `PluginLoadError`, not
 /// swallowed because the built-in of the same id is already registered.
 const BUILTIN_DRIVER_IDS: [&str; 3] = ["mysql", "postgres", "sqlite"];
-
-#[cfg(feature = "desktop")]
-/// Load installed plugins at startup.
-///
-/// `enabled_ids` controls which plugins are started:
-/// - `None`  → load all installed plugins (first-run or no preference saved).
-/// - `Some(ids)` → load only the plugins whose directory name (= plugin ID) is in `ids`.
-pub async fn load_plugins<R: tauri::Runtime>(app: &AppHandle<R>, enabled_ids: Option<&[String]>) {
-    let plugin_configs = crate::config::load_config_internal(app)
-        .plugins
-        .unwrap_or_default();
-    load_plugins_with_configs(plugin_configs, enabled_ids).await;
-}
 
 /// Re-scans installed plugins against the latest on-disk config and registers
 /// any that are missing from the driver registry. Idempotent — plugins
