@@ -74,6 +74,39 @@ struct PendingDirectory {
     path: Option<PathBuf>,
 }
 
+/// Why storing an upload failed; `TooLarge` maps to HTTP 413.
+#[derive(Debug)]
+pub enum UploadError {
+    TooLarge(String),
+    Failed(String),
+}
+
+impl Display for UploadError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge(message) | Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for UploadError {
+    fn from(message: String) -> Self {
+        Self::Failed(message)
+    }
+}
+
+/// The request body hit the router's body-size limit while streaming.
+fn exceeds_body_limit(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if error.is::<http_body_util::LengthLimitError>() {
+            return true;
+        }
+        current = error.source();
+    }
+    false
+}
+
 impl FileTransferStore {
     pub fn new(data_dir: &Path) -> Self {
         Self {
@@ -105,11 +138,20 @@ impl FileTransferStore {
         file_name: &str,
         content_type: Option<&str>,
         stream: S,
-    ) -> Result<FileTransferMetadata, String>
+    ) -> Result<FileTransferMetadata, UploadError>
     where
         S: Stream<Item = Result<Bytes, E>>,
-        E: Display,
+        E: std::error::Error + 'static,
     {
+        let stream = stream.map(|chunk| {
+            chunk.map_err(|error| {
+                if exceeds_body_limit(&error) {
+                    UploadError::TooLarge("The upload exceeds its byte limit".to_string())
+                } else {
+                    UploadError::Failed(format!("File transfer interrupted: {error}"))
+                }
+            })
+        });
         self.store_stream(
             owner,
             purpose,
@@ -153,6 +195,10 @@ impl FileTransferStore {
         S: Stream<Item = Result<Bytes, E>>,
         E: Display,
     {
+        let stream = stream.map(|chunk| {
+            chunk
+                .map_err(|error| UploadError::Failed(format!("File transfer interrupted: {error}")))
+        });
         self.store_stream(
             owner,
             purpose,
@@ -162,6 +208,7 @@ impl FileTransferStore {
             stream,
         )
         .await
+        .map_err(|error| error.to_string())
     }
 
     pub async fn open_upload(
@@ -262,7 +309,7 @@ impl FileTransferStore {
         }
     }
 
-    async fn store_stream<S, E>(
+    async fn store_stream<S>(
         &self,
         owner: Uuid,
         purpose: &str,
@@ -270,17 +317,18 @@ impl FileTransferStore {
         content_type: Option<&str>,
         kind: TransferKind,
         stream: S,
-    ) -> Result<FileTransferMetadata, String>
+    ) -> Result<FileTransferMetadata, UploadError>
     where
-        S: Stream<Item = Result<Bytes, E>>,
-        E: Display,
+        S: Stream<Item = Result<Bytes, UploadError>>,
     {
         validate_purpose(purpose)?;
         self.sweep_expired().await;
         let parent = self.root.join(owner.to_string()).join(kind.directory());
         create_private_directory(&parent)?;
         if pending_transfer_count(&parent)? >= self.limits.max_pending_per_session {
-            return Err("Too many pending file transfers for this session".to_string());
+            return Err("Too many pending file transfers for this session"
+                .to_string()
+                .into());
         }
 
         let token = Uuid::new_v4().to_string();
@@ -294,15 +342,15 @@ impl FileTransferStore {
         let mut size = 0_u64;
         futures::pin_mut!(stream);
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| format!("File transfer interrupted: {error}"))?;
+            let chunk = chunk?;
             size = size
                 .checked_add(chunk.len() as u64)
                 .ok_or_else(|| "File transfer size overflow".to_string())?;
             if size > self.limits.max_bytes {
-                return Err(format!(
+                return Err(UploadError::TooLarge(format!(
                     "File transfer exceeds the {} byte limit",
                     self.limits.max_bytes
-                ));
+                )));
             }
             file.write_all(&chunk)
                 .await

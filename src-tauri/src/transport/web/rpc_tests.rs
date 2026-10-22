@@ -755,7 +755,7 @@ async fn lists_only_configured_server_directories_for_local_admin_sessions() {
     let payload = serde_json::json!({ "path": root.path() });
 
     let response = dispatcher
-        .dispatch_authorized(
+        .dispatch(
             "list_server_directory",
             RequestId("server-files".to_string()),
             &json_headers(),
@@ -788,7 +788,7 @@ async fn creates_sqlite_files_only_inside_configured_server_roots() {
     let path = root.path().join("customers.db");
 
     let response = dispatcher
-        .dispatch_authorized(
+        .dispatch(
             "create_sqlite_file",
             RequestId("create-sqlite-file".to_string()),
             &json_headers(),
@@ -805,7 +805,7 @@ async fn creates_sqlite_files_only_inside_configured_server_roots() {
 
     let database_path = root.path().join("inventory.sqlite");
     let response = dispatcher
-        .dispatch_authorized(
+        .dispatch(
             "create_sqlite_database",
             RequestId("create-sqlite-database".to_string()),
             &json_headers(),
@@ -841,7 +841,7 @@ async fn rejects_mcp_host_configuration_without_local_admin_authorization() {
         ),
     ] {
         let response = dispatcher
-            .dispatch_authorized(
+            .dispatch(
                 command,
                 RequestId(format!("restricted-{command}")),
                 &json_headers(),
@@ -878,6 +878,7 @@ async fn disables_mcp_host_configuration_when_web_policy_is_remote() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
 
@@ -907,6 +908,7 @@ async fn routes_mcp_host_commands_through_the_shared_application_api() {
             &json_headers(),
             Bytes::from_static(b"null"),
             Some(Uuid::new_v4()),
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(status.status(), StatusCode::OK);
@@ -922,6 +924,7 @@ async fn routes_mcp_host_commands_through_the_shared_application_api() {
             &json_headers(),
             Bytes::from_static(br#"{"clientId":"claude"}"#),
             Some(Uuid::new_v4()),
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(install.status(), StatusCode::OK);
@@ -981,7 +984,7 @@ async fn rejects_destructive_operations_without_local_admin_authorization() {
         ),
     ] {
         let response = dispatcher
-            .dispatch_authorized(
+            .dispatch(
                 command,
                 RequestId(format!("restricted-{command}")),
                 &json_headers(),
@@ -1153,6 +1156,7 @@ async fn routes_connection_file_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1198,6 +1202,7 @@ async fn routes_database_transfer_jobs_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 session_id,
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1290,6 +1295,7 @@ async fn routes_all_metadata_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 None,
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1427,6 +1433,7 @@ async fn routes_database_object_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(uuid::Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1493,6 +1500,7 @@ async fn routes_query_execution_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(uuid::Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1574,6 +1582,7 @@ async fn routes_ai_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(uuid::Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1646,6 +1655,7 @@ async fn routes_plugin_lifecycle_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1681,28 +1691,33 @@ async fn routes_operational_commands_through_the_shared_application_api() {
         ("clear_logs", Value::Null),
     ];
 
-    for (command, payload) in commands {
+    for (command, payload) in &commands {
         let response = dispatcher
             .dispatch(
                 command,
                 RequestId(format!("request-{command}")),
                 &json_headers(),
-                Bytes::from(serde_json::to_vec(&payload).unwrap()),
+                Bytes::from(serde_json::to_vec(payload).unwrap()),
                 Some(Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
     }
 
-    let authorizations = application
+    // Each call reached the application with the session's granted level.
+    assert!(application
         .contexts
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .iter()
-        .map(|context| context.authorization)
+        .all(|context| context.authorization == AuthorizationLevel::LocalAdmin));
+    let required = commands
+        .iter()
+        .map(|(command, _)| RpcCommand::parse(command).unwrap().metadata().authorization)
         .collect::<Vec<_>>();
     assert_eq!(
-        authorizations,
+        required,
         vec![
             AuthorizationLevel::Sensitive,
             AuthorizationLevel::Sensitive,
@@ -1764,6 +1779,7 @@ async fn routes_notebook_commands_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(uuid::Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1828,6 +1844,7 @@ async fn routes_data_editing_and_blob_commands_through_the_shared_application_ap
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(session_id),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1881,6 +1898,7 @@ async fn routes_settings_and_preferences_through_the_shared_application_api() {
                 &json_headers(),
                 Bytes::from(serde_json::to_vec(&payload).unwrap()),
                 Some(uuid::Uuid::new_v4()),
+                AuthorizationLevel::LocalAdmin,
             )
             .await;
         assert_eq!(response.status(), StatusCode::OK, "{command}");
@@ -1897,6 +1915,7 @@ async fn rejects_invalid_payloads_with_a_stable_error_envelope() {
             &json_headers(),
             Bytes::from_static(br#"{"unknown":true}"#),
             None,
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
 
@@ -1930,6 +1949,7 @@ async fn enforces_deadlines_and_releases_cancellation_identifiers() {
             &deadline_headers,
             Bytes::from_static(b"null"),
             None,
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(timeout.status(), StatusCode::GATEWAY_TIMEOUT);
@@ -1945,6 +1965,7 @@ async fn enforces_deadlines_and_releases_cancellation_identifiers() {
             &json_headers_with_cancellation("query-1"),
             Bytes::from_static(b"null"),
             None,
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(retry.status(), StatusCode::OK);
@@ -1973,6 +1994,7 @@ async fn rejects_duplicate_active_cancellation_identifiers() {
                 &json_headers_with_cancellation("shared"),
                 Bytes::from_static(b"null"),
                 None,
+                AuthorizationLevel::LocalAdmin,
             )
             .await
     });
@@ -1985,6 +2007,7 @@ async fn rejects_duplicate_active_cancellation_identifiers() {
             &json_headers_with_cancellation("shared"),
             Bytes::from_static(b"null"),
             None,
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(duplicate.status(), StatusCode::CONFLICT);
@@ -2010,6 +2033,7 @@ async fn scopes_active_cancellation_identifiers_to_browser_sessions() {
                 &json_headers_with_cancellation("shared"),
                 Bytes::from_static(b"null"),
                 Some(session_a),
+                AuthorizationLevel::LocalAdmin,
             )
             .await
     });
@@ -2022,6 +2046,7 @@ async fn scopes_active_cancellation_identifiers_to_browser_sessions() {
             &json_headers_with_cancellation("shared"),
             Bytes::from_static(b"null"),
             Some(session_b),
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
 
@@ -2057,6 +2082,7 @@ async fn bounds_slow_rpc_work_per_session_and_across_the_server() {
                 &json_headers(),
                 Bytes::from_static(b"null"),
                 Some(session_a),
+                AuthorizationLevel::LocalAdmin,
             )
             .await
     });
@@ -2069,6 +2095,7 @@ async fn bounds_slow_rpc_work_per_session_and_across_the_server() {
             &json_headers(),
             Bytes::from_static(b"null"),
             Some(session_a),
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(same_session.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -2086,6 +2113,7 @@ async fn bounds_slow_rpc_work_per_session_and_across_the_server() {
                 &json_headers(),
                 Bytes::from_static(b"null"),
                 Some(session_b),
+                AuthorizationLevel::LocalAdmin,
             )
             .await
     });
@@ -2098,6 +2126,7 @@ async fn bounds_slow_rpc_work_per_session_and_across_the_server() {
             &json_headers(),
             Bytes::from_static(b"null"),
             Some(session_c),
+            AuthorizationLevel::LocalAdmin,
         )
         .await;
     assert_eq!(server_busy.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -2127,7 +2156,7 @@ async fn dispatch_json(
     authorization: AuthorizationLevel,
 ) -> Response {
     dispatcher
-        .dispatch_authorized(
+        .dispatch(
             command,
             RequestId(format!("request-{command}")),
             &json_headers(),

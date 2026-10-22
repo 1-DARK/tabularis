@@ -1,4 +1,6 @@
-use super::{remove_expired_transfers, safe_content_type, safe_file_name, FileTransferStore};
+use super::{
+    remove_expired_transfers, safe_content_type, safe_file_name, FileTransferStore, UploadError,
+};
 use bytes::Bytes;
 use futures::stream;
 use std::io;
@@ -138,18 +140,20 @@ async fn interrupted_and_oversized_uploads_leave_no_transfer_token() {
         )
         .await
         .unwrap_err()
+        .to_string()
         .contains("interrupted"));
-    assert!(store
-        .store_upload(
-            owner,
-            "connection-import",
-            "large.sql",
-            Some("text/plain"),
-            bytes_stream([b"123456789".as_slice()]),
-        )
-        .await
-        .unwrap_err()
-        .contains("8 byte limit"));
+    assert!(matches!(
+        store
+            .store_upload(
+                owner,
+                "connection-import",
+                "large.sql",
+                Some("text/plain"),
+                bytes_stream([b"123456789".as_slice()]),
+            )
+            .await,
+        Err(UploadError::TooLarge(message)) if message.contains("8 byte limit")
+    ));
 
     let uploads = store.root.join(owner.to_string()).join("uploads");
     assert_eq!(std::fs::read_dir(uploads).unwrap().count(), 0);
@@ -260,4 +264,22 @@ async fn sweeping_removes_expired_transfers_of_every_session() {
     };
     assert!(!uploads(stale_owner, &stale.token).exists());
     assert!(uploads(live_owner, &live.token).exists());
+}
+
+#[tokio::test]
+async fn a_body_cut_off_by_the_router_limit_is_too_large() {
+    use http_body_util::{Full, Limited};
+    let temp = tempfile::tempdir().unwrap();
+    let store = FileTransferStore::with_limits(temp.path(), 1024, Duration::from_secs(60));
+    // RequestBodyLimitLayer wraps chunked bodies the same way.
+    let body = axum::body::Body::new(Limited::new(
+        Full::new(Bytes::from_static(b"0123456789")),
+        4,
+    ))
+    .into_data_stream();
+    let error = store
+        .store_upload(Uuid::new_v4(), "notebook-import", "big.json", None, body)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, UploadError::TooLarge(_)), "{error}");
 }

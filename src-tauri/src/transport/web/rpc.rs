@@ -1467,46 +1467,8 @@ impl RpcDispatcher {
         self.application.clear_session(session_id);
     }
 
-    pub async fn dispatch(
-        &self,
-        command_name: &str,
-        request_id: RequestId,
-        headers: &HeaderMap,
-        body: Bytes,
-        session_id: Option<uuid::Uuid>,
-    ) -> Response {
-        self.dispatch_authorized(
-            command_name,
-            request_id,
-            headers,
-            body,
-            session_id,
-            AuthorizationLevel::LocalAdmin,
-        )
-        .await
-    }
-
-    pub(crate) async fn dispatch_with_authorization(
-        &self,
-        command_name: &str,
-        request_id: RequestId,
-        headers: &HeaderMap,
-        body: Bytes,
-        session_id: Option<uuid::Uuid>,
-        granted_authorization: AuthorizationLevel,
-    ) -> Response {
-        self.dispatch_authorized(
-            command_name,
-            request_id,
-            headers,
-            body,
-            session_id,
-            granted_authorization,
-        )
-        .await
-    }
-
-    async fn dispatch_authorized(
+    /// Runs one RPC for a session holding `granted_authorization`.
+    pub(crate) async fn dispatch(
         &self,
         command_name: &str,
         request_id: RequestId,
@@ -1617,7 +1579,7 @@ impl RpcDispatcher {
             request_id: request_id.0.clone(),
             deadline: Instant::now() + deadline,
             cancellation_id,
-            authorization: metadata.authorization,
+            authorization: granted_authorization,
             session_id,
         };
         let invocation = self.invoke(command, context, &body, granted_authorization);

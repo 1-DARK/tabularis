@@ -7,7 +7,7 @@ use super::contract::SessionNegotiation;
 use super::events::{ClientEventMessage, EventConnection, ServerEventMessage, WebEventBus};
 use super::rpc::{RequestId, RpcAccessPolicy, RpcDispatcher};
 use crate::application::file_transfers::{
-    FileTransferStore, TransferReader, MAX_FILE_TRANSFER_BYTES,
+    FileTransferStore, TransferReader, UploadError, MAX_FILE_TRANSFER_BYTES,
 };
 use crate::application::{ApplicationApi, AuthorizationLevel};
 use crate::cli::WebAuthMode;
@@ -163,7 +163,9 @@ pub async fn run(options: WebServerOptions) -> Result<(), String> {
         log::warn!("Failed to open the Web UI in the default browser");
         // The user asked for a browser, so hand over the URL instead. It goes to
         // the terminal only: `--no-open` services never print it.
-        eprintln!("Open this URL in a browser to sign in (valid once, for one minute):\n  {launch_url}");
+        eprintln!(
+            "Open this URL in a browser to sign in (valid once, for one minute):\n  {launch_url}"
+        );
     }
     drop(launch_url);
 
@@ -513,7 +515,7 @@ async fn rpc(
     let request_id_text = request_id.0.clone();
     let response = state
         .rpc
-        .dispatch_with_authorization(
+        .dispatch(
             &command,
             request_id,
             &headers,
@@ -571,14 +573,20 @@ async fn upload_file(
     body: Body,
 ) -> Response {
     let Some(purpose) = header_text(&headers, FILE_PURPOSE_HEADER_NAME) else {
-        return upload_error_response("A file transfer purpose is required".to_string());
+        return upload_error_response(UploadError::Failed(
+            "A file transfer purpose is required".to_string(),
+        ));
     };
     let Some(encoded_name) = header_text(&headers, FILE_NAME_HEADER_NAME) else {
-        return upload_error_response("A file name is required".to_string());
+        return upload_error_response(UploadError::Failed("A file name is required".to_string()));
     };
     let file_name = match urlencoding::decode(encoded_name) {
         Ok(file_name) => file_name,
-        Err(_) => return upload_error_response("The file name is invalid".to_string()),
+        Err(_) => {
+            return upload_error_response(UploadError::Failed(
+                "The file name is invalid".to_string(),
+            ))
+        }
     };
     let content_type = header_text(&headers, CONTENT_TYPE.as_str());
     match state
@@ -638,7 +646,9 @@ async fn upload_blob(
                 &metadata.token,
                 BLOB_TRANSFER_PURPOSE,
             );
-            upload_error_response("The uploaded BLOB is empty".to_string())
+            upload_error_response(UploadError::Failed(
+                "The uploaded BLOB is empty".to_string(),
+            ))
         }
         Err(error) => upload_error_response(error),
     }
@@ -715,13 +725,12 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
     headers.get(name)?.to_str().ok()
 }
 
-fn upload_error_response(error: String) -> Response {
-    let status = if error.contains("byte limit") {
-        StatusCode::PAYLOAD_TOO_LARGE
-    } else {
-        StatusCode::BAD_REQUEST
+fn upload_error_response(error: UploadError) -> Response {
+    let status = match error {
+        UploadError::TooLarge(_) => StatusCode::PAYLOAD_TOO_LARGE,
+        UploadError::Failed(_) => StatusCode::BAD_REQUEST,
     };
-    (status, [(CACHE_CONTROL, "no-store")], error).into_response()
+    (status, [(CACHE_CONTROL, "no-store")], error.to_string()).into_response()
 }
 
 async fn plugin_asset(
