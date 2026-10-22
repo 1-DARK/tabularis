@@ -46,6 +46,8 @@ export interface HttpTransportOptions {
   readonly reconnectDelayMs?: number;
   readonly maxReconnectDelayMs?: number;
   readonly startDownload?: (url: string) => void;
+  /** Opens the login page after a password session expired. */
+  readonly openLogin?: (url: string) => void;
 }
 
 type EventHandler<K extends EventName> = (payload: EventPayload<K>) => void;
@@ -67,6 +69,7 @@ export class HttpTransport implements TabularisTransport {
   private readonly reconnectDelayMs: number;
   private readonly maxReconnectDelayMs: number;
   private readonly startBrowserDownload: (url: string) => void;
+  private readonly openLogin: (url: string) => void;
   private readonly handlers: EventHandlers = {};
   private readonly pendingSubscriptions = new Map<EventName, Array<{
     resolve: () => void;
@@ -91,6 +94,7 @@ export class HttpTransport implements TabularisTransport {
     this.maxReconnectDelayMs =
       options.maxReconnectDelayMs ?? DEFAULT_MAX_RECONNECT_DELAY_MS;
     this.startBrowserDownload = options.startDownload ?? startDownload;
+    this.openLogin = options.openLogin ?? openLogin;
   }
 
   initialize(): Promise<SessionNegotiation> {
@@ -535,6 +539,10 @@ export class HttpTransport implements TabularisTransport {
     }
 
     const requestId = response.headers.get("x-request-id") ?? createRequestId();
+    // Password mode answers a missing session with a redirect to its login form.
+    if (response.redirected && new URL(response.url).pathname === LOGIN_PATH) {
+      throw clientError("LOGIN_REQUIRED", "Log in to Tabularis Web again", requestId);
+    }
     if (!response.ok) {
       throw clientError(
         response.status === 401 ? "SESSION_REQUIRED" : "SESSION_FAILED",
@@ -615,6 +623,14 @@ export class HttpTransport implements TabularisTransport {
 
     const responseRequestId =
       response.headers.get("x-request-id") ?? requestId;
+    if (isSessionRejection(response)) {
+      await this.renewSession(session);
+      throw clientError(
+        "SESSION_EXPIRED",
+        "The session expired. Repeat the last action.",
+        responseRequestId,
+      );
+    }
     const body = await readJson(response, responseRequestId);
     if (!isRpcResponse(body)) {
       throw clientError(
@@ -634,6 +650,27 @@ export class HttpTransport implements TabularisTransport {
       );
     }
     return body.data as ResponseBody;
+  }
+
+  /**
+   * Drops a session the server no longer accepts and negotiates a new one: a
+   * proxy issues it right away, a password deployment sends the user to its
+   * login form. The rejected request is not repeated, since the server may
+   * have stopped it halfway when the session expired.
+   */
+  private async renewSession(rejected: SessionNegotiation): Promise<void> {
+    if (this.session === rejected) {
+      this.session = undefined;
+      this.sessionPromise = undefined;
+    }
+    try {
+      await this.initialize();
+    } catch (error) {
+      if (error instanceof TabularisClientError && error.code === "LOGIN_REQUIRED") {
+        this.openLogin(this.url(LOGIN_PATH));
+      }
+      throw error;
+    }
   }
 
   private ensureConnected(): Promise<void> {
@@ -833,6 +870,18 @@ export class HttpTransport implements TabularisTransport {
 
 function encodeAssetPath(assetPath: string): string {
   return assetPath.split("/").map(encodeURIComponent).join("/");
+}
+
+const LOGIN_PATH = "/login";
+
+/** The security gate rejects with an empty 401, or an empty 403 for a stale CSRF token. */
+function isSessionRejection(response: Response): boolean {
+  const json = response.headers.get("content-type")?.includes("application/json") ?? false;
+  return response.status === 401 || (response.status === 403 && !json);
+}
+
+function openLogin(url: string): void {
+  window.location.assign(url);
 }
 
 function startDownload(url: string): void {

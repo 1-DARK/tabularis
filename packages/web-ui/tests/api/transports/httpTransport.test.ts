@@ -417,6 +417,77 @@ describe("HttpTransport", () => {
     });
   });
 
+  it("renews a rejected session and sends the next call with the new CSRF token", async () => {
+    const renewed = { ...SESSION, csrfToken: "renewed-csrf" };
+    const fetchRequest = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(SESSION))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(jsonResponse(renewed))
+      .mockResolvedValueOnce(jsonResponse({ ok: true, data: false }));
+    const openLogin = vi.fn();
+    const transport = new HttpTransport({ fetch: fetchRequest, openLogin });
+
+    await expect(transport.call("is_debug_mode", undefined)).rejects.toMatchObject({
+      code: "SESSION_EXPIRED",
+    });
+    await expect(transport.call("is_debug_mode", undefined)).resolves.toBe(false);
+    const lastHeaders = new Headers(fetchRequest.mock.calls[3][1]?.headers);
+    expect(lastHeaders.get("x-tabularis-csrf")).toBe("renewed-csrf");
+    expect(openLogin).not.toHaveBeenCalled();
+  });
+
+  it("treats an empty 403 as a stale CSRF token but keeps JSON 403 errors", async () => {
+    const fetchRequest = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(SESSION))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            ok: false,
+            error: { code: "FORBIDDEN", message: "Denied", details: null, requestId: "r" },
+          },
+          403,
+        ),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(jsonResponse(SESSION));
+    const transport = new HttpTransport({ fetch: fetchRequest });
+
+    await expect(transport.call("is_debug_mode", undefined)).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    await expect(transport.call("is_debug_mode", undefined)).rejects.toMatchObject({
+      code: "SESSION_EXPIRED",
+    });
+    expect(fetchRequest).toHaveBeenCalledTimes(4);
+  });
+
+  it("sends the browser to the login form when a password session expired", async () => {
+    const loginPage = new Response("<html></html>", {
+      status: 200,
+      headers: { "content-type": "text/html" },
+    });
+    Object.defineProperty(loginPage, "redirected", { value: true });
+    Object.defineProperty(loginPage, "url", { value: "http://localhost/login" });
+    const fetchRequest = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(SESSION))
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(loginPage);
+    const openLogin = vi.fn();
+    const transport = new HttpTransport({
+      baseUrl: "http://localhost",
+      fetch: fetchRequest,
+      openLogin,
+    });
+
+    await expect(transport.call("is_debug_mode", undefined)).rejects.toMatchObject({
+      code: "LOGIN_REQUIRED",
+    });
+    expect(openLogin).toHaveBeenCalledWith("http://localhost/login");
+  });
+
   it("uses the same RPC path for tracked unmigrated commands", async () => {
     const fetchRequest = vi
       .fn<typeof fetch>()
