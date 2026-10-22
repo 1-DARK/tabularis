@@ -9,6 +9,7 @@ import {
     replaceCurrentWord,
     buildStructuredFilterClause,
     buildSingleFilterClause,
+    supportsMatchCaseToggle,
     isFilterComplete,
     createEmptyFilter,
     buildDistinctValuesQuery,
@@ -895,6 +896,7 @@ const TableToolbarInternal = ({
                                     onEscape={closePanel}
                                     isApplied={appliedFilters[filter.id] === true}
                                     onTriggerApplied={() => onTriggerApplied(filter.id)}
+                                    supportsMatchCase={supportsMatchCaseToggle(quotingDriver)}
                                     onLoadValues={canPickValues ? loadValuesFor : undefined}
                                     valuePickerContextKey={
                                         canPickValues
