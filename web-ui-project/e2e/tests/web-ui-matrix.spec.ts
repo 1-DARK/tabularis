@@ -156,6 +156,14 @@ for (const fixture of databaseFixtures) {
         }),
       ).resolves.toContain("Connection successful");
 
+      const databases = await rpc<string[]>(page, "list_databases", {
+        request: { params: fixture.params, connection_id: connection.id },
+      });
+      // SQLite has no server to list databases from.
+      if (fixture.name !== "sqlite") {
+        expect(databases).toContain(fixture.params.database);
+      }
+
       const identity = await execute(page, connection.id, fixture.identityQuery);
       expect(String(identity.rows[0]?.[0])).toContain(fixture.expectedIdentity);
 
