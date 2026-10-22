@@ -86,4 +86,11 @@ describe('scaffold', () => {
             expect(existsSync(join(withoutUiDir, 'locales'))).toBe(false);
         });
     });
+
+    describe('README', () => {
+        it('states the minimum just version the justfile needs', () => {
+            const readme = readFileSync(join(scaffoldPlugin(false), 'README.md'), 'utf8');
+            expect(readme).toContain('just) 1.44 or newer');
+        });
+    });
 });
