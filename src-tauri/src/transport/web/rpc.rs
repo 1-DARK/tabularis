@@ -279,6 +279,9 @@ enum ConnectionFilesRpcCommand {
     PreviewTabularisImport,
     ApplyPreparedTabularisImport,
     GetBackupStatus,
+    GetDatabaseBackupStatus,
+    RunDatabaseBackup,
+    CancelDatabaseBackup,
     SetBackupPassword,
     SetBackupTargetPassword,
     RunBackup,
@@ -2268,6 +2271,9 @@ impl ConnectionFilesRpcCommand {
             "preview_tabularis_import_file" => Self::PreviewTabularisImport,
             "apply_prepared_tabularis_import" => Self::ApplyPreparedTabularisImport,
             "get_connections_backup_status" => Self::GetBackupStatus,
+            "get_database_backup_status" => Self::GetDatabaseBackupStatus,
+            "run_database_backup_now" => Self::RunDatabaseBackup,
+            "cancel_database_backup" => Self::CancelDatabaseBackup,
             "set_connections_backup_password" => Self::SetBackupPassword,
             "set_connections_backup_target_password" => Self::SetBackupTargetPassword,
             "run_connections_backup" => Self::RunBackup,
@@ -2280,7 +2286,7 @@ impl ConnectionFilesRpcCommand {
             Self::ListImportSources
             | Self::PreviewForeignImport
             | Self::ApplyForeignImport
-            | Self::GetBackupStatus => AuthorizationLevel::LocalAdmin,
+            | Self::GetBackupStatus | Self::GetDatabaseBackupStatus | Self::RunDatabaseBackup | Self::CancelDatabaseBackup => AuthorizationLevel::LocalAdmin,
             Self::Export
             | Self::PreviewTabularisImport
             | Self::ApplyPreparedTabularisImport
@@ -2778,6 +2784,18 @@ fn decode_connection_files_command(
             ConnectionFilesCommand::ApplyPreparedTabularisImport {
                 resolutions: request.resolutions,
             }
+        }
+        ConnectionFilesRpcCommand::GetDatabaseBackupStatus => {
+            decode_empty_payload(body)?;
+            ConnectionFilesCommand::GetDatabaseBackupStatus
+        }
+        ConnectionFilesRpcCommand::RunDatabaseBackup => {
+            decode_empty_payload(body)?;
+            ConnectionFilesCommand::RunDatabaseBackup
+        }
+        ConnectionFilesRpcCommand::CancelDatabaseBackup => {
+            decode_empty_payload(body)?;
+            ConnectionFilesCommand::CancelDatabaseBackup
         }
         ConnectionFilesRpcCommand::GetBackupStatus => {
             decode_empty_payload(body)?;

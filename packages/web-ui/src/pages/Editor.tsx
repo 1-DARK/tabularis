@@ -4669,18 +4669,24 @@ export const Editor = ({commandScopeId}: EditorProps) => {
         setExportState((prev) => ({...prev, isOpen: false}));
     }, []);
 
+    const getLoadedRowsWarning = (result: QueryResult): string | undefined => {
+        const limit = getLoadedRowsExportLimit(result);
+        if (!limit) return undefined;
+        const loaded = limit.loadedRows.toLocaleString();
+        return limit.totalRows === null
+            ? t('editor.exportLoadedRowsWarningUnknownTotal', {loaded})
+            : t('editor.exportLoadedRowsWarning', {
+                  loaded,
+                  total: limit.totalRows.toLocaleString(),
+              });
+    };
+
     const handleExportLoadedRows = async (result: QueryResult, format: ResultExportFormat) => {
         if (!activeTab) return;
 
         const extension = format === 'markdown' ? 'md' : format;
         try {
-            const loadedRowsLimit = getLoadedRowsExportLimit(result);
-            const warningMessage = loadedRowsLimit
-                ? t('editor.exportLoadedRowsWarning', {
-                      loaded: loadedRowsLimit.loadedRows.toLocaleString(),
-                      total: loadedRowsLimit.totalRows.toLocaleString(),
-                  })
-                : undefined;
+            const warningMessage = getLoadedRowsWarning(result);
 
             const fileName = buildExportFileName({
                 tableName: activeTab.type === 'table' ? activeTab.activeTable : null,

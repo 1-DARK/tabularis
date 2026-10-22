@@ -371,6 +371,7 @@ fn merge_config(existing: &mut AppConfig, update: AppConfig) {
         backup_target,
         backup_webdav_url,
         backup_webdav_username,
+        database_backup_plan,
         auto_connect_last_connection,
         last_active_connection_id,
         last_open_connection_ids,

@@ -23,6 +23,7 @@ pub mod ai_schema_context_tests;
 pub mod application;
 pub mod askpass;
 pub mod backup;
+pub mod database_backup;
 pub mod chatgpt;
 pub mod cli;
 pub mod clipboard_import;
@@ -209,6 +210,9 @@ pub fn run() {
                 std::sync::Arc::new(runtime::state::ApplicationState::default());
             let web_data_dir = application.context.paths.data_dir().to_path_buf();
             let web_plugins_dir = application.context.paths.plugins_dir();
+            let database_backup_scheduler = database_backup::spawn_database_backup_scheduler(
+                application.context.clone(), application_state.dump_cancellation.clone(),
+            );
             let approval_heartbeat = runtime::lifecycle::start_approval_heartbeat(&application.context);
             let approval_watcher = ai_approval_watcher::spawn_headless(
                 application.context.clone(),
@@ -238,6 +242,7 @@ pub fn run() {
                 })
                 .await;
 
+            database_backup_scheduler.abort();
             approval_watcher.abort();
             drop(approval_heartbeat);
             runtime::lifecycle::shutdown_headless_runtime(&application_state).await;

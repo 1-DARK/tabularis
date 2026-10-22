@@ -14,6 +14,7 @@ test('the Web operator guide covers every Web CLI option', () => {
     const webOptions = cli.slice(cli.indexOf('pub struct WebArgs'));
     const optionOverrides = {
         allowed_origins: 'allowed-origin',
+        trusted_proxies: 'trusted-proxy',
         server_file_browser_roots: 'server-file-browser-root',
     };
     const optionNames = [...webOptions.matchAll(/pub ([a-z_]+):/g)].map(([, name]) => {
@@ -29,6 +30,7 @@ test('the Web operator guide covers every Web CLI option', () => {
         '--auth',
         '--public-url',
         '--allowed-origin',
+        '--trusted-proxy',
         '--allow-high-risk',
         '--server-file-browser-root',
     ]);

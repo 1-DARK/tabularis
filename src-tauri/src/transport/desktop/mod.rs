@@ -6,6 +6,7 @@ pub mod ai_approval_watcher;
 pub mod ai_commands;
 pub mod askpass;
 pub mod backup;
+pub mod database_backup;
 pub mod chatgpt;
 pub mod clipboard_import;
 pub mod commands;
@@ -392,6 +393,9 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
             backup::set_connections_backup_password,
             backup::set_connections_backup_target_password,
             backup::run_connections_backup,
+            database_backup::get_database_backup_status,
+            database_backup::run_database_backup_now,
+            database_backup::cancel_database_backup,
             connection_import_commands::list_connection_import_sources,
             connection_import_commands::preview_connection_import,
             connection_import_commands::apply_connection_import,

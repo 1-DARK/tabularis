@@ -671,6 +671,7 @@ export class HttpTransport implements TabularisTransport {
             this.session = session;
             this.sessionPromise = undefined;
         }
+        if (this.intentionalClose || this.subscribedEvents().length === 0) return;
         await this.ensureConnected();
     }
 

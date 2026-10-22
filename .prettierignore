@@ -24,3 +24,6 @@ charts/**/templates
 
 # Frozen compatibility fixtures retain their original bytes.
 tests/fixtures
+
+# This inventory has a byte-for-byte generator contract.
+web-ui-project/docs/web-ui-parity.json

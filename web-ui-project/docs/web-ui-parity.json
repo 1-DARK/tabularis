@@ -29,9 +29,23 @@
       "users",
       "windows"
     ],
-    "eventUse": ["none", "emits", "event-coordinated"],
-    "filesystemUse": ["none", "read", "write", "read-write"],
-    "authorizationLevel": ["session", "database", "sensitive", "local-admin"]
+    "eventUse": [
+      "none",
+      "emits",
+      "event-coordinated"
+    ],
+    "filesystemUse": [
+      "none",
+      "read",
+      "write",
+      "read-write"
+    ],
+    "authorizationLevel": [
+      "session",
+      "database",
+      "sensitive",
+      "local-admin"
+    ]
   },
   "classificationNotes": {
     "eventUse": "Whether command completion or progress participates in the frontend event bus.",
@@ -42,11 +56,11 @@
     "literalCommandCount": 15,
     "literalCallSiteCount": 16,
     "dynamicCallSiteCount": 0,
-    "handlerRegistrationCount": 293,
-    "registeredCommandCount": 293,
+    "handlerRegistrationCount": 296,
+    "registeredCommandCount": 296,
     "duplicateHandlerRegistrations": [],
     "frontendCommandsMissingRegistration": [],
-    "registeredCommandsWithoutFrontendCall": 278
+    "registeredCommandsWithoutFrontendCall": 281
   },
   "commands": [
     {
@@ -59,7 +73,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/contexts/UpdateProvider.tsx",
-          "line": 58
+          "line": 56
         }
       ]
     },
@@ -73,7 +87,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/hooks/useDeepLinkInstall.ts",
-          "line": 72
+          "line": 69
         }
       ]
     },
@@ -101,7 +115,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 432
+          "line": 420
         }
       ]
     },
@@ -115,7 +129,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 107
+          "line": 100
         }
       ]
     },
@@ -129,7 +143,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 123
+          "line": 116
         }
       ]
     },
@@ -143,7 +157,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/pages/VisualExplainPage.tsx",
-          "line": 95
+          "line": 93
         }
       ]
     },
@@ -157,7 +171,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 409
+          "line": 397
         }
       ]
     },
@@ -171,7 +185,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/pages/VisualExplainPage.tsx",
-          "line": 61
+          "line": 59
         }
       ]
     },
@@ -185,7 +199,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 275
+          "line": 277
         }
       ]
     },
@@ -199,7 +213,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 292
+          "line": 290
         }
       ]
     },
@@ -213,7 +227,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 417
+          "line": 405
         }
       ]
     },
@@ -227,7 +241,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 291
+          "line": 289
         }
       ]
     },
@@ -241,7 +255,7 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/platform/tauriCapabilities.ts",
-          "line": 400
+          "line": 388
         }
       ]
     },
@@ -255,11 +269,11 @@
       "callSites": [
         {
           "file": "packages/web-ui/src/contexts/DatabaseProvider.tsx",
-          "line": 181
+          "line": 196
         },
         {
           "file": "packages/web-ui/src/pages/Editor.tsx",
-          "line": 768
+          "line": 726
         }
       ]
     }
@@ -274,6 +288,7 @@
     "apply_prepared_tabularis_import",
     "build_routine_call_sql",
     "cancel_chatgpt_sign_in",
+    "cancel_database_backup",
     "cancel_dump",
     "cancel_export",
     "cancel_import",
@@ -378,6 +393,7 @@
     "get_create_index_sql",
     "get_create_table_sql",
     "get_data_types",
+    "get_database_backup_status",
     "get_db_privilege_catalog",
     "get_db_user_grants",
     "get_db_user_privileges",
@@ -490,6 +506,7 @@
     "respond_ssh_askpass",
     "restart_plugin_process",
     "run_connections_backup",
+    "run_database_backup_now",
     "save_cellname_prompt",
     "save_config",
     "save_config_json",

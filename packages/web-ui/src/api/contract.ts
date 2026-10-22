@@ -1,3 +1,4 @@
+import type {DatabaseBackupStatus} from '@/types/databaseBackup';
 import type {ChatGptModel, ChatGptSession} from '@/types/chatgpt';
 import type {TableQueryTemplateRequest} from '@/utils/tableQueryTemplates';
 import type {DataTypeRegistry} from '@/types/dataTypes';
@@ -700,6 +701,9 @@ export interface CommandMap {
         void,
         'sensitive'
     >;
+    get_database_backup_status: CommandDefinition<undefined, DatabaseBackupStatus, 'local-admin'>;
+    run_database_backup_now: CommandDefinition<undefined, string, 'local-admin'>;
+    cancel_database_backup: CommandDefinition<undefined, void, 'local-admin'>;
     get_connections_backup_status: CommandDefinition<undefined, BackupStatus, 'local-admin'>;
     set_connections_backup_password: CommandDefinition<{password: string}, void, 'sensitive'>;
     set_connections_backup_target_password: CommandDefinition<

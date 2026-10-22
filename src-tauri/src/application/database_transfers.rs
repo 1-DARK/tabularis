@@ -15,6 +15,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_util::io::ReaderStream;
 use uuid::Uuid;
 use zip::ZipArchive;
@@ -157,6 +158,68 @@ pub async fn dump_database(
     schema: Option<String>,
     database: Option<String>,
 ) -> Result<Option<GeneratedFile>, String> {
+    dump_database_job(runtime, state, session_id, connection_id, destination, options, schema, database, None, None).await
+}
+
+pub struct DumpRequest {
+    pub slot_key: String,
+    pub connection_id: String,
+    pub file_path: String,
+    pub options: DumpOptions,
+    pub schema: Option<String>,
+    pub database: Option<String>,
+}
+
+pub const DUMP_CANCELLED: &str = "Dump cancelled";
+
+pub fn db_backup_slot_key(connection_id: &str) -> String {
+    format!("{connection_id}_db_backup")
+}
+
+pub(crate) fn abort_slot(handles: &Mutex<AbortHandleMap>, slot_key: &str) -> bool {
+    let entries = handles.lock().unwrap().remove(slot_key).unwrap_or_default();
+    for handle in &entries { handle.abort(); }
+    !entries.is_empty()
+}
+
+pub(crate) async fn await_cancellable_dump<T>(
+    handles: &Arc<Mutex<AbortHandleMap>>,
+    slot_key: String,
+    task: tokio::task::JoinHandle<Result<T, String>>,
+    cancel_requested: Option<&AtomicBool>,
+) -> Result<T, String> {
+    let mut registration = JobRegistration::new(handles.clone(), slot_key, Arc::new(task.abort_handle()));
+    if cancel_requested.is_some_and(|flag| flag.load(Ordering::SeqCst)) { task.abort(); }
+    let result = task.await;
+    registration.complete();
+    join_job(result, "Dump")
+}
+
+pub async fn dump_database_with_handles(
+    runtime: &RuntimeContext,
+    handles: &Arc<Mutex<AbortHandleMap>>,
+    request: DumpRequest,
+    cancel_requested: Option<&AtomicBool>,
+) -> Result<(), String> {
+    let state = DumpCancellationState { handles: handles.clone() };
+    dump_database_job(runtime, &state, None, request.connection_id,
+        DumpDestination::ServerPath(PathBuf::from(request.file_path)), request.options,
+        request.schema, request.database, Some(request.slot_key), cancel_requested).await.map(|_| ())
+}
+
+async fn dump_database_job(
+    runtime: &RuntimeContext,
+    state: &DumpCancellationState,
+    session_id: Option<Uuid>,
+    connection_id: String,
+    destination: DumpDestination,
+    options: DumpOptions,
+    schema: Option<String>,
+    database: Option<String>,
+    slot_key: Option<String>,
+    cancel_requested: Option<&AtomicBool>,
+) -> Result<Option<GeneratedFile>, String> {
+    if cancel_requested.is_some_and(|flag| flag.load(Ordering::SeqCst)) { return Err(DUMP_CANCELLED.to_string()); }
     if !options.structure && !options.data {
         return Err("Select structure, data, or both for the dump".to_string());
     }
@@ -199,14 +262,12 @@ pub async fn dump_database(
             temporary,
         ))
     });
-    let mut registration = JobRegistration::new(
-        state.handles.clone(),
-        job_key(session_id, JobKind::Dump, &connection_id),
-        Arc::new(task.abort_handle()),
-    );
-    let result = task.await;
-    registration.complete();
-    let (file_path, download_owner, temporary) = join_job(result, "Dump")?;
+    let (file_path, download_owner, temporary) = await_cancellable_dump(
+        &state.handles,
+        slot_key.unwrap_or_else(|| job_key(session_id, JobKind::Dump, &connection_id)),
+        task,
+        cancel_requested,
+    ).await?;
 
     let Some(owner) = download_owner else {
         return Ok(None);

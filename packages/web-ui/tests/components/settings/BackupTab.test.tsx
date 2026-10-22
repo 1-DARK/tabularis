@@ -1,5 +1,6 @@
 import {fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+vi.unmock('lucide-react');
 import {BackupTab} from '@/components/settings/BackupTab';
 
 const mocks = vi.hoisted(() => ({
@@ -55,6 +56,7 @@ vi.mock('@/components/settings/SettingControls', () => ({
             {children}
         </div>
     ),
+    SettingToggle: () => null,
     SettingButtonGroup: () => null,
     SettingNumberInput: () => null,
 }));
@@ -67,6 +69,10 @@ describe('BackupTab browser adaptation', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         mocks.call.mockImplementation((command: string) => {
+            if (command === 'get_connections' || command === 'get_registered_drivers')
+                return Promise.resolve([]);
+            if (command === 'get_database_backup_status')
+                return Promise.resolve({isRunning: false});
             if (command === 'get_connections_backup_status') {
                 return Promise.resolve({
                     passwordSet: true,
@@ -97,10 +103,25 @@ describe('BackupTab browser adaptation', () => {
         mocks.downloadFile.mockResolvedValue(true);
     });
 
+    it('lets browser users set a database backup server directory without a picker', async () => {
+        render(<BackupTab />);
+        const directory = await screen.findByRole('textbox', {
+            name: 'settings.backup.dbBackupDirectory',
+        });
+        fireEvent.change(directory, {target: {value: '/srv/database-backups'}});
+        fireEvent.blur(directory);
+        await waitFor(() =>
+            expect(mocks.updateSetting).toHaveBeenCalledWith(
+                'databaseBackupPlan',
+                expect.objectContaining({destinationDirectory: '/srv/database-backups'}),
+            ),
+        );
+    });
+
     it('labels local targets as server paths and downloads manual backup copies', async () => {
         render(<BackupTab />);
 
-        expect(screen.getByText('settings.backup.serverDirectoryDesc')).toBeInTheDocument();
+        expect(screen.getAllByText('settings.backup.serverDirectoryDesc')[0]).toBeInTheDocument();
         expect(screen.getByDisplayValue('/srv/tabularis/backups')).toBeInTheDocument();
 
         const buttons = screen.getAllByRole('button', {

@@ -570,6 +570,38 @@ describe('HttpTransport', () => {
         unsubscribe();
     });
 
+    it('does not reopen a socket when all handlers leave during session refresh', async () => {
+        vi.useFakeTimers();
+        const sockets: FakeWebSocket[] = [];
+        let finishRefresh!: (response: Response) => void;
+        const refresh = new Promise<Response>((resolve) => {
+            finishRefresh = resolve;
+        });
+        const transport = new HttpTransport({
+            fetch: vi
+                .fn<typeof fetch>()
+                .mockResolvedValueOnce(jsonResponse(SESSION))
+                .mockReturnValueOnce(refresh),
+            reconnectDelayMs: 100,
+            createWebSocket: () => {
+                const socket = new FakeWebSocket();
+                sockets.push(socket);
+                return socket;
+            },
+        });
+        await transport.initialize();
+        const subscribed = transport.subscribe('connection-health-failed', vi.fn());
+        await Promise.resolve();
+        sockets[0].open();
+        const unsubscribe = await subscribed;
+        sockets[0].disconnect();
+        await vi.advanceTimersByTimeAsync(100);
+        unsubscribe();
+        finishRefresh(jsonResponse(SESSION));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(sockets).toHaveLength(1);
+    });
+
     it('uses the same RPC path for tracked unmigrated commands', async () => {
         const fetchRequest = vi
             .fn<typeof fetch>()

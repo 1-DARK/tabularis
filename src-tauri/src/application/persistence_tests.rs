@@ -347,3 +347,17 @@ fn saves_all_grid_preferences_and_preserves_them_on_partial_updates() {
     }
     assert_eq!(reloaded["language"], "de");
 }
+
+#[test]
+fn database_backup_plan_survives_unrelated_config_updates() {
+    let temp = tempfile::tempdir().unwrap();
+    let runtime = runtime(temp.path());
+    let plan: crate::config::DatabaseBackupPlan = serde_json::from_value(serde_json::json!({
+        "enabled": true, "connectionId": "sqlite-review", "time": "03:15", "timezone": "UTC",
+        "destinationDirectory": "/backups", "retention": 3,
+        "includeStructure": true, "includeData": true
+    })).unwrap();
+    save_config(&runtime, AppConfig { database_backup_plan: Some(plan.clone()), ..Default::default() }).unwrap();
+    save_config(&runtime, AppConfig { language: Some("de".to_string()), ..Default::default() }).unwrap();
+    assert_eq!(load_config(&runtime).database_backup_plan, Some(plan));
+}

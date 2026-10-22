@@ -43,6 +43,9 @@ pub enum ConnectionFilesCommand {
         resolutions: Vec<convert::ImportResolution>,
     },
     GetBackupStatus,
+    GetDatabaseBackupStatus,
+    RunDatabaseBackup,
+    CancelDatabaseBackup,
     SetBackupPassword {
         password: String,
     },
@@ -194,6 +197,12 @@ pub async fn execute(
                 resolutions,
             )
             .await?;
+            Ok(Value::Null)
+        }
+        ConnectionFilesCommand::GetDatabaseBackupStatus => json(crate::database_backup::get_database_backup_status(runtime).await?),
+        ConnectionFilesCommand::RunDatabaseBackup => json(crate::database_backup::run_database_backup_now(runtime, &state.dump_cancellation).await?),
+        ConnectionFilesCommand::CancelDatabaseBackup => {
+            crate::database_backup::cancel_database_backup(&state.dump_cancellation).await?;
             Ok(Value::Null)
         }
         ConnectionFilesCommand::GetBackupStatus => {
