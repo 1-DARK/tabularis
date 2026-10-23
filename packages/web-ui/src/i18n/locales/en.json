@@ -1543,7 +1543,8 @@
       "unsupportedNote": "Not available for this column type",
       "filterBy": "Filter by {{value}}",
       "clickToFilter": "Click a value to filter the table by it",
-      "sampled": "Distinct, min / max and top values are based on a sample of {{size}} values"
+      "sampled": "Distinct, min / max and top values are based on a sample of {{size}} values",
+      "unavailable": "This driver doesn't provide column statistics"
     },
     "copyCells": "Copy {{count}} Cells",
     "copyRows": "Copy {{count}} Rows",

@@ -1473,7 +1473,8 @@
       "unsupportedNote": "Für diesen Spaltentyp nicht verfügbar",
       "filterBy": "Nach {{value}} filtern",
       "clickToFilter": "Auf einen Wert klicken, um die Tabelle danach zu filtern",
-      "sampled": "Eindeutige Werte, Min / Max und häufigste Werte beruhen auf einer Stichprobe von {{size}} Werten"
+      "sampled": "Eindeutige Werte, Min / Max und häufigste Werte beruhen auf einer Stichprobe von {{size}} Werten",
+      "unavailable": "Dieser Treiber bietet keine Spaltenstatistiken"
     },
     "copyCells": "{{count}} Zelle(n) kopieren",
     "copyRows": "{{count}} Zeile(n) kopieren",

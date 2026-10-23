@@ -3233,7 +3233,7 @@ export const Editor = ({commandScopeId}: EditorProps) => {
                 if (stats) return stats;
                 // The plugin answered "method not found": only SQL engines can fall back.
                 if (!speaksGenericSql(activeCapabilities)) {
-                    throw new Error("This driver doesn't provide column statistics");
+                    throw new Error(t('dataGrid.columnStats.unavailable'));
                 }
             }
             return loadColumnStats(
@@ -3248,6 +3248,7 @@ export const Editor = ({commandScopeId}: EditorProps) => {
             columnStatsSource,
             fetchPluginColumnStats,
             runToolbarQuery,
+            t,
         ],
     );
 

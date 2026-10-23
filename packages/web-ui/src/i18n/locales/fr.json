@@ -1513,7 +1513,8 @@
       "unsupportedNote": "Non disponible pour ce type de colonne",
       "filterBy": "Filtrer par {{value}}",
       "clickToFilter": "Cliquez sur une valeur pour filtrer la table",
-      "sampled": "Les valeurs distinctes, min / max et les plus fréquentes reposent sur un échantillon de {{size}} valeurs"
+      "sampled": "Les valeurs distinctes, min / max et les plus fréquentes reposent sur un échantillon de {{size}} valeurs",
+      "unavailable": "Ce pilote ne fournit pas de statistiques de colonne"
     },
     "copyCells": "Copier {{count}} cellule(s)",
     "copyRows": "Copier {{count}} ligne(s)",

@@ -1485,7 +1485,8 @@
       "unsupportedNote": "この列の型では利用できません",
       "filterBy": "{{value}} で絞り込む",
       "clickToFilter": "値をクリックするとテーブルをその値で絞り込みます",
-      "sampled": "一意の値、最小 / 最大、上位の値は {{size}} 件のサンプルに基づいています"
+      "sampled": "一意の値、最小 / 最大、上位の値は {{size}} 件のサンプルに基づいています",
+      "unavailable": "このドライバーは列の統計情報を提供していません"
     },
     "copyCells": "{{count}} 個のセルをコピー",
     "copyRows": "{{count}} 行をコピー",

@@ -1492,7 +1492,8 @@
       "unsupportedNote": "Indisponível para este tipo de coluna",
       "filterBy": "Filtrar por {{value}}",
       "clickToFilter": "Clique em um valor para filtrar a tabela por ele",
-      "sampled": "Valores distintos, mín. / máx. e mais frequentes se baseiam em uma amostra de {{size}} valores"
+      "sampled": "Valores distintos, mín. / máx. e mais frequentes se baseiam em uma amostra de {{size}} valores",
+      "unavailable": "Este driver não fornece estatísticas de coluna"
     },
     "copyCells": "Copiar {{count}} Células",
     "copyRows": "Copiar {{count}} Linhas",
