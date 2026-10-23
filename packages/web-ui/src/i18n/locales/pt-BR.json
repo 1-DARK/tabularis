@@ -1512,7 +1512,8 @@
     "revealCell": "Revelar célula",
     "maskCell": "Mascarar célula",
     "revealColumn": "Revelar coluna",
-    "maskColumn": "Mascarar coluna"
+    "maskColumn": "Mascarar coluna",
+    "resizeColumn": "Redimensionar coluna {{col}}"
   },
   "editRow": {
     "title": "Editar Linha",

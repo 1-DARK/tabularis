@@ -1533,7 +1533,8 @@
     "revealCell": "Afficher la cellule",
     "maskCell": "Masquer la cellule",
     "revealColumn": "Afficher la colonne",
-    "maskColumn": "Masquer la colonne"
+    "maskColumn": "Masquer la colonne",
+    "resizeColumn": "Redimensionner la colonne {{col}}"
   },
   "editRow": {
     "title": "Modifier la ligne",

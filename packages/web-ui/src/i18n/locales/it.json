@@ -1554,7 +1554,8 @@
     "revealCell": "Mostra cella",
     "maskCell": "Maschera cella",
     "revealColumn": "Mostra colonna",
-    "maskColumn": "Maschera colonna"
+    "maskColumn": "Maschera colonna",
+    "resizeColumn": "Ridimensiona colonna {{col}}"
   },
   "editRow": {
     "title": "Modifica riga",
