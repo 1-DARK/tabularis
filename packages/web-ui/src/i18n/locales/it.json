@@ -59,7 +59,9 @@
     "opStartsWith": "inizia con",
     "opEndsWith": "finisce con",
     "opIsEmpty": "è vuoto",
-    "opIsNotEmpty": "non è vuoto"
+    "opIsNotEmpty": "non è vuoto",
+    "matchCase": "Maiuscole/minuscole",
+    "matchCaseHint": "Distingue maiuscole e minuscole (LIKE). Deseleziona per ignorarle (ILIKE)."
   },
   "triggers":{
     "originalRestored": "Il trigger originale è stato ripristinato.",

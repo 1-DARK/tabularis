@@ -59,7 +59,9 @@
     "opStartsWith": "commence par",
     "opEndsWith": "se termine par",
     "opIsEmpty": "est vide",
-    "opIsNotEmpty": "n'est pas vide"
+    "opIsNotEmpty": "n'est pas vide",
+    "matchCase": "Respecter la casse",
+    "matchCaseHint": "Respecte la casse (LIKE). Décochez pour ignorer la casse (ILIKE)."
   },
   "tags": {
     "label": "Tags",

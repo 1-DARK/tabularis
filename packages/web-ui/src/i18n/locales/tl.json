@@ -59,7 +59,9 @@
     "opStartsWith": "nagsisimula sa",
     "opEndsWith": "nagtatapos sa",
     "opIsEmpty": "walang laman",
-    "opIsNotEmpty": "may laman"
+    "opIsNotEmpty": "may laman",
+    "matchCase": "Itugma ang case",
+    "matchCaseHint": "Sensitibo sa laki ng titik (LIKE). I-untick para hindi maging sensitibo (ILIKE)."
   },
   "tags": {
     "label": "Mga tag",
