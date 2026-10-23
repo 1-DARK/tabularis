@@ -125,6 +125,7 @@ import {
     columnNamesAsJson,
 } from '@/utils/clipboard';
 import {formatColumnNamesAsSqlList} from '@/utils/objectNameCopy';
+import {quoteIdentifier} from '@/utils/identifiers';
 import {DEFAULT_MASKING_PATTERNS, isColumnMasked} from '@/utils/columnMasking';
 import type {PendingInsertion, TableColumn, ForeignKey} from '@/types/editor';
 import type {ResultCommands} from '@/types/commands';
@@ -2039,9 +2040,9 @@ export const DataGrid = React.memo(function DataGrid({
 
     const copyHeaderNameQuoted = useCallback(async () => {
         if (!headerContextMenu) return;
-        await copyToClipboard(`\`${headerContextMenu.colName}\``);
+        await copyToClipboard(quoteIdentifier(headerContextMenu.colName, copyDriver));
         setHeaderContextMenu(null);
-    }, [headerContextMenu, copyToClipboard]);
+    }, [headerContextMenu, copyDriver, copyToClipboard]);
 
     const copyHeaderNameTable = useCallback(async () => {
         if (!headerContextMenu) return;

@@ -2965,6 +2965,30 @@ describe('DataGrid copy column names as SQL list', () => {
         });
     });
 
+    it('copies a quoted column name with the active driver quote and escaping', async () => {
+        databaseMock.mockReturnValue({
+            activeSchema: null,
+            connections: [],
+            activeDriver: 'postgres',
+            getConnectionData: vi.fn(),
+        });
+
+        const {container} = render(
+            <DataGrid
+                columns={['we"ird']}
+                data={[[1]]}
+                selectedRows={new Set()}
+                onSelectionChange={vi.fn()}
+                readonly
+            />,
+        );
+
+        fireEvent.contextMenu(container.querySelectorAll('th')[1]);
+        fireEvent.click(await screen.findByText('dataGrid.copyColumnNameQuoted'));
+
+        await waitFor(() => expect(writeText).toHaveBeenCalledWith('"we""ird"'));
+    });
+
     it("honors the grid connection's own capabilities and driver over the globally active connection", async () => {
         databaseMock.mockReturnValue({
             activeSchema: null,
