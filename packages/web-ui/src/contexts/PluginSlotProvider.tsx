@@ -41,7 +41,9 @@ async function loadPluginTranslations(client: TabularisClient, pluginId: string)
     }
 }
 
-async function loadExternalPluginContributions(manifest: PluginManifest): Promise<SlotContribution[]> {
+async function loadExternalPluginContributions(
+    manifest: PluginManifest,
+): Promise<SlotContribution[]> {
     if (!manifest.ui_extensions?.length) return [];
     // Create one iframe-backed component per module. Plugin source is loaded by
     // the isolated guest page and is never evaluated in the main app window.

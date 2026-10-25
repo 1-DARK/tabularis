@@ -64,8 +64,6 @@ describe('web UI workspace', () => {
         expect(tauriConfig.build.frontendDist).toBe('../packages/web-ui/dist');
         expect(tauriConfig.build.devUrl).toBe('http://localhost:5173');
         expect(tauriConfig.build.beforeDevCommand).toBe('pnpm build:plugin-guest && pnpm dev');
-        expect(tauriConfig.build.beforeBuildCommand).toBe(
-            'pnpm build:plugin-guest && pnpm build',
-        );
+        expect(tauriConfig.build.beforeBuildCommand).toBe('pnpm build:plugin-guest && pnpm build');
     });
 });

@@ -102,7 +102,10 @@ describe('PluginSlotProvider', () => {
         );
 
         await waitFor(() => expect(registry?.contributions).toHaveLength(1));
-        expect(clientMock.readPluginAsset).not.toHaveBeenCalledWith('example-plugin', 'ui/index.js');
+        expect(clientMock.readPluginAsset).not.toHaveBeenCalledWith(
+            'example-plugin',
+            'ui/index.js',
+        );
     });
 
     it('should skip bundles that require an incompatible plugin API', async () => {

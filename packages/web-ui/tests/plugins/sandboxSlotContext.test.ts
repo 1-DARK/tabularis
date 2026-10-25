@@ -1,8 +1,5 @@
 import {describe, expect, it, vi} from 'vitest';
-import {
-    hydratePluginSlotContext,
-    serializePluginSlotContext,
-} from '@/plugins/sandbox/slotContext';
+import {hydratePluginSlotContext, serializePluginSlotContext} from '@/plugins/sandbox/slotContext';
 
 describe('sandbox slot callback bridge', () => {
     it('serializes callback-bearing contexts without sending functions', () => {

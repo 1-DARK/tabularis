@@ -43,7 +43,9 @@ describe('plugin isolation acceptance contract', () => {
         const exportService = projectFile('src-tauri/src/application/connection_files.rs');
         const connectionsPage = projectFile('packages/web-ui/src/pages/Connections.tsx');
 
-        expect(exportService).toContain('let include_secrets = !matches!(mode, ConnectionExportMode::NoSecrets)');
+        expect(exportService).toContain(
+            'let include_secrets = !matches!(mode, ConnectionExportMode::NoSecrets)',
+        );
         expect(exportService).toContain('pub enum ConnectionExportMode');
         expect(connectionsPage).toContain("client.call('export_connections_file'");
         for (const locale of [

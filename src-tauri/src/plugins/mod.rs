@@ -16,7 +16,6 @@ pub(crate) mod package_kind;
 pub mod registry;
 mod registry_kind;
 pub mod rpc;
-pub mod sandbox_protocol;
 pub mod runtime_version;
 pub mod shutdown_grace;
 pub mod tabularium;

@@ -11,9 +11,9 @@ const GUEST_CSP: &str = "sandbox allow-scripts; default-src 'none'; script-src '
   style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src data:; \
   connect-src 'none'; frame-src 'none'; form-action 'none'; base-uri 'none'";
 
-static GUEST_HTML: &[u8] = include_bytes!("../../resources/guest/__guest__.html");
-static GUEST_RUNTIME_JS: &[u8] = include_bytes!("../../resources/guest/runtime.js");
-static HOST_CSS: &[u8] = include_bytes!("../../resources/guest/host.css");
+static GUEST_HTML: &[u8] = include_bytes!("../../../resources/guest/__guest__.html");
+static GUEST_RUNTIME_JS: &[u8] = include_bytes!("../../../resources/guest/runtime.js");
+static HOST_CSS: &[u8] = include_bytes!("../../../resources/guest/host.css");
 
 fn is_safe_plugin_id(id: &str) -> bool {
     !id.is_empty()

@@ -28,6 +28,7 @@ pub mod preferences;
 pub mod proxy;
 pub mod query_history;
 pub mod runtime;
+pub mod sandbox_protocol;
 pub mod saved_queries;
 pub mod sql_file;
 pub mod sqlite_database;
@@ -108,7 +109,7 @@ pub fn run(args: crate::cli::Args, log_buffer: crate::logger::SharedLogBuffer) {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
         .register_uri_scheme_protocol("tabularis-plugin", |ctx, request| {
-            crate::plugins::sandbox_protocol::handle(ctx.app_handle(), request)
+            crate::transport::desktop::sandbox_protocol::handle(ctx.app_handle(), request)
         });
 
     // Dialog plugin: real in production, mocked under e2e-testing (the mock
