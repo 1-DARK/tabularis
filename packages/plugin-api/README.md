@@ -73,15 +73,17 @@ All hooks must run inside a React component loaded by Tabularis. Calling them ou
 
 ## Compatibility
 
-The package exports `API_VERSION` and `MIN_HOST_VERSION`. Plugin authors can opt in to a fail-fast compatibility check at component entry:
+The package exports `API_VERSION` and `MIN_HOST_VERSION`. Declare `API_VERSION` as `api_version` on each manifest `ui_extensions` entry so the host can reject incompatible bundles before executing them. Plugin authors can also opt in to a fail-fast compatibility check at component entry:
 
 ```ts
 import { assertHostCompat } from "@tabularis/plugin-api";
 assertHostCompat(); // throws if the running Tabularis is older than MIN_HOST_VERSION
 ```
 
-| Package version | Minimum Tabularis API | Notes |
-|-----------------|-----------------------|-------|
+| Package version | Minimum Tabularis | Notes |
+|-----------------|-------------------|-------|
+| `0.1.0`         | `0.1.0` | Initial release |
+| `0.1.1`         | `0.1.0` | Typed slots and automatic manifest compatibility gate |
 | `0.3.0`         | `0.3.0` | Sandboxed UI API and callback RPC |
 | `0.4.0`         | `0.4.0` | Secret-field slot callback and fixed Google OAuth exchange |
 

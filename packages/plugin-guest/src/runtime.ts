@@ -2,8 +2,8 @@ import * as React from 'react';
 import * as ReactJSXRuntime from 'react/jsx-runtime';
 import {createRoot} from 'react-dom/client';
 import * as explainApi from '@tabularis/explain';
-import {RpcPort} from '../../../src/plugins/sandbox/rpc';
-import {hydratePluginSlotContext} from '../../../src/plugins/sandbox/slotContext';
+import {RpcPort} from '../../web-ui/src/plugins/sandbox/rpc';
+import {hydratePluginSlotContext} from '../../web-ui/src/plugins/sandbox/slotContext';
 
 type PluginComponent = React.ComponentType<{context: Record<string, unknown>; pluginId: string}>;
 type GuestGlobal = Window & Record<string, unknown>;
