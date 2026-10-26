@@ -1416,6 +1416,8 @@
     "exportedRows": "{{count}} Zeile(n) exportiert",
     "selectColumn": "Spalte auswählen",
     "deselectColumn": "Spalte abwählen",
+    "freezeFirstColumn": "Erste Spalte fixieren",
+    "unfreezeFirstColumn": "Erste Spalte lösen",
     "copySelectedColumns": "Ausgewählte Spalten kopieren ({{count}})",
     "copyRangeN": "Bereich kopieren ({{rows}}×{{cols}})",
     "copyAllRows": "Alle kopieren ({{count}})",

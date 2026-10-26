@@ -1479,6 +1479,8 @@
     "exportedRows": "{{count}} riga/righe esportate",
     "selectColumn": "Seleziona Colonna",
     "deselectColumn": "Deseleziona Colonna",
+    "freezeFirstColumn": "Blocca la prima colonna",
+    "unfreezeFirstColumn": "Sblocca la prima colonna",
     "copySelectedColumns": "Copia Colonne Selezionate ({{count}})",
     "copyRangeN": "Copia Intervallo ({{rows}}×{{cols}})",
     "copyAllRows": "Copia Tutto ({{count}})",

@@ -1485,6 +1485,8 @@
     "exportedRows": "Exported {{count}} row(s)",
     "selectColumn": "Select Column",
     "deselectColumn": "Deselect Column",
+    "freezeFirstColumn": "Freeze first column",
+    "unfreezeFirstColumn": "Unfreeze first column",
     "copySelectedColumns": "Copy Selected Columns ({{count}})",
     "copyRangeN": "Copy Range ({{rows}}×{{cols}})",
     "copyAllRows": "Copy All ({{count}})",

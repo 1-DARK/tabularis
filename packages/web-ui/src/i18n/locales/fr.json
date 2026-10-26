@@ -1455,6 +1455,8 @@
     "exportedRows": "{{count}} ligne(s) exportée(s)",
     "selectColumn": "Sélectionner la colonne",
     "deselectColumn": "Désélectionner la colonne",
+    "freezeFirstColumn": "Figer la première colonne",
+    "unfreezeFirstColumn": "Libérer la première colonne",
     "copySelectedColumns": "Copier les colonnes sélectionnées ({{count}})",
     "copyRangeN": "Copier la plage ({{rows}}×{{cols}})",
     "copyAllRows": "Tout Copier ({{count}})",
