@@ -42,17 +42,25 @@ case "$artifact" in
     esac
     ar p "$artifact" "$member" | tar "${tar_args[@]}" -C "$extract_root"
     package_root="$extract_root"
+    binary="$package_root/usr/bin/tabularis"
+    web_root="$package_root/usr/lib/tabularis/web-ui"
     ;;
   *.AppImage)
     chmod +x "$artifact"
     (cd "$extract_root" && "$artifact" --appimage-extract >/dev/null)
-    package_root="$extract_root/squashfs-root"
+    if [[ -d "$extract_root/AppDir" ]]; then
+      # The experimental sharun runtime extracts a relocated AppDir layout.
+      package_root="$extract_root/AppDir"
+      binary="$package_root/bin/tabularis"
+      web_root="$package_root/lib/tabularis/web-ui"
+    else
+      package_root="$extract_root/squashfs-root"
+      binary="$package_root/usr/bin/tabularis"
+      web_root="$package_root/usr/lib/tabularis/web-ui"
+    fi
     ;;
   *) usage ;;
 esac
-
-binary="$package_root/usr/bin/tabularis"
-web_root="$package_root/usr/lib/tabularis/web-ui"
 
 verify_assets() {
   [[ -x "$binary" ]] || { echo "Packaged Tabularis executable is missing" >&2; exit 1; }

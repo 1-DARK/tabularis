@@ -2,7 +2,7 @@
 import {fileURLToPath} from 'node:url';
 
 import react from '@vitejs/plugin-react';
-import {defineConfig} from 'vitest/config';
+import {configDefaults, defineConfig} from 'vitest/config';
 
 const repositoryRoot = fileURLToPath(new URL('../..', import.meta.url));
 const sourceRoot = fileURLToPath(new URL('./src', import.meta.url));
@@ -19,6 +19,8 @@ export default defineConfig({
         globals: true,
         environment: 'jsdom',
         setupFiles: ['./packages/web-ui/tests/setup.ts'],
+        // Packaging fixtures run with node:test through pnpm web:packaging.
+        exclude: [...configDefaults.exclude, 'tests/web/verify-linux-web-package.test.mjs'],
         include: [
             'packages/web-ui/tests/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}',
             // Other workspace packages (packages/*) run their own vitest with a node

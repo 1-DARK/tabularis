@@ -33,7 +33,7 @@
     "web:inventory": "node scripts/web/generate-web-ui-api-inventory.mjs --check",
     "web:inventory:write": "node scripts/web/generate-web-ui-api-inventory.mjs --write",
     "web:boundaries": "node scripts/web/check-web-ui-frontend-boundaries.mjs --check",
-    "web:packaging": "node --test scripts/web/check-web-ui-packaging.test.mjs",
+    "web:packaging": "node --test scripts/web/check-web-ui-packaging.test.mjs tests/web/verify-linux-web-package.test.mjs",
     "web:docs": "node --test scripts/web/check-web-ui-documentation.test.mjs",
     "web:manual-parity": "vitest --config packages/web-ui/vitest.config.ts run tests/web/webManualParityAudit.test.mjs",
     "tauri": "tauri",
