@@ -1434,6 +1434,7 @@
     "deselectColumn": "列の選択を解除",
     "freezeFirstColumn": "最初の列を固定",
     "unfreezeFirstColumn": "最初の列の固定を解除",
+    "resetColumnWidths": "列幅をリセット",
     "copySelectedColumns": "選択した列をコピー（{{count}}）",
     "copyRangeN": "範囲をコピー（{{rows}}×{{cols}}）",
     "copyAllRows": "すべてコピー（{{count}}）",

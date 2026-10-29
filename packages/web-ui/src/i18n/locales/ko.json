@@ -1397,6 +1397,7 @@
     "deselectColumn": "열 선택 해제",
     "freezeFirstColumn": "첫 번째 열 고정",
     "unfreezeFirstColumn": "첫 번째 열 고정 해제",
+    "resetColumnWidths": "열 너비 초기화",
     "copySelectedColumns": "선택한 열 복사 ({{count}})",
     "copyRangeN": "범위 복사 ({{rows}}×{{cols}})",
     "copyAllRows": "모두 복사 ({{count}})",

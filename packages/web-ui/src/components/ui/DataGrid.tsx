@@ -55,6 +55,7 @@ import {
     ChartColumn,
     Pin,
     PinOff,
+    RotateCcw,
 } from 'lucide-react';
 import {usePlatformCapabilities} from '@/hooks/usePlatformCapabilities';
 import {getJsonViewerSessionHost} from '@/platform/secondaryWindowSessions';
@@ -145,10 +146,14 @@ import type {ResultCommands} from '@/types/commands';
 import {MemoRow, type RowCtx} from './DataGridRow';
 import {ColumnResizeHandle} from './ColumnResizeHandle';
 import {useLockedColumnResize} from '@/hooks/useLockedColumnResize';
+import {getFitColumnWidth} from '@/utils/columnResize';
+import {resolveResultFontFamily} from '@/utils/settings';
 import {JumpToColumnModal} from '@/components/modals/JumpToColumnModal';
 import {SetCellsValueModal} from '@/components/modals/SetCellsValueModal';
 import {KeybindingsContext} from '@/contexts/KeybindingsContext';
 
+/** Horizontal padding of a grid cell (px-4 on both sides) plus its 1px border. */
+const FIT_COLUMN_PADDING = 33;
 export interface DataGridCommandTarget {
     getResultCommands: () => ResultCommands;
     isEditing: () => boolean;
@@ -1629,6 +1634,64 @@ export const DataGrid = React.memo(function DataGrid({
         maxWidth: DATA_GRID_MAX_COLUMN_WIDTH,
         onResize: resizeColumn,
     });
+    // Double-clicking a resize handle fits that column to its header and the
+    // loaded rows (#1295). Cells are measured on a canvas, so the table never
+    // reflows; the header is measured at its natural width.
+    const fitColumnToContent = useCallback(
+        (index: number) => {
+            // Widths include the row-number column first.
+            const colIndex = index - 1;
+            const colName = columns[colIndex];
+            if (colName === undefined) return;
+            const ctx = document.createElement('canvas').getContext('2d');
+            if (!ctx) return;
+            // Cell font and padding are rem-based (text-sm, px-4) and follow the
+            // font-size setting, so read them from a rendered cell of the column
+            // instead of assuming a 16px root.
+            const headerCell = theadRowRef.current?.children[index] as HTMLElement | undefined;
+            const sampleCell =
+                tableRef.current?.querySelector<HTMLElement>(
+                    `tbody td[data-col-index="${colIndex}"]`,
+                ) ?? null;
+            const cellStyle = sampleCell ? getComputedStyle(sampleCell) : null;
+            ctx.font = cellStyle?.fontSize
+                ? `${cellStyle.fontWeight} ${cellStyle.fontSize} ${cellStyle.fontFamily}`
+                : `14px ${resolveResultFontFamily()}`;
+            // With no rendered body cell (an empty grid), the header cell has the
+            // same rem-based padding, so it still follows the font-size setting.
+            const paddingStyle = cellStyle ?? (headerCell ? getComputedStyle(headerCell) : null);
+            const padding = paddingStyle?.paddingLeft
+                ? parseFloat(paddingStyle.paddingLeft) +
+                  parseFloat(paddingStyle.paddingRight) +
+                  parseFloat(paddingStyle.borderRightWidth || '0')
+                : FIT_COLUMN_PADDING;
+            const colType = columnTypeMap?.get(colName);
+            const colLength = columnLengthMap?.get(colName);
+            const nullLabel = t('dataGrid.null');
+            const textWidths = mergedRows.map(
+                (row) =>
+                    ctx.measureText(
+                        formatCellValue(row.rowData[colIndex], nullLabel, colType, colLength),
+                    ).width,
+            );
+            const headerContent = headerCell?.firstElementChild as HTMLElement | null | undefined;
+            if (headerContent) {
+                headerContent.style.width = 'max-content';
+                textWidths.push(headerContent.getBoundingClientRect().width);
+                headerContent.style.width = '';
+            }
+            resizeColumn(
+                index,
+                getFitColumnWidth(
+                    textWidths,
+                    padding,
+                    DATA_GRID_MIN_COLUMN_WIDTH,
+                    DATA_GRID_MAX_COLUMN_WIDTH,
+                ),
+            );
+        },
+        [columns, columnTypeMap, columnLengthMap, mergedRows, resizeColumn, t],
+    );
     const resizedTableWidth = getResizedTableWidth(lockedColumnWidths, columnWidths);
 
     const handleContextMenu = useCallback(
@@ -3242,6 +3305,7 @@ export const DataGrid = React.memo(function DataGrid({
                                                 })}
                                                 onMouseDown={startResize}
                                                 onKeyDown={onResizeKeyDown}
+                                                onDoubleClick={fitColumnToContent}
                                             />
                                         )}
                                     </th>
@@ -3872,6 +3936,16 @@ export const DataGrid = React.memo(function DataGrid({
                                 icon: isFirstColumnFrozen ? PinOff : Pin,
                                 action: () => {
                                     setIsFirstColumnFrozen((frozen) => !frozen);
+                                    setHeaderContextMenu(null);
+                                },
+                            },
+                            {
+                                label: t('dataGrid.resetColumnWidths'),
+                                icon: RotateCcw,
+                                action: () => {
+                                    // Dropping the locked widths makes the grid fall back
+                                    // to the automatic layout and measure it again.
+                                    setLockedColumnWidths(null);
                                     setHeaderContextMenu(null);
                                 },
                             },

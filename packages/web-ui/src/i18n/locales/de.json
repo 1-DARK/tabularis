@@ -1422,6 +1422,7 @@
     "deselectColumn": "Spalte abwählen",
     "freezeFirstColumn": "Erste Spalte fixieren",
     "unfreezeFirstColumn": "Erste Spalte lösen",
+    "resetColumnWidths": "Spaltenbreiten zurücksetzen",
     "copySelectedColumns": "Ausgewählte Spalten kopieren ({{count}})",
     "copyRangeN": "Bereich kopieren ({{rows}}×{{cols}})",
     "copyAllRows": "Alle kopieren ({{count}})",

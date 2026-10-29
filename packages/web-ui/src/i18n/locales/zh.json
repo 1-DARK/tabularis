@@ -1397,6 +1397,7 @@
     "deselectColumn": "取消选择列",
     "freezeFirstColumn": "冻结首列",
     "unfreezeFirstColumn": "取消冻结首列",
+    "resetColumnWidths": "重置列宽",
     "copySelectedColumns": "复制选中列（{{count}}）",
     "copyRangeN": "复制范围（{{rows}}×{{cols}}）",
     "copyAllRows": "复制全部（{{count}}）",

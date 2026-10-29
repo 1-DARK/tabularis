@@ -1423,6 +1423,7 @@
     "deselectColumn": "Снять выбор столбца",
     "freezeFirstColumn": "Закрепить первый столбец",
     "unfreezeFirstColumn": "Открепить первый столбец",
+    "resetColumnWidths": "Сбросить ширину столбцов",
     "copySelectedColumns": "Копировать выбранные столбцы ({{count}})",
     "copyRangeN": "Копировать диапазон ({{rows}}×{{cols}})",
     "copyAllRows": "Скопировать все ({{count}})",

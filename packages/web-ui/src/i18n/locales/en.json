@@ -1491,6 +1491,7 @@
     "deselectColumn": "Deselect Column",
     "freezeFirstColumn": "Freeze first column",
     "unfreezeFirstColumn": "Unfreeze first column",
+    "resetColumnWidths": "Reset column widths",
     "copySelectedColumns": "Copy Selected Columns ({{count}})",
     "copyRangeN": "Copy Range ({{rows}}×{{cols}})",
     "copyAllRows": "Copy All ({{count}})",

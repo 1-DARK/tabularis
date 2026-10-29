@@ -1450,6 +1450,7 @@
     "deselectColumn": "Deseleccionar Columna",
     "freezeFirstColumn": "Fijar la primera columna",
     "unfreezeFirstColumn": "Liberar la primera columna",
+    "resetColumnWidths": "Restablecer ancho de columnas",
     "copySelectedColumns": "Copiar Columnas Seleccionadas ({{count}})",
     "copyRangeN": "Copiar Rango ({{rows}}×{{cols}})",
     "copyAllRows": "Copiar Todo ({{count}})",
