@@ -1499,6 +1499,9 @@
     "filterLessThan": "Menor que",
     "filterLessOrEqual": "Menor o igual que",
     "filterContains": "Contiene",
+    "filterNotContains": "No contiene",
+    "filterStartsWith": "Empieza con",
+    "filterEndsWith": "Termina con",
     "columnStatistics": "Estadísticas de columna",
     "columnStats": {
       "title": "Estadísticas de columna",

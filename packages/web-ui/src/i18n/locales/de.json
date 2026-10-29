@@ -1471,6 +1471,9 @@
     "filterLessThan": "Kleiner als",
     "filterLessOrEqual": "Kleiner oder gleich",
     "filterContains": "Enthält",
+    "filterNotContains": "Enthält nicht",
+    "filterStartsWith": "Beginnt mit",
+    "filterEndsWith": "Endet mit",
     "columnStatistics": "Spaltenstatistik",
     "columnStats": {
       "title": "Spaltenstatistik",

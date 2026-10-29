@@ -1474,6 +1474,9 @@
     "filterLessThan": "Меньше",
     "filterLessOrEqual": "Меньше или равно",
     "filterContains": "Содержит",
+    "filterNotContains": "Не содержит",
+    "filterStartsWith": "Начинается с",
+    "filterEndsWith": "Заканчивается на",
     "columnStatistics": "Статистика столбца",
     "columnStats": {
       "title": "Статистика столбца",

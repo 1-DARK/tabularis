@@ -1446,6 +1446,9 @@
     "filterLessThan": "보다 작음",
     "filterLessOrEqual": "이하",
     "filterContains": "포함",
+    "filterNotContains": "포함하지 않음",
+    "filterStartsWith": "으로 시작",
+    "filterEndsWith": "으로 끝남",
     "columnStatistics": "열 통계",
     "columnStats": {
       "title": "열 통계",

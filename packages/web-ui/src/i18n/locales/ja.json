@@ -1483,6 +1483,9 @@
     "filterLessThan": "より小さい",
     "filterLessOrEqual": "以下",
     "filterContains": "含む",
+    "filterNotContains": "含まない",
+    "filterStartsWith": "で始まる",
+    "filterEndsWith": "で終わる",
     "columnStatistics": "列の統計",
     "columnStats": {
       "title": "列の統計",

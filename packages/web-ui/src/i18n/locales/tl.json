@@ -1502,6 +1502,9 @@
     "filterLessThan": "Mas maliit sa",
     "filterLessOrEqual": "Mas maliit o katumbas ng",
     "filterContains": "Naglalaman ng",
+    "filterNotContains": "Hindi naglalaman ng",
+    "filterStartsWith": "Nagsisimula sa",
+    "filterEndsWith": "Nagtatapos sa",
     "columnStatistics": "Mga istatistika ng column",
     "columnStats": {
       "title": "Mga istatistika ng column",

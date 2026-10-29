@@ -2045,6 +2045,26 @@ describe('DataGrid filter-by-value context menu', () => {
         );
     });
 
+    it('offers does not contain, starts with and ends with on a text cell', async () => {
+        const {container, onFilterByValue} = renderUsersGrid();
+
+        for (const [label, operator] of [
+            ['dataGrid.filterNotContains', 'not contains'],
+            ['dataGrid.filterStartsWith', 'starts with'],
+            ['dataGrid.filterEndsWith', 'ends with'],
+        ] as const) {
+            fireEvent.contextMenu(cellAt(container, 0, 1));
+            await openFilterSubmenu();
+            fireEvent.click(await screen.findByText(label));
+            expect(onFilterByValue).toHaveBeenLastCalledWith(
+                'name',
+                operator,
+                'Alice',
+                'character varying(255)',
+            );
+        }
+    });
+
     it('hides the items on BLOB and JSON cells', async () => {
         const {container} = renderUsersGrid();
 

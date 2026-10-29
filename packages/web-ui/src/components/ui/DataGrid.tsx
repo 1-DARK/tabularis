@@ -277,6 +277,9 @@ const CELL_VALUE_FILTER_BADGES: Record<CellValueFilterOperator, string> = {
     '<': '<',
     '<=': '<=',
     contains: 'LIKE',
+    'not contains': 'NOT LIKE',
+    'starts with': 'LIKE',
+    'ends with': 'LIKE',
     'IS NULL': 'IS',
     'IS NOT NULL': 'IS NOT',
 };
@@ -297,6 +300,9 @@ const CELL_VALUE_FILTER_LABEL_KEYS: Record<CellValueFilterOperator, string> = {
     '<': 'dataGrid.filterLessThan',
     '<=': 'dataGrid.filterLessOrEqual',
     contains: 'dataGrid.filterContains',
+    'not contains': 'dataGrid.filterNotContains',
+    'starts with': 'dataGrid.filterStartsWith',
+    'ends with': 'dataGrid.filterEndsWith',
     'IS NULL': 'dataGrid.filterIsNull',
     'IS NOT NULL': 'dataGrid.filterIsNotNull',
 };

@@ -1541,6 +1541,9 @@
     "filterLessThan": "Less than",
     "filterLessOrEqual": "Less than or equal to",
     "filterContains": "Contains",
+    "filterNotContains": "Does not contain",
+    "filterStartsWith": "Starts with",
+    "filterEndsWith": "Ends with",
     "columnStatistics": "Column statistics",
     "columnStats": {
       "title": "Column statistics",

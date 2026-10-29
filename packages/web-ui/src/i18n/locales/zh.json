@@ -1446,6 +1446,9 @@
     "filterLessThan": "小于",
     "filterLessOrEqual": "小于或等于",
     "filterContains": "包含",
+    "filterNotContains": "不包含",
+    "filterStartsWith": "开头是",
+    "filterEndsWith": "结尾是",
     "columnStatistics": "列统计",
     "columnStats": {
       "title": "列统计",
