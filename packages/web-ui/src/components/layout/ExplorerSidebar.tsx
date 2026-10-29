@@ -74,6 +74,8 @@ import {QueryModal} from '@/components/modals/QueryModal';
 import {SavedQueryFolderModal} from '@/components/modals/SavedQueryFolderModal';
 import {MoveSavedQueryModal} from '@/components/modals/MoveSavedQueryModal';
 import {ModifyColumnModal} from '@/components/modals/ModifyColumnModal';
+import {SchemaObjectDetailsModal} from '@/components/modals/SchemaObjectDetailsModal';
+import type {SchemaObjectDetails} from '@/types/schemaObjectDetails';
 import {CreateIndexModal} from '@/components/modals/CreateIndexModal';
 import {CreateForeignKeyModal} from '@/components/modals/CreateForeignKeyModal';
 import {GenerateSQLModal} from '@/components/modals/GenerateSQLModal';
@@ -286,6 +288,7 @@ export const ExplorerSidebar = ({
         label: string;
         data?: ContextMenuData;
     } | null>(null);
+    const [objectDetails, setObjectDetails] = useState<SchemaObjectDetails | null>(null);
     const [schemaModal, setSchemaModal] = useState<TableTarget | null>(null);
     const [runRoutineModal, setRunRoutineModal] = useState<{
         routine: RoutineInfo;
@@ -3562,6 +3565,19 @@ export const ExplorerSidebar = ({
                             : contextMenu.type === 'index'
                               ? ([
                                     {
+                                        label: t('objectDetails.viewDetails'),
+                                        icon: FileText,
+                                        action: () => {
+                                            if (
+                                                contextMenu.data &&
+                                                'objectDetails' in contextMenu.data &&
+                                                contextMenu.data.objectDetails
+                                            ) {
+                                                setObjectDetails(contextMenu.data.objectDetails);
+                                            }
+                                        },
+                                    },
+                                    {
                                         label: t('sidebar.copyName'),
                                         icon: Copy,
                                         action: () => navigator.clipboard.writeText(contextMenu.id),
@@ -3631,6 +3647,19 @@ export const ExplorerSidebar = ({
                                 ].filter(Boolean) as ContextMenuItem[])
                               : contextMenu.type === 'foreign_key'
                                 ? ([
+                                      {
+                                          label: t('objectDetails.viewDetails'),
+                                          icon: FileText,
+                                          action: () => {
+                                              if (
+                                                  contextMenu.data &&
+                                                  'objectDetails' in contextMenu.data &&
+                                                  contextMenu.data.objectDetails
+                                              ) {
+                                                  setObjectDetails(contextMenu.data.objectDetails);
+                                              }
+                                          },
+                                      },
                                       {
                                           label: t('sidebar.copyName'),
                                           icon: Copy,
@@ -4750,6 +4779,13 @@ export const ExplorerSidebar = ({
                 />
             )}
 
+            {objectDetails && (
+                <SchemaObjectDetailsModal
+                    isOpen={true}
+                    onClose={() => setObjectDetails(null)}
+                    details={objectDetails}
+                />
+            )}
             {createIndexModal.isOpen && activeConnectionId && (
                 <CreateIndexModal
                     isOpen={createIndexModal.isOpen}
