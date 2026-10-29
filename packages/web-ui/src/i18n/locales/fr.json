@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "Aucun favori ne correspond à votre recherche",
     "newFolder": "Nouveau dossier",
     "renameFolder": "Renommer le dossier",
+    "exportFolder": "Exporter le dossier en SQL…",
+    "exportAllQueries": "Exporter toutes les requêtes en SQL…",
     "deleteFolder": "Supprimer le dossier",
     "folderName": "Nom du dossier",
     "folderNamePlaceholder": "p. ex. Rapports",

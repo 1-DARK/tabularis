@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "Keine Favoriten entsprechen deiner Suche",
     "newFolder": "Neuer Ordner",
     "renameFolder": "Ordner umbenennen",
+    "exportFolder": "Ordner als SQL exportieren…",
+    "exportAllQueries": "Alle Abfragen als SQL exportieren…",
     "deleteFolder": "Ordner löschen",
     "folderName": "Ordnername",
     "folderNamePlaceholder": "z. B. Berichte",

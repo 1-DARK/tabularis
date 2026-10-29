@@ -141,6 +141,8 @@
     "noFavoritesSearchResults": "没有匹配的收藏",
     "newFolder": "新建文件夹",
     "renameFolder": "重命名文件夹",
+    "exportFolder": "将文件夹导出为 SQL…",
+    "exportAllQueries": "将所有查询导出为 SQL…",
     "deleteFolder": "删除文件夹",
     "folderName": "文件夹名称",
     "folderNamePlaceholder": "例如：报表",

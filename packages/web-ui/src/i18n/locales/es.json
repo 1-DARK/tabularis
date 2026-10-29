@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "Ningun favorito coincide con la busqueda",
     "newFolder": "Nueva carpeta",
     "renameFolder": "Renombrar carpeta",
+    "exportFolder": "Exportar carpeta como SQL…",
+    "exportAllQueries": "Exportar todas las consultas como SQL…",
     "deleteFolder": "Eliminar carpeta",
     "folderName": "Nombre de la carpeta",
     "folderNamePlaceholder": "p. ej. Informes",

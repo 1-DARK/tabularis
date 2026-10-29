@@ -119,6 +119,8 @@
     "noFavoritesSearchResults": "검색과 일치하는 즐겨찾기가 없습니다",
     "newFolder": "새 폴더",
     "renameFolder": "폴더 이름 바꾸기",
+    "exportFolder": "폴더를 SQL로 내보내기…",
+    "exportAllQueries": "모든 쿼리를 SQL로 내보내기…",
     "deleteFolder": "폴더 삭제",
     "folderName": "폴더 이름",
     "folderNamePlaceholder": "예: 보고서",

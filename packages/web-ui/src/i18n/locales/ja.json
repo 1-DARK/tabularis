@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "検索に一致するお気に入りがありません",
     "newFolder": "新しいフォルダ",
     "renameFolder": "フォルダ名を変更",
+    "exportFolder": "フォルダをSQLとしてエクスポート…",
+    "exportAllQueries": "すべてのクエリをSQLとしてエクスポート…",
     "deleteFolder": "フォルダを削除",
     "folderName": "フォルダ名",
     "folderNamePlaceholder": "例: レポート",

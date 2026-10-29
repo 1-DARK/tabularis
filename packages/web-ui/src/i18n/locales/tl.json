@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "Walang paborito na tumugma sa iyong paghahanap",
     "newFolder": "Bagong folder",
     "renameFolder": "Palitan ang pangalan ng folder",
+    "exportFolder": "I-export ang folder bilang SQL…",
+    "exportAllQueries": "I-export ang lahat ng query bilang SQL…",
     "deleteFolder": "Burahin ang folder",
     "folderName": "Pangalan ng folder",
     "folderNamePlaceholder": "hal. Mga Ulat",

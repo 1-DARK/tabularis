@@ -119,6 +119,8 @@
     "noFavoritesSearchResults": "Nenhum favorito corresponde à sua busca",
     "newFolder": "Nova pasta",
     "renameFolder": "Renomear pasta",
+    "exportFolder": "Exportar pasta como SQL…",
+    "exportAllQueries": "Exportar todas as consultas como SQL…",
     "deleteFolder": "Excluir pasta",
     "folderName": "Nome da pasta",
     "folderNamePlaceholder": "ex.: Relatórios",

@@ -149,6 +149,8 @@
     "noFavoritesSearchResults": "Nessun preferito corrisponde alla ricerca",
     "newFolder": "Nuova cartella",
     "renameFolder": "Rinomina cartella",
+    "exportFolder": "Esporta cartella come SQL…",
+    "exportAllQueries": "Esporta tutte le query come SQL…",
     "deleteFolder": "Elimina cartella",
     "folderName": "Nome della cartella",
     "folderNamePlaceholder": "es. Report",

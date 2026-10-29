@@ -142,6 +142,8 @@
     "noFavoritesSearchResults": "No favorites match your search",
     "newFolder": "New folder",
     "renameFolder": "Rename folder",
+    "exportFolder": "Export folder as SQL…",
+    "exportAllQueries": "Export all queries as SQL…",
     "deleteFolder": "Delete folder",
     "folderName": "Folder name",
     "folderNamePlaceholder": "e.g. Reports",
