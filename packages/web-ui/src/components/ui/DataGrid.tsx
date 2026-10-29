@@ -393,6 +393,7 @@ export const DataGrid = React.memo(function DataGrid({
     const stickyColumnHeaders = settings.stickyColumnHeaders ?? true;
     const zebraStripes = settings.resultZebraStripes ?? false;
     const defaultSortDirection = settings.defaultSortDirection ?? 'asc';
+    const copyNullLabel = settings.copyNullLabel ?? 'null';
 
     // Sensitive-column masking (#485): display-only — copy/export keep the
     // real values; only the rendered grid masks them.
@@ -2038,8 +2039,17 @@ export const DataGrid = React.memo(function DataGrid({
                 csvDelimiter,
                 tableName,
                 driver: copyDriver,
+                nullLabel: copyNullLabel,
             }),
-        [columns, copyFormat, csvDelimiter, csvIncludeHeaders, tableName, copyDriver],
+        [
+            columns,
+            copyFormat,
+            csvDelimiter,
+            csvIncludeHeaders,
+            tableName,
+            copyDriver,
+            copyNullLabel,
+        ],
     );
 
     // Rows the row context menu acts on: the selected rows (pending insertions
@@ -2242,6 +2252,7 @@ export const DataGrid = React.memo(function DataGrid({
                 csvDelimiter,
                 tableName,
                 driver: copyDriver,
+                nullLabel: copyNullLabel,
             }),
             rowsCopiedToast(rows.length),
         );
@@ -2254,6 +2265,7 @@ export const DataGrid = React.memo(function DataGrid({
         csvDelimiter,
         tableName,
         copyDriver,
+        copyNullLabel,
         copyToClipboard,
         rowsCopiedToast,
     ]);
@@ -2277,6 +2289,7 @@ export const DataGrid = React.memo(function DataGrid({
                 csvDelimiter,
                 tableName,
                 driver: copyDriver,
+                nullLabel: copyNullLabel,
             }),
             t('dataGrid.copiedCells', {
                 count: rangeRows.length * projected.columns.length,
@@ -2291,6 +2304,7 @@ export const DataGrid = React.memo(function DataGrid({
         csvDelimiter,
         tableName,
         copyDriver,
+        copyNullLabel,
         copyToClipboard,
         t,
     ]);
@@ -2309,6 +2323,7 @@ export const DataGrid = React.memo(function DataGrid({
                 includeHeader: csvIncludeHeaders,
                 tableName: tableName ?? 'table',
                 driver: copyDriver,
+                nullLabel: copyNullLabel,
             });
             await copyToClipboard(text);
         },
@@ -2321,6 +2336,7 @@ export const DataGrid = React.memo(function DataGrid({
             csvIncludeHeaders,
             tableName,
             copyDriver,
+            copyNullLabel,
             copyToClipboard,
         ],
     );
