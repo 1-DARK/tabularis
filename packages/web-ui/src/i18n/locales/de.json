@@ -1596,7 +1596,6 @@
     "autoPaginated": "Automatisch paginiert",
     "pageOf": "Seite {{current}} von {{total}}",
     "page": "Seite {{current}}",
-    "jumpToPage": "Klicken, um zur Seite zu springen",
     "loadRowCount": "Zeilenanzahl laden",
     "rowCount": "{{total}} Zeilen",
     "executePrompt": "Führe eine Abfrage aus, um Ergebnisse zu sehen",
@@ -2609,7 +2608,8 @@
     "allRows": "Alle",
     "allRowsHint": "ruft alle Zeilen ab",
     "customPageSize": "Benutzerdefiniert…",
-    "defaultPageSize": "Standard"
+    "defaultPageSize": "Standard",
+    "pageNumber": "Seitennummer"
   },
   "miniGrid": {
     "runningQuery": "Abfrage wird ausgeführt...",

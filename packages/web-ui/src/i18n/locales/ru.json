@@ -1600,7 +1600,6 @@
     "autoPaginated": "Автопостраничный вывод",
     "pageOf": "Страница {{current}} из {{total}}",
     "page": "Страница {{current}}",
-    "jumpToPage": "Нажмите для перехода на страницу",
     "loadRowCount": "Загрузить количество строк",
     "rowCount": "{{total}} строк",
     "executePrompt": "Выполните запрос, чтобы увидеть результаты",
@@ -2696,7 +2695,8 @@
     "allRows": "Все",
     "allRowsHint": "загружает все строки",
     "customPageSize": "Свой размер…",
-    "defaultPageSize": "по умолчанию"
+    "defaultPageSize": "по умолчанию",
+    "pageNumber": "Номер страницы"
   },
   "miniGrid": {
     "runningQuery": "Выполнение запроса...",

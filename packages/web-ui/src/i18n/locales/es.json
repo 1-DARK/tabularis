@@ -1625,7 +1625,6 @@
     "autoPaginated": "Paginación automática",
     "pageOf": "Página {{current}} de {{total}}",
     "page": "Página {{current}}",
-    "jumpToPage": "Clic para ir a la página",
     "loadRowCount": "Cargar conteo de filas",
     "rowCount": "{{total}} filas",
     "executePrompt": "Ejecuta una consulta para ver resultados",
@@ -2550,7 +2549,8 @@
     "allRows": "Todas",
     "allRowsHint": "recupera todas las filas",
     "customPageSize": "Personalizado…",
-    "defaultPageSize": "predeterminado"
+    "defaultPageSize": "predeterminado",
+    "pageNumber": "Número de página"
   },
   "miniGrid": {
     "runningQuery": "Ejecutando consulta...",

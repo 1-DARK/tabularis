@@ -1648,7 +1648,6 @@
     "autoPaginated": "Auto paginated",
     "pageOf": "Page {{current}} of {{total}}",
     "page": "Page {{current}}",
-    "jumpToPage": "Click to jump to page",
     "loadRowCount": "Load row count",
     "rowCount": "{{total}} rows",
     "executePrompt": "Execute a query to see results",
@@ -2726,7 +2725,8 @@
     "allRows": "All",
     "allRowsHint": "fetches every row",
     "customPageSize": "Custom…",
-    "defaultPageSize": "default"
+    "defaultPageSize": "default",
+    "pageNumber": "Page number"
   },
   "miniGrid": {
     "runningQuery": "Running query...",

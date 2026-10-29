@@ -1571,7 +1571,6 @@
     "autoPaginated": "自动分页",
     "pageOf": "第 {{current}} 页，共 {{total}} 页",
     "page": "第 {{current}} 页",
-    "jumpToPage": "点击跳转到页面",
     "loadRowCount": "加载行数",
     "rowCount": "{{total}} 行",
     "executePrompt": "执行查询以查看结果",
@@ -2558,7 +2557,8 @@
     "allRows": "全部",
     "allRowsHint": "获取所有行",
     "customPageSize": "自定义…",
-    "defaultPageSize": "默认"
+    "defaultPageSize": "默认",
+    "pageNumber": "页码"
   },
   "miniGrid": {
     "runningQuery": "正在执行查询...",
